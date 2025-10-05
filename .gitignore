@@ -1,0 +1,40 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Project specific
+.journal/
+.temp/
+
+# IDE specific
+.idea/
+vscode/
+*.swp
+*.swo
+
+# Local development
+.env
+.env.local
+
+# Logs
+*.log
+
+# Coverage reports
+.coverage
+htmlcov/
+
+# ty
+.ty_cache/
+
+# Pytest
+.pytest_cache/
+
+# Ruff
+.ruff_cache/
