@@ -86,3 +86,8 @@ omit = ["tests/*"]
 [coverage.report]
 show_missing = true
 skip_covered = true
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.3.0",
+]
