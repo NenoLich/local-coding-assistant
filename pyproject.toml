@@ -21,7 +21,9 @@ classifiers = [
     "Topic :: Software Development",
     "Typing :: Typed",
 ]
-dependencies = []
+dependencies = [
+    "typer>=0.19.2",
+]
 
 [project.optional-dependencies]
 dev = [
