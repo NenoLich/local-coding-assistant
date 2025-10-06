@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.8.23,<0.9.0"]
+build-backend = "uv_build"
 
 [project]
 name = "local-coding-assistant"
@@ -19,10 +19,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Environment :: Console",
     "Topic :: Software Development",
+    "Typing :: Typed",
 ]
-dependencies = [
-    # Core dependencies will be added here
-]
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
@@ -30,7 +29,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.12.0",
     "ruff>=0.6.0",
-    "ty>=0.2.0",
+    "ty>=0.0.1a20",
     "pre-commit>=3.7.0",
     "black>=24.0.0",
     "isort>=5.13.0",
@@ -39,33 +38,32 @@ dev = [
 [project.scripts]
 local-assistant = "local_coding_assistant.cli:main"
 
-[tool.ruff]
-line-length = 88
-target-version = "py312"
+[tool.ruff.lint]
 select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # pyflakes
-    "I",   # isort
-    "C90", # mccabe complexity
-    "UP",  # pyupgrade
-    "N",   # pep8-naming
-    "B",   # flake8-bugbear
-    "A",   # flake8-builtins
-    "C4",  # flake8-comprehensions
+    "E", "F", "I", "B", "A",  # Base rules
+    "UP", "N", "Q", "RUF",      # Additional useful rules
 ]
 ignore = [
-    "E501",  # line too long (handled by black)
-    "W503",  # line break before binary operator (black style)
+    "E501",  # Line length (handled by black)
 ]
 
-[tool.ruff.mccabe]
+[tool.ruff.lint.mccabe]
 max-complexity = 10
 
-[tool.black]
-line-length = 88
-target-version = ["py312"]
-include = '\.pyi?$'
+[tool.ruff.lint.isort]
+known-first-party = ["local_coding_assistant"]
+
+[tool.ty.rules]
+unused-ignore-comment = "warn"
+redundant-cast = "ignore"
+possibly-unbound-attribute = "error"
+possibly-unbound-import = "error"
+
+[[tool.ty.overrides]]
+include = ["tests/**", "**/test_*.py"]
+
+[tool.ty.overrides.rules]
+possibly-unresolved-reference = "ignore"
 
 [tool.isort]
 profile = "black"
@@ -79,7 +77,7 @@ ensure_newline_before_comments = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --cov=local_assistant --cov-report=term-missing"
+addopts = "-v --cov=local_coding_assistant --cov-report=term-missing"
 
 [coverage.run]
 source = ["src"]
@@ -88,9 +86,3 @@ omit = ["tests/*"]
 [coverage.report]
 show_missing = true
 skip_covered = true
-
-[tool.ty]
-python-version = "3.12"
-strict = true
-warn-unused-ignores = true
-warn-unreachable = true
