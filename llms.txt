@@ -1,67 +1,93 @@
-# Local Coding Assistant
+# Local Coding Assistant (LCA)
 
-**The Local Coding Assistant (LCA)** is an open Python framework for developing AI-driven developer assistants that run locally and interact with your environment safely.
-It combines modular AI agents, tool schemas, and an optional MCP (Model Context Protocol) interface for integration with IDEs and local workflows.
+A local-first Python project for building a simple, extensible coding assistant. The current implementation is intentionally minimal and designed to be evolved.
 
 ---
 
 ## Goals
-- Provide a **local-first, privacy-respecting** AI coding assistant.
-- Support **modular tool development** with schema-defined interfaces.
-- Enable **agent orchestration** using LangGraph and MCP.
-- Serve as a **clean, educational example** of modern Python project architecture.
+- Local-first, privacy-respecting assistant.
+- Minimal, readable architecture with clear seams for extension.
+- Solid developer ergonomics: uv, pytest, ruff, pre-commit.
 
 ---
 
-## Tech Stack
-   Category          | Choice/Tool                     |
- |-------------------|----------------------------------|
- | Language          | Python (3.12+)                   |
- | Env & packaging   | uv, pyproject.toml, ruff, mypy, pytest |
- | CI/CD             | GitHub Actions                   |
- | Tooling           | Pre-commit hooks, Docker-ready   |
- | Agent Runtime     | LangGraph                        |
- | Tool Interface    | Schema-driven tools (pydantic models for input/output) |
- | Optional Integration | MCP servers for IDE and external orchestration |
+## Current Architecture Map
+
+- Package: `src/local_coding_assistant/`
+  - `agent/`
+    - `llm_manager.py`: small facade; `LLMManager.ask(text, tools)` echoes text and counts tools.
+  - `tools/`
+    - `tool_registry.py`: in-memory registry (list-like); supports `register`, iteration, and `len()`.
+  - `runtime/`
+    - `runtime_manager.py`: placeholder with `start()`/`stop()` no-ops.
+  - `core/`
+    - `app_context.py`: simple named resource registry (`register`, `get`, `__getitem__`, `__contains__`).
+    - `bootstrap.py`: wires `LLMManager`, `ToolRegistry`, `RuntimeManager` into `AppContext`.
+    - `assistant.py`: `Assistant.run_query(text, verbose)` uses LLM and tools from context.
+  - `cli/`
+    - `main.py`: Typer app; includes subcommands from `cli/commands/`.
+    - `commands/run.py`: `run query <text> [--verbose] [--model]` — calls `Assistant` and prints response.
+    - `commands/list_tools.py`, `commands/config.py`, `commands/serve.py`: placeholders for growth.
 
 ---
 
-## Concepts
-
-### Agent
-- Orchestrates reasoning and tool usage using **LangGraph**.
-- Can call **schema-defined tools** through the Tool Registry.
-- Capable of reasoning and chaining tasks, both synchronous and async.
-
-### Tools
-- Each tool is a **pydantic-based class** exposing input/output schemas.
-- Registered automatically through **ToolRegistry**.
-- Can be **internal (Python-only)** or **external MCP tools**.
-
-### MCP (Model Context Protocol)
-- Enables interoperability between LCA and external clients (like IDEs or chat UIs).
-- Optional layer; can be added incrementally.
+## CLI
+- Entry point: `[project.scripts] local-assistant = "local_coding_assistant.cli:main"`
+- Example (uv):
+  - `uv run local-assistant run query "Hello" --verbose --model dummy`
+- Example (module):
+  - `python -m local_coding_assistant.cli.main run query "Hello"`
 
 ---
 
 ## Testing
-- **Unit tests** with pytest.
-- **Static analysis** with ruff, mypy.
-- **GitHub Actions** for automated linting, testing, and pre-commit enforcement.
+- Framework: `pytest` with coverage configured in `pyproject.toml`.
+- Layout:
+  - `tests/unit/`: fast tests (e.g., `test_tools_registry.py`, `test_llm_manager.py`, `test_runtime_manager.py`).
+  - `tests/integration/`: uses `tests/integration/conftest.py` fixtures (`ctx`, `assistant`, CLI `app`, `cli_runner`).
+  - `tests/e2e/`: CLI end-to-end via Typer `CliRunner` (`test_cli_run.py`).
+- Run via uv/taskipy:
+  - `uv run pytest -v` or tasks in `[tool.taskipy.tasks]`:
+    - `uv run task test-unit`
+    - `uv run task test-integration`
+    - `uv run task test-e2e`
+    - `uv run task test-all`
 
 ---
 
-## Development Workflow
-- Use `uv run` for development commands.
-- Write schema-based tools in `src/lca/tools`.
-- Register them in **ToolRegistry**.
-- Add test coverage under `src/lca/tests`.
-- Update `llms.txt` after major architecture changes.
+## Pre-commit
+- Config: `.pre-commit-config.yaml`
+  - Lint & format with ruff on commit.
+  - Unit tests on pre-commit (fast path).
+  - Integration & e2e tests on pre-push.
+- Install:
+  - `pre-commit install`
+  - `pre-commit install --hook-type pre-push`
 
 ---
 
-## LLM Usage
-LLMs reading this file can:
-- Infer the modular relationships between **agent, tools, and core**.
-- Identify where to add or extend features.
-- Understand conventions for **schema-driven design** and **agent orchestration**.
+## Conventions
+- Imports assume `src/` on `PYTHONPATH`; tests ensure this via `tests/conftest.py`.
+- Keep `bootstrap()` as the composition root for dependency wiring.
+- `Assistant.run_query()` is the main integration surface for agent logic.
+
+---
+
+## Roadmap (suggested)
+- Tool model schemas (optional): introduce pydantic types for tool I/O.
+- Real LLM backend(s): swap `LLMManager.ask()` for providers (OpenAI/local) behind an interface.
+- Tool discovery: dynamic loading, metadata, validation.
+- Runtime: background workers/queues, async support in `RuntimeManager`.
+- CLI growth: `list-tools`, `serve`, and `config` subcommands with real behavior.
+- Optional MCP integration once core is stable.
+
+---
+
+## Quick Links (files mentioned)
+- `src/local_coding_assistant/core/bootstrap.py`
+- `src/local_coding_assistant/core/assistant.py`
+- `src/local_coding_assistant/tools/tool_registry.py`
+- `src/local_coding_assistant/agent/llm_manager.py`
+- `src/local_coding_assistant/cli/main.py`
+
+This document is for both humans and LLMs to quickly understand the project’s current shape and intended extension points. Update after any major architectural changes.

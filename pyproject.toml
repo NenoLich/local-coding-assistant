@@ -40,6 +40,12 @@ dev = [
 [project.scripts]
 local-assistant = "local_coding_assistant.cli:main"
 
+[tool.taskipy.tasks]
+test-unit = "pytest -v tests/unit"
+test-integration = "pytest -v tests/integration"
+test-e2e = "pytest -v tests/e2e"
+test-all = "pytest -v tests"
+
 [tool.ruff.lint]
 select = [
     "E", "F", "I", "B", "A",  # Base rules
@@ -80,6 +86,7 @@ ensure_newline_before_comments = true
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --cov=local_coding_assistant --cov-report=term-missing"
+filterwarnings = ["ignore::DeprecationWarning"]
 
 [coverage.run]
 source = ["src"]
@@ -92,4 +99,5 @@ skip_covered = true
 [dependency-groups]
 dev = [
     "pre-commit>=4.3.0",
+    "taskipy>=1.14.1",
 ]
