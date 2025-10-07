@@ -15,6 +15,8 @@ def test_cli_run_query_end_to_end():
             "--verbose",
             "--model",
             "dummy-model",
+            "--log-level",
+            "DEBUG",
         ],
     )
 
