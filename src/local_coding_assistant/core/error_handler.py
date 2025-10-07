@@ -1,6 +1,8 @@
+import inspect
 import traceback
 from collections.abc import Callable
-from typing import ParamSpec, TypeVar
+from functools import wraps
+from typing import Any
 
 from local_coding_assistant.core.exceptions import LocalAssistantError
 from local_coding_assistant.utils.logging import get_logger
@@ -40,26 +42,28 @@ def handle_error(
         logger.debug(f"Traceback:\n{trace}")
 
 
-P = ParamSpec("P")
-R = TypeVar("R")
-
-
-def safe_entrypoint(context: str) -> Callable[[Callable[P, R]], Callable[P, R | None]]:
+def safe_entrypoint(context: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator to wrap entrypoint functions with unified error handling.
 
-    The decorated function must accept a keyword argument `verbose` (defaulting to False)
-    or at least tolerate it in **kwargs. On exception, the error is logged and None is
-    returned.
+    This version preserves the original function's signature for Typer/Click
+    by using functools.wraps and setting __signature__ explicitly.
     """
 
-    def decorator(func: Callable[P, R]) -> Callable[P, R | None]:
-        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R | None:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any | None:
             verbose = bool(kwargs.get("verbose", False))
             try:
                 return func(*args, **kwargs)
-            except Exception as e:
+            except Exception as e:  # central handler
                 handle_error(e, context=context, verbose=verbose)
                 return None
+
+        # Ensure Typer sees the original callable signature
+        try:
+            wrapper.__signature__ = inspect.signature(func)  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
         return wrapper
 

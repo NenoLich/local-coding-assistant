@@ -1,4 +1,4 @@
-# Local Coding Assistant (LCA)
+# Local Coding Assistant (LOCCA)
 
 A local-first Python project for building a simple, extensible coding assistant. The current implementation is intentionally minimal and designed to be evolved.
 
@@ -26,15 +26,15 @@ A local-first Python project for building a simple, extensible coding assistant.
     - `assistant.py`: `Assistant.run_query(text, verbose)` uses LLM and tools from context.
   - `cli/`
     - `main.py`: Typer app; includes subcommands from `cli/commands/`.
-    - `commands/run.py`: `run query <text> [--verbose] [--model]` — calls `Assistant` and prints response.
-    - `commands/list_tools.py`, `commands/config.py`, `commands/serve.py`: placeholders for growth.
+    - `commands/run.py`: `run query <text> [--verbose] [--model] [--log-level]` — calls `Assistant` and prints response.
+    - `commands/list_tools.py`, `commands/config.py`, `commands/serve.py`: basic implementations.
 
 ---
 
 ## CLI
-- Entry point: `[project.scripts] local-assistant = "local_coding_assistant.cli:main"`
+- Entry point: `[project.scripts] locca = "local_coding_assistant.cli:main"`
 - Example (uv):
-  - `uv run local-assistant run query "Hello" --verbose --model dummy`
+  - `uv run locca run query "Hello" --verbose --model dummy --log-level DEBUG`
 - Example (module):
   - `python -m local_coding_assistant.cli.main run query "Hello"`
 
@@ -45,7 +45,7 @@ A local-first Python project for building a simple, extensible coding assistant.
 - Layout:
   - `tests/unit/`: fast tests (e.g., `test_tools_registry.py`, `test_llm_manager.py`, `test_runtime_manager.py`).
   - `tests/integration/`: uses `tests/integration/conftest.py` fixtures (`ctx`, `assistant`, CLI `app`, `cli_runner`).
-  - `tests/e2e/`: CLI end-to-end via Typer `CliRunner` (`test_cli_run.py`).
+  - `tests/e2e/`: CLI end-to-end via Typer `CliRunner` (`test_cli_run.py`, `test_cli_commands.py`).
 - Run via uv/taskipy:
   - `uv run pytest -v` or tasks in `[tool.taskipy.tasks]`:
     - `uv run task test-unit`
@@ -73,7 +73,7 @@ A local-first Python project for building a simple, extensible coding assistant.
 
 ---
 
-## Roadmap (suggested)
+## roadmap (suggested)
 - Tool model schemas (optional): introduce pydantic types for tool I/O.
 - Real LLM backend(s): swap `LLMManager.ask()` for providers (OpenAI/local) behind an interface.
 - Tool discovery: dynamic loading, metadata, validation.

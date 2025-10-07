@@ -1,4 +1,4 @@
-# Local Coding Assistant
+# Local Coding Assistant (LOCCA)
 
 An AI-powered coding assistant that runs locally with support for LLMs and a plugin system.
 
@@ -38,36 +38,46 @@ An AI-powered coding assistant that runs locally with support for LLMs and a plu
 ├── .github/           # GitHub Actions workflows
 ├── .journal/          # Development journal and decisions
 ├── src/               # Source code
-│   └── local_assistant/  # Main package
+│   └── local_coding_assistant/  # Main package
 ├── tests/             # Test files
 ├── .gitignore
 ├── pyproject.toml
 └── README.md
 ```
 
+## CLI Usage
+
+Use the installed console script `locca`.
+
+Examples:
+
+```bash
+# Run a single query
+uv run locca run query "Hello" --log-level DEBUG -v
+
+# List tools (text and JSON)
+uv run locca list-tools list
+uv run locca list-tools list --json
+
+# Get/set config (env-backed, prefix LOCCA_)
+uv run locca config set API_KEY secret
+uv run locca config get API_KEY
+
+# Start the (placeholder) server
+uv run locca serve start --host 0.0.0.0 --port 8080 --reload
+```
+
 ## Testing
 
-Run tests using pytest:
-```bash
-pytest
-```
-
-## Linting
+Run tests with uv/taskipy or pytest:
 
 ```bash
-ruff check .
+# Using taskipy (pyproject [tool.taskipy.tasks])
+uv run task test-unit
+uv run task test-integration
+uv run task test-e2e
+uv run task test-all
+
+# Or directly with pytest
+uv run pytest -v
 ```
-
-## Code Formatting
-
-```bash
-ruff format .
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
