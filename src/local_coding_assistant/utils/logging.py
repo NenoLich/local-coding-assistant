@@ -31,8 +31,6 @@ def setup_logging(level: int = logging.INFO, stream: TextIO | None = None) -> No
     root.handlers.clear()
     root.addHandler(handler)
 
-    logging.getLogger(__name__).debug("Logging initialized.")
-
 
 # Helper for subsystems
 def get_logger(name: str) -> logging.Logger:
