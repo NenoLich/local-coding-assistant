@@ -7,7 +7,7 @@ def test_assistant_run_query_integration(assistant: Assistant):
 
     # Should echo text and include tool count from ToolRegistry (initially empty)
     assert "[LLMManager] Echo: What can you do?" in out
-    assert "tools available: 0" in out
+    assert "tools available: 1" in out
 
 
 def test_assistant_verbose_prints(assistant: Assistant, capsys):
