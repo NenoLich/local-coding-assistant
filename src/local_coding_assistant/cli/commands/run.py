@@ -6,11 +6,15 @@ import typer
 
 from local_coding_assistant.core import bootstrap
 from local_coding_assistant.core.assistant import Assistant
+from local_coding_assistant.core.error_handler import safe_entrypoint
+from local_coding_assistant.utils.logging import get_logger
 
 app = typer.Typer(name="run", help="Run a single LLM or tool request")
+log = get_logger(__name__)
 
 
 @app.command()
+@safe_entrypoint("cli.run.query")
 def query(
     text: str = typer.Argument(..., help="The query to run"),
     verbose: bool = typer.Option(
@@ -35,6 +39,8 @@ def query(
 
     ctx = bootstrap(log_level=level)
     assistant = Assistant(ctx)
+
+    log.info("Executing query with model=%s", model or "default")
     response = assistant.run_query(text, verbose)
 
     typer.echo(f"\nResponse:\n{response}")
