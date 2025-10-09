@@ -5,21 +5,9 @@ from __future__ import annotations
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
-
-class Tool:
-    """Simple tool contract based on Pydantic models."""
-
-    name: str
-    InputModel: type[BaseModel] | None = None
-    OutputModel: type[BaseModel] | None = None
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    def run(self, payload: dict[str, Any]) -> dict[str, Any]:  # override in subclasses
-        raise NotImplementedError
+from local_coding_assistant.tools.base import Tool
 
 
 class ToolRegistry(Iterable[Any]):
@@ -50,16 +38,16 @@ class ToolRegistry(Iterable[Any]):
         # If tool adheres to Tool contract, validate
         if isinstance(tool, Tool):
             data = payload
-            if tool.InputModel is not None:
+            if tool.Input is not None:
                 try:
-                    data_model = tool.InputModel(**payload)
+                    data_model = tool.Input(**payload)
                     data = data_model.model_dump()
                 except ValidationError as e:
                     raise ValueError(f"Invalid input for {name}: {e}") from e
             result = tool.run(data)
             if tool.OutputModel is not None:
                 try:
-                    out_model = tool.OutputModel(**result)
+                    out_model = tool.Output(**result)
                     return out_model.model_dump()
                 except ValidationError as e:
                     raise ValueError(f"Invalid output from {name}: {e}") from e
