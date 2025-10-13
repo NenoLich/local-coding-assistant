@@ -1,5 +1,6 @@
 """Run a single LLM or tool request via the runtime orchestrator."""
 
+import asyncio
 import logging
 
 import typer
@@ -9,7 +10,7 @@ from local_coding_assistant.core.error_handler import safe_entrypoint
 from local_coding_assistant.utils.logging import get_logger
 
 app = typer.Typer(name="run", help="Run a single LLM or tool request")
-log = get_logger(__name__)
+log = get_logger("cli.run")
 
 
 @app.command()
@@ -44,7 +45,13 @@ def query(
     runtime = ctx["runtime"]
 
     log.info("Executing query with model=%s", model or "default")
-    result = runtime.orchestrate(text, model=model)
+
+    # Check if runtime is available
+    if runtime is None:
+        typer.echo("Error: Runtime manager not available (LLM initialization failed)")
+        raise typer.Exit(code=1)
+
+    result = asyncio.run(runtime.orchestrate(text, model=model))
 
     # Print the assistant message (preserves existing tests that check for LLM echo)
     typer.echo("\nResponse:")

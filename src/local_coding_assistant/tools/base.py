@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+
 from pydantic import BaseModel
 
 
-class Tool:
+class Tool(ABC):
     """Base contract for tools with Pydantic I/O schemas.
-
     Subclasses should override `name`, `description`, nested `Input`/`Output`
     models, and the `run()` implementation.
     """
@@ -19,5 +20,6 @@ class Tool:
     class Output(BaseModel):
         pass
 
-    def run(self, payload: Input) -> Output:  # type: ignore[type-arg]
+    @abstractmethod
+    def run(self, payload: Input) -> Output:
         raise NotImplementedError

@@ -8,7 +8,7 @@ from local_coding_assistant.core.error_handler import safe_entrypoint
 from local_coding_assistant.utils.logging import get_logger
 
 app = typer.Typer(name="config", help="Configure system settings")
-log = get_logger(__name__)
+log = get_logger("cli.config")
 
 _PREFIX = "LOCCA_"
 

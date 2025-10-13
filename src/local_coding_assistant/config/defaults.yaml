@@ -1,0 +1,20 @@
+# Default configuration for Local Coding Assistant
+# This file provides fallback values when no other configuration is specified
+
+# Environment variables can override these defaults using the LOCCA_ prefix:
+# LOCCA_LLM__MODEL_NAME, LOCCA_RUNTIME__PERSISTENT_SESSIONS, etc.
+
+llm:
+  # Default LLM model and provider
+  model_name: "gpt-5-mini"
+  provider: "openai"
+  temperature: 0.7
+  max_tokens: 1000
+  api_key: null  # Set via environment variable LOCCA_LLM__API_KEY
+
+runtime:
+  # Default runtime behavior
+  persistent_sessions: false
+  max_session_history: 100
+  enable_logging: true
+  log_level: "INFO"

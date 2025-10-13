@@ -9,6 +9,41 @@ An AI-powered coding assistant that runs locally with support for LLMs and a plu
 - CLI-first interface
 - Support for local and remote LLMs
 
+## Configuration
+
+The application supports multiple configuration sources with the following priority order (highest to lowest):
+
+1. **Environment variables** (including .env files)
+2. **YAML configuration files**
+3. **Default values**
+
+### Environment Variables
+
+Environment variables use the `LOCCA_` prefix. For example:
+
+```bash
+export LOCCA_LLM__MODEL_NAME=gpt-4
+export LOCCA_LLM__TEMPERATURE=0.8
+export LOCCA_RUNTIME__PERSISTENT_SESSIONS=true
+```
+
+### .env Files
+
+Create a `.env` file in the project root for local development:
+
+```bash
+# Copy from .env and modify as needed
+cp .env .env.local
+```
+
+The application automatically loads:
+- `.env` - Base environment variables
+- `.env.local` - Local overrides (loaded after .env, takes precedence)
+
+### YAML Configuration Files
+
+You can also provide YAML configuration files that will be merged with environment variables and defaults.
+
 ## Development Setup
 
 1. Ensure you have Python 3.12+ installed

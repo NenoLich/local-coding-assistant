@@ -24,16 +24,20 @@ classifiers = [
 dependencies = [
     "pydantic>=2.12.0",
     "typer>=0.19.2",
+    "python-dotenv>=1.0.0",
+    "openai>=2.3.0",
 ]
 
 [project.optional-dependencies]
+# Legacy format - keeping for backward compatibility
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.12.0",
+    "pytest-asyncio>=1.2.0",
     "ruff>=0.6.0",
     "ty>=0.0.1a20",
-    "pre-commit>=3.7.0",
+    "pre-commit>=4.3.0",
     "black>=24.0.0",
     "isort>=5.13.0",
 ]
@@ -42,10 +46,10 @@ dev = [
 locca = "local_coding_assistant.cli.main:main"
 
 [tool.taskipy.tasks]
-test-unit = "pytest -v tests/unit"
-test-integration = "pytest -v tests/integration"
-test-e2e = "pytest -v tests/e2e"
-test-all = "pytest -v tests"
+test-unit = "pytest -v -s -x tests/unit"
+test-integration = "pytest -v -s -x tests/integration"
+test-e2e = "pytest -v -s -x tests/e2e"
+test-all = "pytest -v -s -x tests"
 
 [tool.ruff.lint]
 select = [
@@ -65,8 +69,6 @@ known-first-party = ["local_coding_assistant"]
 [tool.ty.rules]
 unused-ignore-comment = "warn"
 redundant-cast = "ignore"
-possibly-unbound-attribute = "error"
-possibly-unbound-import = "error"
 
 [[tool.ty.overrides]]
 include = ["tests/**", "**/test_*.py"]
@@ -86,7 +88,7 @@ ensure_newline_before_comments = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-v --cov=local_coding_assistant --cov-report=term-missing"
+# addopts = "-v --cov=local_coding_assistant --cov-report=term-missing"
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [coverage.run]
@@ -98,7 +100,16 @@ show_missing = true
 skip_covered = true
 
 [dependency-groups]
+# Modern PEP 735 format - recommended for new projects
 dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.12.0",
+    "pytest-asyncio>=1.2.0",
+    "ruff>=0.6.0",
+    "ty>=0.0.1a20",
     "pre-commit>=4.3.0",
+    "black>=24.0.0",
+    "isort>=5.13.0",
     "taskipy>=1.14.1",
 ]

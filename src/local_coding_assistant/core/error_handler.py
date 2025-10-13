@@ -61,7 +61,7 @@ def safe_entrypoint(context: str) -> Callable[[Callable[..., Any]], Callable[...
 
         # Ensure Typer sees the original callable signature
         try:
-            wrapper.__signature__ = inspect.signature(func)  # type: ignore[attr-defined]
+            wrapper.__signature__ = inspect.signature(func)
         except Exception:
             pass
 

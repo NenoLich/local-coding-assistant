@@ -10,7 +10,7 @@ from local_coding_assistant.core.error_handler import safe_entrypoint
 from local_coding_assistant.utils.logging import get_logger
 
 app = typer.Typer(name="list-tools", help="List available tools")
-log = get_logger(__name__)
+log = get_logger("cli.list_tools")
 
 
 def _serialize_tool(tool: object) -> dict[str, str]:
