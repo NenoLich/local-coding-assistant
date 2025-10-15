@@ -175,6 +175,7 @@ class RuntimeManager:
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        streaming: bool = False,
     ) -> dict[str, Any]:
         """Run the runtime in agent mode, delegating to AgentLoop."""
         # Import AgentLoop locally to avoid circular imports
@@ -185,6 +186,7 @@ class RuntimeManager:
             llm_manager=self._llm_manager,
             tool_manager=self._tool_manager,
             name="runtime_agent",
+            streaming=streaming,
         )
 
         # Run the agent loop

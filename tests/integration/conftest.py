@@ -23,7 +23,11 @@ class MockStreamingLLMManager(LLMManager):
     """Mock LLM manager that supports streaming responses and tool calls."""
 
     def __init__(self, responses: List[Dict[str, Any]]):
-        super().__init__()
+        super().__init__(
+            config=LLMConfig(
+                model_name="gpt-5-mini", provider="openai", temperature=0.7
+            )
+        )
         self.responses = responses
         self.call_count = 0
         self.streaming_enabled = True
@@ -118,14 +122,27 @@ class MockWeatherTool:
         }
 
 
+class MockFinalAnswerTool:
+    """Mock final answer tool for testing."""
+
+    def __init__(self):
+        self.name = "final_answer"
+        self.description = "Provide a final answer to the user"
+
+    def run(self, answer: str) -> Dict[str, Any]:
+        """Return the final answer."""
+        return {"answer": answer, "success": True}
+
+
 class MockToolManager(ToolManager):
-    """Mock tool manager with calculator and weather tools."""
+    """Mock tool manager with calculator, weather, and final answer tools."""
 
     def __init__(self):
         super().__init__()
         self.calculator = MockCalculatorTool()
         self.weather = MockWeatherTool()
-        self.tools = [self.calculator, self.weather]
+        self.final_answer = MockFinalAnswerTool()
+        self.tools = [self.calculator, self.weather, self.final_answer]
 
     def __iter__(self):
         return iter(self.tools)
@@ -138,6 +155,9 @@ class MockToolManager(ToolManager):
         elif tool_name == "weather":
             location = args.get("location", "")
             return self.weather.run(location)
+        elif tool_name == "final_answer":
+            answer = args.get("answer", "")
+            return self.final_answer.run(answer)
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
 
@@ -202,21 +222,87 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
     runtime._llm_manager = mock_llm_with_tools
     runtime._tool_manager = tool_manager
 
+    # Store the agent loop instance for session persistence
+    agent_loop_instance = None
+
     # Mock the _run_agent_mode method to use our real AgentLoop
-    async def mock_run_agent_mode(text, model=None, temperature=None, max_tokens=None):
-        agent_loop = AgentLoop(
-            llm_manager=mock_llm_with_tools,
-            tool_manager=tool_manager,
-            name="integration_test_agent",
-            max_iterations=5,
-        )
-        final_answer = await agent_loop.run()
+    async def mock_run_agent_mode(
+        text,
+        model=None,
+        temperature=None,
+        max_tokens=None,
+        streaming=False,
+        max_iterations=5,
+        agent_mode=False,
+        **kwargs,
+    ):
+        nonlocal agent_loop_instance
+
+        # Create new agent loop if this is the first call or if the previous one has finished
+        if agent_loop_instance is None or agent_loop_instance.final_answer is not None:
+            agent_loop_instance = AgentLoop(
+                llm_manager=MockStreamingLLMManager(mock_llm_with_tools.responses),
+                tool_manager=tool_manager,
+                name="integration_test_agent",
+                max_iterations=max_iterations,
+                streaming=streaming,
+            )
+
+        final_answer = await agent_loop_instance.run()
 
         return {
             "final_answer": final_answer,
-            "iterations": agent_loop.current_iteration,
-            "history": agent_loop.get_history(),
-            "session_id": agent_loop.session_id,
+            "iterations": agent_loop_instance.current_iteration,
+            "history": agent_loop_instance.get_history(),
+            "session_id": agent_loop_instance.session_id,
+            "streaming_enabled": streaming,
+        }
+
+    runtime._run_agent_mode = mock_run_agent_mode
+    return runtime
+
+
+@pytest.fixture
+def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
+    """Create runtime manager with mocked dependencies and streaming enabled."""
+    runtime = MagicMock(spec=RuntimeManager)
+    runtime._llm_manager = mock_llm_with_tools
+    runtime._tool_manager = tool_manager
+
+    # Store the agent loop instance for session persistence
+    agent_loop_instance = None
+
+    # Mock the _run_agent_mode method to use our real AgentLoop with streaming
+    async def mock_run_agent_mode(
+        text,
+        model=None,
+        temperature=None,
+        max_tokens=None,
+        streaming=False,
+        max_iterations=5,
+        agent_mode=False,
+        **kwargs,
+    ):
+        nonlocal agent_loop_instance
+
+        # Create new agent loop if this is the first call or if the previous one has finished
+        if agent_loop_instance is None or agent_loop_instance.final_answer is not None:
+            agent_loop_instance = AgentLoop(
+                llm_manager=MockStreamingLLMManager(mock_llm_with_tools.responses),
+                tool_manager=tool_manager,
+                name="integration_test_agent_streaming",
+                max_iterations=max_iterations,
+                streaming=streaming,
+            )
+
+        final_answer = await agent_loop_instance.run()
+
+        return {
+            "final_answer": final_answer,
+            "iterations": agent_loop_instance.current_iteration,
+            "history": agent_loop_instance.get_history(),
+            "session_id": agent_loop_instance.session_id,
+            "streaming_enabled": streaming,
         }
 
     runtime._run_agent_mode = mock_run_agent_mode

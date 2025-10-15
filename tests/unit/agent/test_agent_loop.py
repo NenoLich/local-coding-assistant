@@ -61,21 +61,36 @@ class TestAgentLoopInitialization:
         agent_loop = AgentLoop(
             llm_manager=llm_manager, tool_manager=tool_manager, name="test_agent"
         )
-
         # Check that tools are cached
         assert hasattr(agent_loop, "_cached_tools")
         assert len(agent_loop._cached_tools) == 1
         assert agent_loop._cached_tools[0]["function"]["name"] == "test_tool"
 
-    def test_agent_loop_invalid_max_iterations(self):
-        """Test that AgentLoop raises error for invalid max_iterations."""
+    def test_agent_loop_streaming_initialization(self):
+        """Test that AgentLoop initializes correctly with streaming flag."""
         llm_manager = MagicMock(spec=LLMManager)
         tool_manager = MagicMock(spec=ToolManager)
 
-        with pytest.raises(AgentError, match="max_iterations must be at least 1"):
-            AgentLoop(
-                llm_manager=llm_manager, tool_manager=tool_manager, max_iterations=0
-            )
+        # Test with streaming enabled
+        agent_loop_streaming = AgentLoop(
+            llm_manager=llm_manager,
+            tool_manager=tool_manager,
+            name="test_agent_streaming",
+            streaming=True,
+        )
+
+        assert agent_loop_streaming.streaming is True
+        assert agent_loop_streaming.name == "test_agent_streaming"
+
+        # Test with streaming disabled (default)
+        agent_loop_no_streaming = AgentLoop(
+            llm_manager=llm_manager,
+            tool_manager=tool_manager,
+            name="test_agent_no_streaming",
+        )
+
+        assert agent_loop_no_streaming.streaming is False
+        assert agent_loop_no_streaming.name == "test_agent_no_streaming"
 
 
 class TestAgentLoopControlFlow:

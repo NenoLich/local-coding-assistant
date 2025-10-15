@@ -1,6 +1,7 @@
 """Agent layer: LLM & reasoning management."""
 
 import os
+from collections.abc import AsyncIterator
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -277,6 +278,41 @@ class LLMManager:
                 from local_coding_assistant.core.exceptions import AgentError
 
                 raise AgentError(f"LLM generation failed: {e}") from e
+
+    async def generate_stream(self, request: LLMRequest) -> AsyncIterator[str]:
+        """Generate a streaming response using the LLM with the given request.
+
+        This is a placeholder implementation that falls back to regular generation.
+        Subclasses should override this method to provide actual streaming functionality.
+
+        Args:
+            request: Structured request containing prompt, context, and tool information.
+
+        Yields:
+            Partial response content as strings.
+
+        Raises:
+            AgentError: If streaming generation fails or client is not properly initialized.
+        """
+        # Placeholder implementation - fall back to regular generation
+        # Subclasses should override this for actual streaming
+        logger.warning(
+            "generate_stream() not implemented for this provider, falling back to generate()"
+        )
+
+        # Get the full response using regular generation
+        response = await self.generate(request)
+
+        # Yield the complete content as a single chunk
+        # In a real implementation, this would yield partial tokens
+        if response.content:
+            yield response.content
+
+        # Also handle tool calls if present
+        if response.tool_calls:
+            # For streaming, tool calls would typically be yielded at the end
+            # or as separate metadata, but for compatibility, we'll just yield the content
+            pass
 
     def update_config(
         self,

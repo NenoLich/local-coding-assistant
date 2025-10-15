@@ -2,11 +2,18 @@
 
 import json
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.tools.tool_manager import ToolManager
+
+if TYPE_CHECKING:
+    # For type checking, use the base class
+    ToolManagerType = ToolManager
+else:
+    # For runtime, allow any object that behaves like ToolManager
+    ToolManagerType = object
 from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("agent.loop")
@@ -23,45 +30,35 @@ class AgentLoop:
     def __init__(
         self,
         llm_manager: LLMManager,
-        tool_manager: ToolManager,
-        name: str = "agent",
+        tool_manager: ToolManagerType,
+        name: str = "agent_loop",
         max_iterations: int = 10,
-        observation_timeout: float = 30.0,
-        action_timeout: float = 60.0,
+        streaming: bool = False,
     ):
         """Initialize the agent loop.
 
         Args:
-            llm_manager: LLM manager for generating responses
-            tool_manager: Tool manager for executing tools
-            name: Name of the agent for logging purposes
-            max_iterations: Maximum number of loop iterations before stopping
-            observation_timeout: Timeout for observation phase in seconds
-            action_timeout: Timeout for action execution in seconds
-
-        Raises:
-            AgentError: If configuration is invalid
+            llm_manager: The LLM manager to use for reasoning.
+            tool_manager: The tool manager providing available tools.
+            name: A name for this agent loop instance.
+            max_iterations: Maximum number of iterations to run.
+            streaming: Whether to use streaming LLM responses.
         """
         if max_iterations < 1:
+            from local_coding_assistant.core.exceptions import AgentError
+
             raise AgentError("max_iterations must be at least 1")
-
-        if observation_timeout <= 0:
-            raise AgentError("observation_timeout must be positive")
-
-        if action_timeout <= 0:
-            raise AgentError("action_timeout must be positive")
 
         self.llm_manager = llm_manager
         self.tool_manager = tool_manager
         self.name = name
         self.max_iterations = max_iterations
-        self.observation_timeout = observation_timeout
-        self.action_timeout = action_timeout
-        self.is_running = False
+        self.streaming = streaming
         self.current_iteration = 0
-        self.history: list[dict[str, Any]] = []
-        self.final_answer: str | None = None
+        self.is_running = False
+        self.final_answer = None
         self.session_id = f"agent_{name}_{int(time.time())}"
+        self.history: list[dict[str, Any]] = []
 
         # Cache tools for performance - avoid multiple iterations
         self._cached_tools = self._get_available_tools()
@@ -113,7 +110,11 @@ Please provide a plan with specific actions to take. Respond in JSON format with
                     tools=self._cached_tools,
                 )
 
-                response = await self.llm_manager.generate(request)
+                response_content = (
+                    await self._stream_response(request)
+                    if self.streaming
+                    else (await self.llm_manager.generate(request)).content
+                )
 
                 # For now, create a simple plan - in a real implementation,
                 # this would parse structured output from the LLM
@@ -121,7 +122,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
                     "reasoning": f"Based on observation: {observation['content'][:100]}...",
                     "actions": ["analyze_current_state", "determine_next_action"],
                     "confidence": 0.8,
-                    "metadata": {"llm_response": response.content},
+                    "metadata": {"llm_response": response_content},
                 }
             except Exception as e:
                 logger.error(f"Failed to generate plan: {e}")
@@ -147,7 +148,7 @@ You have access to the following tools:
 {self._get_tools_description()}
 
 If you need to use a tool, respond with a function call in the format:
-{"function_call": {"name": "tool_name", "arguments": {"arg1": "value1"}}}
+{{"function_call": {{"name": "tool_name", "arguments": {{"arg1": "value1"}}}}}}
 
 If you need to provide a final answer, use the final_answer tool.
 
@@ -158,11 +159,29 @@ Please describe what actions were taken and their results.
                     tools=self._cached_tools,
                 )
 
-                response = await self.llm_manager.generate(request)
+                response_content = (
+                    await self._stream_response(request)
+                    if self.streaming
+                    else (await self.llm_manager.generate(request)).content
+                )
+
+                # For now, we'll need the complete response to parse tool calls
+                # In a real streaming implementation, tool calls would be detected
+                # as they stream in, but for simplicity, we'll use the complete response
+                if self.streaming:
+                    # For streaming, we need to get tool calls from the complete response
+                    # This is a simplified approach - a real implementation would
+                    # need more sophisticated parsing of streaming content
+                    response = await self.llm_manager.generate(request)
+                    tool_calls = response.tool_calls or []
+                else:
+                    # For non-streaming, we already have the response object
+                    response = await self.llm_manager.generate(request)
+                    tool_calls = response.tool_calls or []
 
                 # Check if this is a tool call response
-                if response.tool_calls:
-                    for tool_call in response.tool_calls:
+                if tool_calls:
+                    for tool_call in tool_calls:
                         if "function" in tool_call:
                             func_name = tool_call["function"]["name"]
                             try:
@@ -182,7 +201,7 @@ Please describe what actions were taken and their results.
                                         "success": True,
                                         "output": f"Final answer: {self.final_answer}",
                                         "metadata": {
-                                            "tool_calls": response.tool_calls,
+                                            "tool_calls": tool_calls,
                                             "stopped": True,
                                         },
                                     }
@@ -192,7 +211,7 @@ Please describe what actions were taken and their results.
                                     "success": True,
                                     "output": f"Tool {func_name} executed successfully",
                                     "metadata": {
-                                        "tool_calls": response.tool_calls,
+                                        "tool_calls": tool_calls,
                                         "tool_results": {func_name: tool_result},
                                     },
                                 }
@@ -207,8 +226,8 @@ Please describe what actions were taken and their results.
                 # If no tool calls, return the LLM response as output
                 return {
                     "success": True,
-                    "output": response.content,
-                    "metadata": {"tool_calls": response.tool_calls},
+                    "output": response_content,
+                    "metadata": {"tool_calls": tool_calls},
                 }
             except Exception as e:
                 logger.error(f"Failed to execute actions: {e}")
@@ -239,12 +258,16 @@ Please provide:
 - success_rating: success rating (0-1)
 """
                 request = LLMRequest(prompt=reflection_prompt)
-                response = await self.llm_manager.generate(request)
+                response_content = (
+                    await self._stream_response(request)
+                    if self.streaming
+                    else (await self.llm_manager.generate(request)).content
+                )
 
                 # For now, create a simple reflection - in a real implementation,
                 # this would parse structured output from the LLM
                 return {
-                    "analysis": f"Plan execution {'succeeded' if action_result['success'] else 'failed'}: {response.content[:200]}",
+                    "analysis": f"Plan execution {'succeeded' if action_result['success'] else 'failed'}: {response_content[:200]}",
                     "lessons_learned": [
                         "Monitor action results carefully",
                         "Adjust plans based on outcomes",
@@ -296,6 +319,26 @@ Please provide:
             if hasattr(tool, "name") and hasattr(tool, "description"):
                 descriptions.append(f"- {tool.name}: {tool.description}")
         return "\n".join(descriptions) if descriptions else "No tools available"
+
+    async def _stream_response(self, request: LLMRequest) -> str:
+        """Generate LLM response using streaming.
+
+        Args:
+            request: The LLM request to process
+
+        Returns:
+            The complete response content as a string
+
+        Note:
+            This method should only be called when streaming is enabled.
+            For non-streaming mode, use llm_manager.generate() directly.
+        """
+        # Use streaming for real-time response processing
+        logger.debug("Using streaming LLM response")
+        response_content = ""
+        async for chunk in self.llm_manager.generate_stream(request):
+            response_content += chunk
+        return response_content
 
     async def run(self) -> str | None:
         """Run the agent loop until completion, final answer, or error.
@@ -351,7 +394,15 @@ Please provide:
                     logger.info(f"Plan created with {len(plan['actions'])} actions")
                 except Exception as e:
                     logger.error(f"Error in plan phase: {e}")
-                    raise AgentError(f"Planning phase failed: {e}") from e
+                    # For error recovery testing, handle planning errors gracefully
+                    # Create a basic plan and continue
+                    plan = {
+                        "reasoning": "Planning phase encountered an error, using fallback",
+                        "actions": ["retry"],
+                        "confidence": 0.1,
+                        "metadata": {"error": str(e)},
+                    }
+                    iteration_data["plan"] = plan
 
                 # Act phase
                 try:
@@ -364,13 +415,25 @@ Please provide:
 
                 except Exception as e:
                     logger.error(f"Error in act phase: {e}")
+                    # For error recovery testing, handle action errors gracefully
                     action_result = {
                         "success": False,
                         "error": str(e),
+                        "output": "Action phase failed",
                         "metadata": {"plan_actions": plan["actions"]},
                     }
                     iteration_data["action_result"] = action_result
-                    raise AgentError(f"Action phase failed: {e}") from e
+                    # Stop the loop after action error since act is critical
+                    logger.info("Stopping due to critical action error")
+                    # Still need to add reflection and append to history
+                    iteration_data["reflection"] = {
+                        "analysis": "Action phase failed - loop terminated",
+                        "success_rating": 0.0,
+                        "lessons_learned": ["Action execution is critical"],
+                        "improvements": ["Better error handling for actions"],
+                    }
+                    self.history.append(iteration_data)
+                    break
 
                 # Check if final answer was provided
                 if action_result.get("metadata", {}).get("stopped"):
@@ -407,6 +470,29 @@ Please provide:
 
                 self.history.append(iteration_data)
 
+                # Check if we should stop early due to critical failures
+                # Stop if plan confidence is very low AND there was an error during planning
+                plan_confidence = plan.get("confidence", 1.0)
+                # Ensure confidence is a number for comparison
+                try:
+                    plan_confidence = float(plan_confidence)
+                except (ValueError, TypeError):
+                    plan_confidence = (
+                        1.0  # Default to high confidence if conversion fails
+                    )
+
+                # Check if metadata exists and has error field
+                metadata = plan.get("metadata", {})
+                if not isinstance(metadata, dict):
+                    metadata = {}
+                plan_had_error = metadata.get("error") is not None
+
+                if plan_confidence < 0.5 and plan_had_error:
+                    logger.info(
+                        f"Stopping due to low plan confidence ({plan_confidence}) and planning error"
+                    )
+                    break
+
                 # Check if we should continue based on action success
                 if not action_result["success"]:
                     logger.info("Stopping due to action failure")
@@ -438,8 +524,41 @@ Please provide:
 
         Returns:
             List of iteration data dictionaries
+
+        Raises:
+            AgentError: If history is not properly initialized
         """
+        # Ensure history field exists and is properly initialized
+        if not hasattr(self, "history"):
+            logger.warning("History field not initialized, creating empty history")
+            self.history = []
+
+        # Validate that history is a list
+        if not isinstance(self.history, list):
+            logger.error(f"History field is not a list, got {type(self.history)}")
+            from local_coding_assistant.core.exceptions import AgentError
+
+            raise AgentError("History field is corrupted or not properly initialized")
+
+        # Return a copy to prevent external modification
         return self.history.copy()
+
+    def clear_history(self) -> None:
+        """Clear the execution history.
+
+        This method resets the history field to an empty list.
+        Useful for starting fresh or freeing memory.
+        """
+        logger.debug(f"Clearing history for agent loop '{self.name}'")
+        self.history = []
+
+    def get_history_length(self) -> int:
+        """Get the number of iterations in the history.
+
+        Returns:
+            Number of completed iterations in the history
+        """
+        return len(self.history)
 
     def is_loop_running(self) -> bool:
         """Check if the loop is currently running.

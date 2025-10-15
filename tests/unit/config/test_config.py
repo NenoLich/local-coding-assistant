@@ -2,6 +2,7 @@
 
 import os
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -217,13 +218,30 @@ class TestConfigLoader:
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             f.write("invalid: yaml: content: [")
             temp_path = Path(f.name)
+            f.flush()  # Ensure all data is written to disk
+            os.fsync(f.fileno())  # Force write to disk
 
         try:
             loader = ConfigLoader()
             with pytest.raises(ConfigError, match="Invalid YAML"):
                 loader._load_yaml_file(temp_path)
         finally:
-            temp_path.unlink()
+            # Ensure file is closed and add retry for Windows file handle issues
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    temp_path.unlink()
+                    break
+                except PermissionError:
+                    if attempt < max_retries - 1:
+                        time.sleep(0.1)  # Wait a bit for file handles to be released
+                    else:
+                        # On final attempt, try to force close any remaining handles
+                        import gc
+
+                        gc.collect()
+                        time.sleep(0.2)
+                        temp_path.unlink(missing_ok=True)
 
     def test_load_env_vars_empty(self):
         """Test loading environment variables when none are set."""
