@@ -1,20 +1,288 @@
+import asyncio
+import json
+import time
+from typing import Any, AsyncIterator, Dict, List
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from typer.testing import CliRunner
-from unittest.mock import AsyncMock, MagicMock, patch
-from local_coding_assistant.agent.llm_manager import (
-    LLMConfig,
-    LLMManager,
-    LLMRequest,
-    LLMResponse,
-)
-from local_coding_assistant.cli.main import app as cli_app
-from local_coding_assistant.config.loader import load_config
-from local_coding_assistant.config.schemas import RuntimeConfig
-from local_coding_assistant.core.app_context import AppContext
-from local_coding_assistant.core.bootstrap import bootstrap
+
+from local_coding_assistant.agent.agent_loop import AgentLoop
+from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
+from local_coding_assistant.cli.main import app
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.tools.builtin import SumTool
 from local_coding_assistant.tools.tool_manager import ToolManager
+from local_coding_assistant.config.loader import load_config
+from local_coding_assistant.config.schemas import RuntimeConfig, LLMConfig
+from local_coding_assistant.core.app_context import AppContext
+from local_coding_assistant.core.bootstrap import bootstrap
+
+
+class MockStreamingLLMManager(LLMManager):
+    """Mock LLM manager that supports streaming responses and tool calls."""
+
+    def __init__(self, responses: List[Dict[str, Any]]):
+        super().__init__()
+        self.responses = responses
+        self.call_count = 0
+        self.streaming_enabled = True
+
+    async def generate(self, request: LLMRequest) -> LLMResponse:
+        """Generate a response based on the request."""
+        if self.call_count >= len(self.responses):
+            # Return a default response if we've exhausted our predefined responses
+            response_data = {"content": "I've completed my analysis.", "tool_calls": []}
+        else:
+            response_data = self.responses[self.call_count]
+
+        self.call_count += 1
+
+        # Create mock response
+        mock_response = MagicMock(spec=LLMResponse)
+        mock_response.content = response_data.get("content", "")
+        mock_response.tool_calls = response_data.get("tool_calls", [])
+
+        return mock_response
+
+    async def generate_stream(self, request: LLMRequest) -> AsyncIterator[str]:
+        """Generate a streaming response."""
+        if self.call_count >= len(self.responses):
+            response_data = {"content": "I've completed my analysis.", "tool_calls": []}
+        else:
+            response_data = self.responses[self.call_count]
+
+        self.call_count += 1
+
+        # Simulate streaming by yielding partial content
+        content = response_data.get("content", "")
+        if content and isinstance(content, str):
+            # Yield content in chunks
+            words = content.split()
+            current_chunk = ""
+            for word in words:
+                current_chunk += word + " "
+                yield current_chunk.strip()
+                await asyncio.sleep(0.01)  # Simulate streaming delay
+
+        # Yield tool calls if present
+        tool_calls = response_data.get("tool_calls", [])
+        if tool_calls:
+            yield f"\n\nTool calls: {json.dumps(tool_calls)}"
+
+
+class MockCalculatorTool:
+    """Mock calculator tool for testing."""
+
+    def __init__(self):
+        self.name = "calculator"
+        self.description = "Perform basic arithmetic calculations"
+
+    def run(self, expression: str) -> Dict[str, Any]:
+        """Evaluate a mathematical expression."""
+        try:
+            # Simple evaluation for testing
+            result = eval(expression, {"__builtins__": {}})
+            return {"result": result, "expression": expression, "success": True}
+        except Exception as e:
+            return {"error": str(e), "expression": expression, "success": False}
+
+
+class MockWeatherTool:
+    """Mock weather tool for testing."""
+
+    def __init__(self):
+        self.name = "weather"
+        self.description = "Get weather information for a location"
+
+    def run(self, location: str) -> Dict[str, Any]:
+        """Get weather for a location."""
+        # Mock weather data
+        weather_data = {
+            "new york": {"temperature": 72, "condition": "sunny", "humidity": 65},
+            "london": {"temperature": 59, "condition": "cloudy", "humidity": 80},
+            "tokyo": {"temperature": 78, "condition": "rainy", "humidity": 90},
+        }
+
+        data = weather_data.get(
+            location.lower(),
+            {"temperature": 70, "condition": "unknown", "humidity": 50},
+        )
+
+        return {
+            "location": location,
+            "temperature": data["temperature"],
+            "condition": data["condition"],
+            "humidity": data["humidity"],
+            "success": True,
+        }
+
+
+class MockToolManager(ToolManager):
+    """Mock tool manager with calculator and weather tools."""
+
+    def __init__(self):
+        super().__init__()
+        self.calculator = MockCalculatorTool()
+        self.weather = MockWeatherTool()
+        self.tools = [self.calculator, self.weather]
+
+    def __iter__(self):
+        return iter(self.tools)
+
+    def run_tool(self, tool_name: str, args: Dict[str, Any]) -> Any:
+        """Run a tool by name."""
+        if tool_name == "calculator":
+            expression = args.get("expression", "")
+            return self.calculator.run(expression)
+        elif tool_name == "weather":
+            location = args.get("location", "")
+            return self.weather.run(location)
+        else:
+            raise ValueError(f"Unknown tool: {tool_name}")
+
+
+# Integration test fixtures
+
+
+@pytest.fixture
+def mock_llm_with_tools():
+    """Create LLM manager with predefined responses for tool calling."""
+    responses = [
+        # First response: Ask about weather
+        {
+            "content": "I need to check the weather in New York to help plan the trip.",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "weather",
+                        "arguments": '{"location": "New York"}',
+                    }
+                }
+            ],
+        },
+        # Second response: Use calculator after getting weather
+        {
+            "content": "The weather is sunny with 72°F. I should calculate what to pack for this temperature.",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "calculator",
+                        "arguments": '{"expression": "72 + 10"}',
+                    }
+                }
+            ],
+        },
+        # Third response: Provide final answer
+        {
+            "content": "Based on the weather and temperature calculation, I recommend packing light summer clothes.",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "final_answer",
+                        "arguments": '{"answer": "Pack light summer clothes for your trip to New York. The weather will be sunny with around 72°F.", "reasoning": "Weather data shows sunny conditions at 72°F, and temperature calculation confirms comfortable weather."}',
+                    }
+                }
+            ],
+        },
+    ]
+    return MockStreamingLLMManager(responses)
+
+
+@pytest.fixture
+def tool_manager():
+    """Create tool manager with calculator and weather tools."""
+    return MockToolManager()
+
+
+@pytest.fixture
+def runtime_manager(mock_llm_with_tools, tool_manager):
+    """Create runtime manager with mocked dependencies."""
+    runtime = MagicMock(spec=RuntimeManager)
+    runtime._llm_manager = mock_llm_with_tools
+    runtime._tool_manager = tool_manager
+
+    # Mock the _run_agent_mode method to use our real AgentLoop
+    async def mock_run_agent_mode(text, model=None, temperature=None, max_tokens=None):
+        agent_loop = AgentLoop(
+            llm_manager=mock_llm_with_tools,
+            tool_manager=tool_manager,
+            name="integration_test_agent",
+            max_iterations=5,
+        )
+        final_answer = await agent_loop.run()
+
+        return {
+            "final_answer": final_answer,
+            "iterations": agent_loop.current_iteration,
+            "history": agent_loop.get_history(),
+            "session_id": agent_loop.session_id,
+        }
+
+    runtime._run_agent_mode = mock_run_agent_mode
+    return runtime
+
+
+@pytest.fixture
+def complex_scenario_llm():
+    """LLM with complex multi-step reasoning scenario."""
+    responses = [
+        # Initial observation leads to planning
+        {
+            "content": "I need to solve this complex problem step by step. First, I should gather information about the components involved.",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "weather",
+                        "arguments": '{"location": "New York"}',
+                    }
+                }
+            ],
+        },
+        # After weather info, do calculation
+        {
+            "content": "Now I have the weather information. I need to calculate something based on the temperature to determine the next steps.",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "calculator",
+                        "arguments": '{"expression": "75 * 2 + 10"}',
+                    }
+                }
+            ],
+        },
+        # Final synthesis
+        {
+            "content": "Based on all the information gathered, I can now provide a comprehensive solution to the user's query.",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "final_answer",
+                        "arguments": '{"answer": "Based on the weather in New York (75°F) and my calculations (160), the optimal approach is to prepare for warm weather activities.", "reasoning": "Weather data and mathematical analysis support this conclusion."}',
+                    }
+                }
+            ],
+        },
+    ]
+    return MockStreamingLLMManager(responses)
+
+
+@pytest.fixture
+def complex_tool_manager():
+    """Tool manager for complex scenarios."""
+    return MockToolManager()
+
+
+@pytest.fixture
+def streaming_llm_single_response():
+    """LLM with single response for streaming tests."""
+    responses = [
+        {
+            "content": "This is a streaming response that should be processed in chunks for testing purposes.",
+            "tool_calls": [],
+        }
+    ]
+    return MockStreamingLLMManager(responses)
 
 
 @pytest.fixture(scope="function")
@@ -26,7 +294,7 @@ def ctx():
 @pytest.fixture(scope="session")
 def app():
     """CLI app is static; session scope is fine."""
-    return cli_app
+    return app
 
 
 @pytest.fixture(scope="function")
