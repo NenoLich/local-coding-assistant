@@ -1,93 +1,270 @@
 # Local Coding Assistant (LOCCA)
 
-A local-first Python project for building a simple, extensible coding assistant. The current implementation is intentionally minimal and designed to be evolved.
+A sophisticated local-first Python project for building an advanced AI coding assistant with agent loops, tool systems, session management, and LangGraph compatibility.
 
 ---
 
 ## Goals
-- Local-first, privacy-respecting assistant.
-- Minimal, readable architecture with clear seams for extension.
-- Solid developer ergonomics: uv, pytest, ruff, pre-commit.
+- **Local-first, privacy-respecting assistant** with advanced AI patterns.
+- **Sophisticated agent architecture** with observe-plan-act-reflect loops.
+- **Graph-based orchestration** compatibility with LangGraph.
+- **Extensible tool system** with JSON schema validation.
+- **Session and context awareness** for persistent conversations.
+- **Streaming LLM support** for real-time interactions.
+- **Robust error handling** and logging throughout.
 
 ---
 
 ## Current Architecture Map
 
-- Package: `src/local_coding_assistant/`
-  - `agent/`
-    - `llm_manager.py`: small facade; `LLMManager.ask(text, tools)` echoes text and counts tools.
-  - `tools/`
-    - `tool_registry.py`: in-memory registry (list-like); supports `register`, iteration, and `len()`.
-  - `runtime/`
-    - `runtime_manager.py`: placeholder with `start()`/`stop()` no-ops.
-  - `core/`
-    - `app_context.py`: simple named resource registry (`register`, `get`, `__getitem__`, `__contains__`).
-    - `bootstrap.py`: wires `LLMManager`, `ToolRegistry`, `RuntimeManager` into `AppContext`.
-    - `assistant.py`: `Assistant.run_query(text, verbose)` uses LLM and tools from context.
-  - `cli/`
-    - `main.py`: Typer app; includes subcommands from `cli/commands/`.
-    - `commands/run.py`: `run query <text> [--verbose] [--model] [--log-level]` — calls `Assistant` and prints response.
-    - `commands/list_tools.py`, `commands/config.py`, `commands/serve.py`: basic implementations.
+### Package: `src/local_coding_assistant/`
+
+#### `agent/`
+- **`agent_loop.py`**: Full implementation of observe-plan-act-reflect pattern with:
+  - Multi-step reasoning loops
+  - Tool integration and result processing
+  - Session persistence and context management
+  - Error recovery and retry mechanisms
+  - Integration with LangGraph node interface
+- **`llm_manager.py`**: Advanced LLM interface supporting:
+  - Local and remote LLM providers
+  - Streaming responses and tool calling
+  - Request/response handling with proper async support
+  - Tool output processing and conversation management
+
+#### `tools/`
+- **`base/`**: Tool system foundation including:
+  - `tool_base.py`: Abstract base classes for tools
+  - `tool_schemas.py`: JSON schema validation for tool I/O
+  - `exceptions.py`: Tool-specific error handling
+- **`tool_registry.py`**: Dynamic tool management with:
+  - Tool registration and discovery
+  - Schema validation and type checking
+  - Error handling and logging
+
+#### `runtime/`
+- **`runtime_manager.py`**: Session and context management with:
+  - Persistent session storage
+  - Context awareness across interactions
+  - Background task management
+  - Configuration management
+
+#### `core/`
+- **`app_context.py`**: Enhanced resource registry with dependency injection
+- **`bootstrap.py`**: Composition root wiring all components together
+- **`assistant.py`**: Main integration surface for agent functionality
+- **`exceptions.py`**: Centralized error handling and custom exceptions
+- **`logging_config.py`**: Structured logging configuration
+
+#### `config/`
+- **`config_manager.py`**: Multi-source configuration management:
+  - Environment variable loading with LOCCA_ prefix
+  - YAML configuration file support
+  - Configuration validation and defaults
+  - Runtime configuration updates
+
+#### `cli/`
+- **`main.py`**: Enhanced Typer application with comprehensive commands
+- **`commands/`**:
+  - `run.py`: Advanced query execution with agent loop
+  - `list_tools.py`: Tool discovery and management
+  - `config.py`: Configuration management interface
+  - `serve.py`: Development server with hot reload
 
 ---
 
-## CLI
-- Entry point: `[project.scripts] locca = "local_coding_assistant.cli:main"`
-- Example (uv):
-  - `uv run locca run query "Hello" --verbose --model dummy --log-level DEBUG`
-- Example (module):
-  - `python -m local_coding_assistant.cli.main run query "Hello"`
+## Advanced Agent Patterns
+
+### Observe-Plan-Act-Reflect Loop
+LOCCA implements a sophisticated multi-step reasoning pattern:
+
+1. **Observe**: Gather information and context
+2. **Plan**: Develop strategy and identify required tools
+3. **Act**: Execute tools and process results
+4. **Reflect**: Evaluate outcomes and plan next steps
+
+Each phase includes error handling, retry logic, and proper state management.
+
+### Session Management
+- Persistent sessions with configurable history limits
+- Context awareness across multiple queries
+- Session isolation and cleanup
+- Integration with runtime configuration
+
+### Tool Integration
+- Dynamic tool loading and registration
+- JSON schema validation for tool inputs/outputs
+- Automatic tool discovery and calling
+- Tool result caching and error handling
 
 ---
 
-## Testing
-- Framework: `pytest` with coverage configured in `pyproject.toml`.
-- Layout:
-  - `tests/unit/`: fast tests (e.g., `test_tools_registry.py`, `test_llm_manager.py`, `test_runtime_manager.py`).
-  - `tests/integration/`: uses `tests/integration/conftest.py` fixtures (`ctx`, `assistant`, CLI `app`, `cli_runner`).
-  - `tests/e2e/`: CLI end-to-end via Typer `CliRunner` (`test_cli_run.py`, `test_cli_commands.py`).
-- Run via uv/taskipy:
-  - `uv run pytest -v` or tasks in `[tool.taskipy.tasks]`:
-    - `uv run task test-unit`
-    - `uv run task test-integration`
-    - `uv run task test-e2e`
-    - `uv run task test-all`
+## LangGraph Integration
+
+### Graph Compatibility
+- **AgentLoop as Execution Engine**: Can serve as nodes in LangGraph workflows
+- **State Management**: Proper state passing between graph nodes
+- **Node Interface**: Implements LangGraph-compatible node interface
+- **Orchestration**: Supports complex graph-based orchestration patterns
+
+### Mock Implementation
+The test suite includes `MockLangGraph` and `MockLangGraphNode` for:
+- Testing graph orchestration patterns
+- Validating node isolation and state management
+- Demonstrating integration capabilities
 
 ---
 
-## Pre-commit
-- Config: `.pre-commit-config.yaml`
-  - Lint & format with ruff on commit.
-  - Unit tests on pre-commit (fast path).
-  - Integration & e2e tests on pre-push.
-- Install:
-  - `pre-commit install`
-  - `pre-commit install --hook-type pre-push`
+## CLI Interface
+
+### Enhanced Commands
+```bash
+# Advanced query execution
+uv run locca run query "Complex task" --streaming --model gpt-4
+
+# Tool management
+uv run locca list-tools list --json
+uv run locca tools register --name calculator --schema
+
+# Configuration
+uv run locca config set LLM__MODEL_NAME gpt-4
+uv run locca config show
+```
+
+### Development Features
+- Comprehensive logging with structured output
+- Error handling with detailed stack traces
+- Development server with hot reload
+- Testing utilities and fixtures
+
+---
+
+## Testing Architecture
+
+### Test Categories
+- **`tests/unit/`**: Fast component tests with mocks
+- **`tests/integration/`**: Integration tests with comprehensive fixtures
+- **`tests/e2e/`**: End-to-end CLI testing
+
+### Key Testing Features
+- **Centralized Fixtures**: `conftest.py` with LLM, tool, and runtime mocks
+- **LangGraph Compatibility Tests**: Graph orchestration validation
+- **Streaming Tests**: Real-time response handling
+- **Error Recovery Tests**: Failure mode validation
+
+### Test Infrastructure
+- **MockLLMManager**: Configurable LLM responses for testing
+- **MockToolManager**: Tool registry with predefined behaviors
+- **MockRuntimeManager**: Session and context management testing
+
+---
+
+## Configuration System
+
+### Multi-Source Configuration
+1. **Environment Variables**: `LOCCA_*` prefixed variables
+2. **YAML Files**: Structured configuration files
+3. **Runtime Defaults**: Sensible fallback values
+
+### Key Configuration Areas
+- **LLM Settings**: Model, temperature, tokens, provider
+- **Runtime Settings**: Sessions, logging, error handling
+- **Tool Settings**: Registration paths, validation modes
+
+---
+
+## Recent Major Additions
+
+### Agent Loop Implementation
+- Full observe-plan-act-reflect pattern
+- Tool integration with result processing
+- Session persistence and context management
+- Error recovery and retry mechanisms
+
+### LangGraph Compatibility
+- Graph-based orchestration support
+- Node interface implementation
+- State management between nodes
+- Integration testing framework
+
+### Streaming LLM Support
+- Real-time response streaming
+- Tool call streaming
+- Progress updates during execution
+- Enhanced user experience
+
+### Enhanced Tool System
+- JSON schema validation
+- Dynamic tool loading
+- Improved error handling
+- Tool discovery and management
+
+### Session & Context Management
+- Persistent session storage
+- Context awareness across interactions
+- Session lifecycle management
+- Integration with runtime configuration
+
+### CLI Enhancement
+- Comprehensive command set
+- Tool management commands
+- Configuration interface
+- Development server
+
+### Error Handling & Logging
+- Centralized error handling
+- Structured logging throughout
+- Safe entry point decorators
+- Detailed error reporting
+
+---
+
+## Extension Points
+
+### Tool Development
+- Implement `ToolBase` for custom tools
+- Define JSON schemas for input/output validation
+- Register tools with the tool registry
+- Handle errors gracefully
+
+### LLM Provider Integration
+- Implement `LLMManager` interface
+- Add provider-specific configuration
+- Support streaming and tool calling
+- Handle provider-specific errors
+
+### Graph Node Development
+- Implement LangGraph node interface
+- Handle state passing between nodes
+- Support different execution patterns
+- Maintain node isolation
+
+### Configuration Extension
+- Add new configuration sources
+- Implement custom validation
+- Support runtime configuration updates
+- Maintain backward compatibility
 
 ---
 
 ## Conventions
-- Imports assume `src/` on `PYTHONPATH`; tests ensure this via `tests/conftest.py`.
-- Keep `bootstrap()` as the composition root for dependency wiring.
-- `Assistant.run_query()` is the main integration surface for agent logic.
+
+- **Async First**: All I/O operations are properly async
+- **Error Handling**: Comprehensive error handling with custom exceptions
+- **Logging**: Structured logging with appropriate levels
+- **Testing**: High test coverage with integration and e2e tests
+- **Configuration**: Multi-source with clear precedence rules
+- **Dependencies**: Minimal external dependencies with clear justifications
 
 ---
 
-## roadmap (suggested)
-- Tool model schemas (optional): introduce pydantic types for tool I/O.
-- Real LLM backend(s): swap `LLMManager.ask()` for providers (OpenAI/local) behind an interface.
-- Tool discovery: dynamic loading, metadata, validation.
-- Runtime: background workers/queues, async support in `RuntimeManager`.
-- CLI growth: `list-tools`, `serve`, and `config` subcommands with real behavior.
-- Optional MCP integration once core is stable.
+## Quick Links (Key Files)
+- `src/local_coding_assistant/agent/agent_loop.py` - Main agent loop implementation
+- `src/local_coding_assistant/agent/llm_manager.py` - LLM interface with streaming
+- `src/local_coding_assistant/tools/base/tool_base.py` - Tool system foundation
+- `src/local_coding_assistant/runtime/runtime_manager.py` - Session management
+- `src/local_coding_assistant/core/bootstrap.py` - Component wiring
+- `tests/integration/test_langgraph_compatibility.py` - Graph integration tests
+- `tests/integration/conftest.py` - Test fixtures and mocks
 
----
-
-## Quick Links (files mentioned)
-- `src/local_coding_assistant/core/bootstrap.py`
-- `src/local_coding_assistant/core/assistant.py`
-- `src/local_coding_assistant/tools/tool_registry.py`
-- `src/local_coding_assistant/agent/llm_manager.py`
-- `src/local_coding_assistant/cli/main.py`
-
-This document is for both humans and LLMs to quickly understand the project’s current shape and intended extension points. Update after any major architectural changes.
+This document reflects the current sophisticated state of LOCCA with advanced AI patterns, robust architecture, and comprehensive testing. Update after any major architectural changes.
