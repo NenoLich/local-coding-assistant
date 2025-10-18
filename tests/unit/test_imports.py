@@ -31,6 +31,16 @@ def test_circular_imports():
 
         # At minimum, we should get some context back
         assert ctx is not None
+        assert tools is not None  # ToolManager should always be available
+
+        # Runtime and LLM may be None if LLM manager creation fails
+        # This is expected behavior when OpenAI credentials are missing
+        if llm is not None:
+            # If LLM was successfully created, runtime should also be created
+            assert runtime is not None
+        else:
+            # If LLM creation failed, runtime should be None
+            assert runtime is None
 
     except Exception as e:
         if "OpenAI" in str(e):

@@ -1,21 +1,16 @@
 from __future__ import annotations
 
-from typing import Any, Optional, List, Dict
-
 import json
+from typing import Any
+
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
-from pydantic import ValidationError
-
-from local_coding_assistant.runtime.runtime_manager import RuntimeManager
-from local_coding_assistant.runtime.session import SessionState
 from local_coding_assistant.agent.llm_manager import LLMConfig, LLMManager, LLMResponse
-from local_coding_assistant.tools.tool_manager import ToolManager
-from local_coding_assistant.tools.builtin import SumTool
 from local_coding_assistant.config.schemas import RuntimeConfig
 from local_coding_assistant.core.exceptions import AgentError, ToolRegistryError
+from local_coding_assistant.runtime.runtime_manager import RuntimeManager
+from local_coding_assistant.tools.builtin import SumTool
+from local_coding_assistant.tools.tool_manager import ToolManager
 
 
 class FakeLLM(LLMManager):
@@ -26,7 +21,7 @@ class FakeLLM(LLMManager):
     """
 
     def __init__(self) -> None:
-        self.calls: List[Dict[str, Any]] = []
+        self.calls: list[dict[str, Any]] = []
         self.config = LLMConfig(model_name="fake-model", provider="fake")
 
     async def generate(self, request) -> LLMResponse:
@@ -61,7 +56,7 @@ class FakeLLM(LLMManager):
 class ToolManagerHelper(ToolManager):
     """Test tool manager that supports invoke() for backward compatibility."""
 
-    def invoke(self, name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def invoke(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Legacy invoke method for backward compatibility."""
         return self.run_tool(name, payload)
 
@@ -86,9 +81,6 @@ async def test_orchestrate_with_model_override():
     """Test orchestrate method with model override."""
     mgr, llm, _ = make_manager(persistent=False)
 
-    # Get initial config
-    initial_model = mgr._llm_manager.config.model_name
-
     # Call with model override
     result = await mgr.orchestrate("test query", model="gpt-4")
 
@@ -106,11 +98,7 @@ async def test_orchestrate_with_model_override():
 @pytest.mark.asyncio
 async def test_orchestrate_with_multiple_overrides():
     """Test orchestrate method with multiple configuration overrides."""
-    mgr, llm, _ = make_manager(persistent=False)
-
-    # Get initial config
-    initial_model = mgr._llm_manager.config.model_name
-    initial_temp = mgr._llm_manager.config.temperature
+    mgr, _llm, _ = make_manager(persistent=False)
 
     # Call with multiple overrides
     result = await mgr.orchestrate(
@@ -128,11 +116,7 @@ async def test_orchestrate_with_multiple_overrides():
 @pytest.mark.asyncio
 async def test_orchestrate_config_persists_across_calls():
     """Test that configuration overrides persist across multiple orchestrate calls."""
-    mgr, llm, _ = make_manager(persistent=False)
-
-    # Get initial config
-    initial_model = mgr._llm_manager.config.model_name
-    initial_temp = mgr._llm_manager.config.temperature
+    mgr, _llm, _ = make_manager(persistent=False)
 
     # First call with model override
     result1 = await mgr.orchestrate("test query 1", model="gpt-4", temperature=0.8)
@@ -158,7 +142,7 @@ async def test_orchestrate_config_persists_across_calls():
 @pytest.mark.asyncio
 async def test_orchestrate_config_override_validation():
     """Test that invalid configuration overrides raise appropriate errors."""
-    mgr, llm, _ = make_manager(persistent=False)
+    mgr, _llm, _ = make_manager(persistent=False)
 
     # Test invalid temperature override
     with pytest.raises(AgentError, match="Configuration update validation failed"):
@@ -239,14 +223,14 @@ async def test_empty_text_is_accepted_and_yields_echo():
 @pytest.mark.asyncio
 async def test_persistent_many_iterations_history_grows_linearly():
     mgr, llm, _ = make_manager(persistent=True)
-    N = 25
-    for i in range(N):
+    n = 25
+    for i in range(n):
         await mgr.orchestrate(f"m{i}")
     out = await mgr.orchestrate("final")
     # After N+1 runs, messages = 2*(N+1)
-    assert len(out["history"]) == 2 * (N + 1)
+    assert len(out["history"]) == 2 * (n + 1)
     # LLM saw large history length by the end
-    assert llm.calls[-1]["history_len"] >= 2 * N
+    assert llm.calls[-1]["history_len"] >= 2 * n
 
 
 # ── structured output validation ─────────────────────────────────────────────

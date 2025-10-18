@@ -26,6 +26,7 @@ dependencies = [
     "typer>=0.19.2",
     "python-dotenv>=1.0.0",
     "openai>=2.3.0",
+    "langgraph>=1.0.0a4",
 ]
 
 [project.optional-dependencies]

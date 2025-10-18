@@ -1,11 +1,12 @@
 """Unit tests for LLMManager update_config functionality."""
 
-import pytest
 from unittest.mock import patch
 
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
+import pytest
+
+from local_coding_assistant.agent.llm_manager import LLMManager
 from local_coding_assistant.config.schemas import LLMConfig
-from local_coding_assistant.core.exceptions import AgentError
+from local_coding_assistant.core.exceptions import LLMError
 
 
 class TestLLMManagerUpdateConfig:
@@ -17,7 +18,6 @@ class TestLLMManagerUpdateConfig:
         llm_manager = LLMManager(config)
 
         original_model = llm_manager.config.model_name
-        original_temp = llm_manager.config.temperature
 
         # Update only temperature (should not require new client)
         llm_manager.update_config(temperature=0.8)
@@ -58,8 +58,8 @@ class TestLLMManagerUpdateConfig:
         config = LLMConfig(model_name="gpt-3.5-turbo", temperature=0.7)
         llm_manager = LLMManager(config)
 
-        # Should raise AgentError for invalid temperature
-        with pytest.raises(AgentError, match="Configuration update validation failed"):
+        # Should raise LLMError for invalid temperature
+        with pytest.raises(LLMError, match="Configuration update validation failed"):
             llm_manager.update_config(temperature=-1)
 
     def test_update_config_invalid_max_tokens(self):
@@ -67,8 +67,8 @@ class TestLLMManagerUpdateConfig:
         config = LLMConfig(model_name="gpt-3.5-turbo", temperature=0.7)
         llm_manager = LLMManager(config)
 
-        # Should raise AgentError for invalid max_tokens
-        with pytest.raises(AgentError, match="Configuration update validation failed"):
+        # Should raise LLMError for invalid max_tokens
+        with pytest.raises(LLMError, match="Configuration update validation failed"):
             llm_manager.update_config(max_tokens=0)
 
     def test_update_config_no_changes(self):

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
 import os
-
-import pytest
-from typer.testing import CliRunner
 from unittest.mock import patch
+
+from typer.testing import CliRunner
 
 from local_coding_assistant.cli.main import app
 

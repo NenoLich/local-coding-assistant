@@ -1,14 +1,12 @@
 """Unit tests for AgentLoop functionality."""
 
-import asyncio
-import json
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from local_coding_assistant.agent.agent_loop import AgentLoop
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
+from local_coding_assistant.agent.llm_manager import LLMManager, LLMResponse
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.tools.tool_manager import ToolManager
 
@@ -249,7 +247,7 @@ class TestAgentLoopControlFlow:
         agent_loop.reflect_handler = mock_reflect
 
         # Run multiple iterations
-        result = await agent_loop.run()
+        await agent_loop.run()
 
         # Verify multiple iterations ran
         assert agent_loop.current_iteration == 3
@@ -363,7 +361,7 @@ class TestAgentLoopToolInvocation:
         )
 
         # Run the agent loop
-        result = await agent_loop_with_tools.run()
+        await agent_loop_with_tools.run()
 
         # Verify tool was called (it might be called twice due to test setup, but that's ok)
         assert mock_tool_manager_with_sum.run_tool.call_count >= 1

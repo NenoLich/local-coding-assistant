@@ -58,7 +58,7 @@ class LLMManager:
             config: Configuration object containing model and provider settings.
 
         Raises:
-            AgentError: If the provider is not supported or configuration is invalid.
+            LLMError: If the provider is not supported or configuration is invalid.
         """
         self.config = config
         self.client = None
@@ -68,25 +68,23 @@ class LLMManager:
         """Set up the LLM client based on the provider configuration.
 
         Raises:
-            AgentError: If the provider is not supported.
+            LLMError: If the provider is not supported.
         """
         try:
             if self.config.provider == "openai":
                 self._setup_openai_client()
             else:
-                from local_coding_assistant.core.exceptions import AgentError
+                from local_coding_assistant.core.exceptions import LLMError
 
-                raise AgentError(f"Unsupported provider: {self.config.provider}")
+                raise LLMError(f"Unsupported provider: {self.config.provider}")
         except Exception as e:
             logger.error(f"Failed to setup LLM client: {e}")
-            from local_coding_assistant.core.exceptions import AgentError
+            from local_coding_assistant.core.exceptions import LLMError
 
-            # Preserve AgentError messages, don't wrap them
-            if isinstance(e, AgentError):
+            # Preserve LLMError messages, don't wrap them
+            if isinstance(e, LLMError):
                 raise
-            raise AgentError(
-                f"Failed to initialize {self.config.provider} client"
-            ) from e
+            raise LLMError(f"Failed to initialize {self.config.provider} client") from e
 
     def _setup_openai_client(self) -> None:
         """Set up OpenAI client."""
@@ -98,9 +96,9 @@ class LLMManager:
             if openai is None:
                 raise ImportError("OpenAI package not available")
         except ImportError as e:
-            from local_coding_assistant.core.exceptions import AgentError
+            from local_coding_assistant.core.exceptions import LLMError
 
-            raise AgentError(f"OpenAI package not installed. Error: {e}") from e
+            raise LLMError(f"OpenAI package not installed. Error: {e}") from e
 
         try:
             from openai import AsyncOpenAI
@@ -113,9 +111,9 @@ class LLMManager:
                 f"Initialized OpenAI client for model: {self.config.model_name}"
             )
         except Exception as e:
-            from local_coding_assistant.core.exceptions import AgentError
+            from local_coding_assistant.core.exceptions import LLMError
 
-            raise AgentError(f"Failed to initialize OpenAI client: {e}") from e
+            raise LLMError(f"Failed to initialize OpenAI client: {e}") from e
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         """Generate a response using the LLM with the given request.
@@ -130,16 +128,16 @@ class LLMManager:
             Structured response with generated content and metadata.
 
         Raises:
-            AgentError: If generation fails or client is not properly initialized.
+            LLMError: If generation fails or client is not properly initialized.
         """
         # Check if we're in test mode and should return mock responses
         if os.environ.get("LOCCA_TEST_MODE") == "true":
             return self._generate_mock_response(request)
 
         if not self.client:
-            from local_coding_assistant.core.exceptions import AgentError
+            from local_coding_assistant.core.exceptions import LLMError
 
-            raise AgentError("LLM client not initialized")
+            raise LLMError("LLM client not initialized")
 
         try:
             logger.debug(f"Generating response for prompt: {request.prompt[:100]}...")
@@ -271,13 +269,13 @@ class LLMManager:
         except Exception as e:
             logger.error(f"Error during LLM generation: {e}")
             if "openai" in str(type(e)).lower():
-                from local_coding_assistant.core.exceptions import AgentError
+                from local_coding_assistant.core.exceptions import LLMError
 
-                raise AgentError(f"OpenAI API error: {e}") from e
+                raise LLMError(f"OpenAI API error: {e}") from e
             else:
-                from local_coding_assistant.core.exceptions import AgentError
+                from local_coding_assistant.core.exceptions import LLMError
 
-                raise AgentError(f"LLM generation failed: {e}") from e
+                raise LLMError(f"LLM generation failed: {e}") from e
 
     async def generate_stream(self, request: LLMRequest) -> AsyncIterator[str]:
         """Generate a streaming response using the LLM with the given request.
@@ -292,7 +290,7 @@ class LLMManager:
             Partial response content as strings.
 
         Raises:
-            AgentError: If streaming generation fails or client is not properly initialized.
+            LLMError: If streaming generation fails or client is not properly initialized.
         """
         # Placeholder implementation - fall back to regular generation
         # Subclasses should override this for actual streaming
@@ -333,7 +331,7 @@ class LLMManager:
             api_key: New API key (may require new client)
 
         Raises:
-            AgentError: If configuration update fails
+            LLMError: If configuration update fails
         """
         # Determine which parameters require client recreation
         requires_new_client = (
@@ -366,10 +364,10 @@ class LLMManager:
             # This will raise ValidationError if invalid
             LLMConfig(**new_config_dict)
         except Exception as e:
-            logger.error(f"Invalid configuration update: {e}")
-            from local_coding_assistant.core.exceptions import AgentError
+            logger.error(f"Configuration update validation failed: {e}")
+            from local_coding_assistant.core.exceptions import LLMError
 
-            raise AgentError(f"Configuration update validation failed: {e}") from e
+            raise LLMError(f"Configuration update validation failed: {e}") from e
 
         logger.info(f"Updating LLM config: {updates}")
 
@@ -393,6 +391,22 @@ class LLMManager:
             _ = self._client
         else:
             logger.debug("Configuration updated without requiring new client")
+
+    async def ainvoke(self, request: LLMRequest) -> LLMResponse:
+        """Generate a response using the LLM with the given request (async version of generate).
+
+        This is an alias for generate() to provide compatibility with LangGraph patterns.
+
+        Args:
+            request: Structured request containing prompt, context, and tool information.
+
+        Returns:
+            Structured response with generated content and metadata.
+
+        Raises:
+            LLMError: If generation fails or client is not properly initialized.
+        """
+        return await self.generate(request)
 
     def _build_messages(self, request: LLMRequest) -> list[dict[str, str]]:
         """Build OpenAI-compatible message list from request.

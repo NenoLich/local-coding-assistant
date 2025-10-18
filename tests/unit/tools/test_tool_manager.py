@@ -1,20 +1,20 @@
 """Comprehensive tests for the enhanced ToolManager."""
 
-import pytest
-import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
+import pytest
 from pydantic import BaseModel
+
 from local_coding_assistant.core.exceptions import ToolRegistryError
+from local_coding_assistant.tools.base import Tool
+from local_coding_assistant.tools.builtin import SumTool
 from local_coding_assistant.tools.tool_manager import (
-    ToolManager,
-    ToolRegistration,
     ToolExecutionRequest,
     ToolExecutionResponse,
     ToolInfo,
+    ToolManager,
+    ToolRegistration,
 )
-from local_coding_assistant.tools.base import Tool
-from local_coding_assistant.tools.builtin import SumTool
 
 
 class MockTool(Tool):
@@ -70,8 +70,11 @@ class TestToolManagerInitialization:
 
     def test_constructor_logging(self):
         """Test that constructor logs initialization."""
-        with patch("local_coding_assistant.tools.tool_manager.logger") as mock_logger:
-            manager = ToolManager()
+        # Import the module first to ensure it's loaded
+        from local_coding_assistant.tools import tool_manager
+
+        with patch.object(tool_manager, "logger") as mock_logger:
+            _manager = ToolManager()
             mock_logger.info.assert_called_once_with("ToolManager initialized")
 
 

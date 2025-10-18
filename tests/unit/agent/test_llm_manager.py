@@ -1,6 +1,6 @@
-import asyncio
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from local_coding_assistant.agent.llm_manager import (
     LLMConfig,
@@ -8,8 +8,7 @@ from local_coding_assistant.agent.llm_manager import (
     LLMRequest,
     LLMResponse,
 )
-from local_coding_assistant.core.exceptions import AgentError
-from local_coding_assistant.runtime.session import SessionState
+from local_coding_assistant.core.exceptions import LLMError
 
 
 class TestLLMConfig:
@@ -146,7 +145,7 @@ class TestLLMManager:
     def test_initialization_with_unsupported_provider(self):
         """Test LLMManager initialization fails with unsupported provider."""
         config = LLMConfig(model_name="test", provider="unsupported")
-        with pytest.raises(AgentError, match="Unsupported provider"):
+        with pytest.raises(LLMError, match="Unsupported provider"):
             LLMManager(config)
 
     def test_openai_client_setup_success(self):
@@ -172,7 +171,7 @@ class TestLLMManager:
         config = LLMConfig(model_name="gpt-3.5-turbo", provider="openai")
 
         with patch.dict("sys.modules", {"openai": None}):
-            with pytest.raises(AgentError, match="OpenAI package not installed"):
+            with pytest.raises(LLMError, match="OpenAI package not installed"):
                 LLMManager(config)
 
     @pytest.mark.asyncio
@@ -263,7 +262,7 @@ class TestLLMManager:
 
         request = LLMRequest(prompt="test")
 
-        with pytest.raises(AgentError, match="LLM client not initialized"):
+        with pytest.raises(LLMError, match="LLM client not initialized"):
             await llm.generate(request)
 
     @pytest.mark.asyncio
@@ -280,5 +279,5 @@ class TestLLMManager:
 
             request = LLMRequest(prompt="test")
 
-            with pytest.raises(AgentError, match="LLM generation failed"):
+            with pytest.raises(LLMError, match="LLM generation failed"):
                 await llm.generate(request)

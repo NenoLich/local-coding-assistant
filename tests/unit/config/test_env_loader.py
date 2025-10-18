@@ -142,7 +142,7 @@ class TestEnvLoader:
             mock_load.side_effect = Exception("File not found")
 
             with patch.object(Path, "exists", return_value=True):
-                with pytest.raises(ConfigError, match="Failed to load .env file"):
+                with pytest.raises(ConfigError, match=r"Failed to load .env file"):
                     loader.load_env_files()
 
     def test_env_file_loading_no_files(self):

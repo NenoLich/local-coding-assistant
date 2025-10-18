@@ -20,15 +20,19 @@ class AgentError(LocalAssistantError):
     subsystem = "agent"
 
 
+class LLMError(AgentError):
+    """Raised for issues specific to LLM communication or generation."""
+
+    subsystem = "llm"
+
+
 class ToolRegistryError(LocalAssistantError):
     """Raised for tool registration or execution errors."""
 
     subsystem = "tools"
 
 
-# Note: This intentionally shadows built-in name within this module's namespace.
-# Consider `RuntimeSubsystemError` if you want to avoid confusion in imports.
-class RuntimeError(LocalAssistantError):  # noqa: A001 - allow shadowing built-in name
+class RuntimeFlowError(LocalAssistantError):
     """Raised for runtime orchestration and task management issues."""
 
     subsystem = "runtime"

@@ -4,12 +4,14 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+
 import pytest
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from dotenv import load_dotenv
+
 from local_coding_assistant.agent.llm_manager import LLMConfig, LLMManager, LLMRequest
 
 

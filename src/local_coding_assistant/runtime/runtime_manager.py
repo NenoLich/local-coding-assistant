@@ -7,12 +7,15 @@ end-to-end query handling across the LLM and tools using a per-run session.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
 from local_coding_assistant.config.schemas import RuntimeConfig
 from local_coding_assistant.runtime.session import SessionState
-from local_coding_assistant.tools.tool_manager import ToolManager
+
+if TYPE_CHECKING:
+    from local_coding_assistant.tools.tool_manager import ToolManager
+
 from local_coding_assistant.utils.logging import get_logger
 
 
@@ -48,6 +51,7 @@ class RuntimeManager:
         text: str,
         *,
         agent_mode: bool = False,
+        graph_mode: bool = False,
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
@@ -57,6 +61,7 @@ class RuntimeManager:
         Args:
             text: The input text/query to process
             agent_mode: If True, delegate to AgentLoop for autonomous operation
+            graph_mode: If True, use LangGraph-based agent instead of legacy AgentLoop
             model: Optional model override
             temperature: Optional temperature override
             max_tokens: Optional max_tokens override
@@ -65,8 +70,10 @@ class RuntimeManager:
             Structured output with session_id, message, model_used, tokens_used,
             tool_calls, and history. In agent_mode, returns agent-specific format.
         """
-        if agent_mode:
-            return await self._run_agent_mode(text, model, temperature, max_tokens)
+        if agent_mode or graph_mode:
+            return await self._run_agent_mode(
+                text, model, temperature, max_tokens, graph_mode
+            )
 
         # Regular mode - single query execution
         return await self._run_regular_mode(text, model, temperature, max_tokens)
@@ -175,9 +182,90 @@ class RuntimeManager:
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        streaming: bool | None = None,
+        graph_mode: bool = False,
+    ) -> dict[str, Any]:
+        """Run the runtime in agent mode, delegating to AgentLoop or LangGraphAgent."""
+        # Determine which agent implementation to use
+        use_graph_mode = graph_mode or self.config.use_graph_mode
+        stream_mode = streaming if streaming is not None else self.config.stream
+
+        if use_graph_mode:
+            return await self._run_langgraph_agent_mode(
+                text, model, temperature, max_tokens, stream_mode
+            )
+        else:
+            return await self._run_legacy_agent_mode(
+                text, model, temperature, max_tokens, stream_mode
+            )
+
+    async def _run_langgraph_agent_mode(
+        self,
+        text: str,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
         streaming: bool = False,
     ) -> dict[str, Any]:
-        """Run the runtime in agent mode, delegating to AgentLoop."""
+        """Run the runtime in agent mode using LangGraphAgent."""
+        # Import LangGraphAgent locally to avoid circular imports
+        from local_coding_assistant.agent.langgraph_agent import (
+            AgentState,
+            LangGraphAgent,
+        )
+
+        # Create LangGraph agent with runtime components
+        agent = LangGraphAgent(
+            llm_manager=self._llm_manager,
+            tool_manager=self._tool_manager,
+            name="runtime_langgraph_agent",
+            streaming=streaming,
+        )
+
+        # Create initial state with the user input
+        initial_state = AgentState()
+        initial_state.user_input = text
+        initial_state.max_iterations = 10  # Could be made configurable
+
+        if streaming:
+            # Run in streaming mode
+            final_answer = None
+            history = []
+            async for state, _ in agent.run_stream(initial_state):
+                history = state.history
+                if state.final_answer:
+                    final_answer = state.final_answer
+                    break
+
+            return {
+                "final_answer": final_answer,
+                "iterations": len(history),
+                "history": history,
+                "session_id": initial_state.session_id,
+                "streaming": True,
+            }
+        else:
+            # Run in non-streaming mode
+            final_answer = await agent.run(initial_state)
+            history = agent.get_history()
+
+            return {
+                "final_answer": final_answer,
+                "iterations": initial_state.iteration,
+                "history": history,
+                "session_id": initial_state.session_id,
+                "streaming": False,
+            }
+
+    async def _run_legacy_agent_mode(
+        self,
+        text: str,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        streaming: bool = False,
+    ) -> dict[str, Any]:
+        """Run the runtime in agent mode using legacy AgentLoop."""
         # Import AgentLoop locally to avoid circular imports
         from local_coding_assistant.agent.agent_loop import AgentLoop
 

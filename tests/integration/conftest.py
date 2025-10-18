@@ -1,7 +1,7 @@
 import asyncio
 import json
-import time
-from typing import Any, AsyncIterator, Dict, List
+from collections.abc import AsyncIterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,20 +9,19 @@ from typer.testing import CliRunner
 
 from local_coding_assistant.agent.agent_loop import AgentLoop
 from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
-from local_coding_assistant.cli.main import app
+from local_coding_assistant.config.loader import load_config
+from local_coding_assistant.config.schemas import LLMConfig, RuntimeConfig
+from local_coding_assistant.core.app_context import AppContext
+from local_coding_assistant.core.bootstrap import bootstrap
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.tools.builtin import SumTool
 from local_coding_assistant.tools.tool_manager import ToolManager
-from local_coding_assistant.config.loader import load_config
-from local_coding_assistant.config.schemas import RuntimeConfig, LLMConfig
-from local_coding_assistant.core.app_context import AppContext
-from local_coding_assistant.core.bootstrap import bootstrap
 
 
 class MockStreamingLLMManager(LLMManager):
     """Mock LLM manager that supports streaming responses and tool calls."""
 
-    def __init__(self, responses: List[Dict[str, Any]]):
+    def __init__(self, responses: list[dict[str, Any]]):
         super().__init__(
             config=LLMConfig(
                 model_name="gpt-5-mini", provider="openai", temperature=0.7
@@ -82,7 +81,7 @@ class MockCalculatorTool:
         self.name = "calculator"
         self.description = "Perform basic arithmetic calculations"
 
-    def run(self, expression: str) -> Dict[str, Any]:
+    def run(self, expression: str) -> dict[str, Any]:
         """Evaluate a mathematical expression."""
         try:
             # Simple evaluation for testing
@@ -99,7 +98,7 @@ class MockWeatherTool:
         self.name = "weather"
         self.description = "Get weather information for a location"
 
-    def run(self, location: str) -> Dict[str, Any]:
+    def run(self, location: str) -> dict[str, Any]:
         """Get weather for a location."""
         # Mock weather data
         weather_data = {
@@ -129,7 +128,7 @@ class MockFinalAnswerTool:
         self.name = "final_answer"
         self.description = "Provide a final answer to the user"
 
-    def run(self, answer: str) -> Dict[str, Any]:
+    def run(self, answer: str) -> dict[str, Any]:
         """Return the final answer."""
         return {"answer": answer, "success": True}
 
@@ -147,7 +146,7 @@ class MockToolManager(ToolManager):
     def __iter__(self):
         return iter(self.tools)
 
-    def run_tool(self, tool_name: str, args: Dict[str, Any]) -> Any:
+    def run_tool(self, tool_name: str, args: dict[str, Any]) -> Any:
         """Run a tool by name."""
         if tool_name == "calculator":
             expression = args.get("expression", "")
@@ -377,12 +376,6 @@ def ctx():
     return bootstrap()
 
 
-@pytest.fixture(scope="session")
-def app():
-    """CLI app is static; session scope is fine."""
-    return app
-
-
 @pytest.fixture(scope="function")
 def cli_runner():
     """Provide a CliRunner instance for invoking CLI commands."""
@@ -489,13 +482,14 @@ def ctx_with_mocked_llm(mock_llm_manager):
     """
     Create a context with mocked LLM manager to avoid API quota issues.
     """
-    config = load_config()
+    load_config()
     runtime_config = RuntimeConfig(
         persistent_sessions=False,
         max_session_history=100,
         enable_logging=True,
         log_level="INFO",
     )
+
     runtime = RuntimeManager(
         llm_manager=mock_llm_manager,
         tool_manager=ToolManager(),

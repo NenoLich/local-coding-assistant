@@ -4,14 +4,13 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add project src/ to sys.path for imports like `local_coding_assistant.*`
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
-
-# Configure pytest-asyncio for async tests
-import pytest
 
 
 def pytest_configure(config):

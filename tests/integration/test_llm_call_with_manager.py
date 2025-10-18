@@ -1,8 +1,10 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+
 from local_coding_assistant.agent.llm_manager import (
-    LLMManager,
     LLMConfig,
+    LLMManager,
     LLMRequest,
     LLMResponse,
 )

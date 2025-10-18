@@ -17,7 +17,7 @@ def test_env_loader():
     # Test 1: Basic functionality
     env_loader = EnvLoader()
     config = env_loader.get_config_from_env()
-    print(f"✓ EnvLoader created successfully")
+    print("✓ EnvLoader created successfully")
     print(f"✓ Default config from env: {config}")
 
     # Test 2: Environment variable parsing
@@ -41,7 +41,7 @@ def test_env_loader():
         # Verify the parsed values
         assert config["llm"]["model_name"] == "gpt-4"
         assert config["llm"]["temperature"] == 0.8
-        assert config["runtime"]["persistent_sessions"] == True
+        assert config["runtime"]["persistent_sessions"]
         print("✓ Type conversion works correctly")
 
     finally:

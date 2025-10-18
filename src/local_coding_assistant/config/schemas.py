@@ -67,6 +67,13 @@ class RuntimeConfig(BaseModel):
     log_level: str | None = Field(
         default="INFO", description="Logging level for runtime operations"
     )
+    use_graph_mode: bool = Field(
+        default=False,
+        description="Whether to use LangGraph-based agent instead of legacy AgentLoop",
+    )
+    stream: bool = Field(
+        default=False, description="Whether to use streaming mode for graph execution"
+    )
 
 
 class AppConfig(BaseModel):

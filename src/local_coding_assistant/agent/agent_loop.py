@@ -6,10 +6,11 @@ from typing import TYPE_CHECKING, Any
 
 from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
 from local_coding_assistant.core.exceptions import AgentError
-from local_coding_assistant.tools.tool_manager import ToolManager
 
 if TYPE_CHECKING:
     # For type checking, use the base class
+    from local_coding_assistant.tools.tool_manager import ToolManager
+
     ToolManagerType = ToolManager
 else:
     # For runtime, allow any object that behaves like ToolManager

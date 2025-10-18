@@ -10,8 +10,7 @@ This test demonstrates future LangGraph integration by:
 import asyncio
 import json
 import time
-from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock
+from typing import Any
 
 import pytest
 
@@ -27,7 +26,7 @@ class MockLangGraphNode:
         self.name = name
         self.handler = handler_func
 
-    async def run(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    async def run(self, state: dict[str, Any]) -> dict[str, Any]:
         """Execute the node handler and update state."""
         try:
             result = await self.handler(state)
@@ -41,11 +40,11 @@ class MockLangGraphNode:
 class MockLangGraph:
     """Simplified LangGraph implementation for testing compatibility."""
 
-    def __init__(self, nodes: List[MockLangGraphNode]):
+    def __init__(self, nodes: list[MockLangGraphNode]):
         self.nodes = nodes
         self.edges = {}  # Simple sequential execution for this test
 
-    async def execute(self, initial_state: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, initial_state: dict[str, Any]) -> dict[str, Any]:
         """Execute the graph sequentially (simplified - real LangGraph would handle complex routing)."""
         state = initial_state.copy()
 
@@ -72,7 +71,7 @@ class LangGraphAgentLoop:
         self.current_iteration = 0
         self.final_answer = None
         self.session_id = f"langgraph_{name}_{int(time.time())}"
-        self.history: List[Dict[str, Any]] = []
+        self.history: list[dict[str, Any]] = []
 
         # Build the LangGraph
         self.graph = self._build_graph()
@@ -81,7 +80,7 @@ class LangGraphAgentLoop:
         """Build the LangGraph with observe-plan-act-reflect nodes."""
 
         # Observe node
-        async def observe_handler(state: Dict[str, Any]) -> Dict[str, Any]:
+        async def observe_handler(state: dict[str, Any]) -> dict[str, Any]:
             content = f"LangGraph iteration {self.current_iteration + 1} in session {self.session_id}"
             return {
                 "content": content,
@@ -94,7 +93,7 @@ class LangGraphAgentLoop:
             }
 
         # Plan node
-        async def plan_handler(state: Dict[str, Any]) -> Dict[str, Any]:
+        async def plan_handler(state: dict[str, Any]) -> dict[str, Any]:
             observation = state.get("observe", {})
             prompt = f"""
 Based on the following observation, create a plan for what the agent should do next:
@@ -129,7 +128,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
                 }
 
         # Act node
-        async def act_handler(state: Dict[str, Any]) -> Dict[str, Any]:
+        async def act_handler(state: dict[str, Any]) -> dict[str, Any]:
             plan = state.get("plan", {})
             try:
                 # Create a prompt that includes tool calling instructions
@@ -206,7 +205,7 @@ Please describe what actions were taken and their results.
                 }
 
         # Reflect node
-        async def reflect_handler(state: Dict[str, Any]) -> Dict[str, Any]:
+        async def reflect_handler(state: dict[str, Any]) -> dict[str, Any]:
             action_result = state.get("act", {})
             plan = state.get("plan", {})
 
@@ -243,7 +242,7 @@ Please provide:
                     else [],
                     "success_rating": 0.9 if action_result["success"] else 0.3,
                 }
-            except Exception as e:
+            except Exception:
                 return {
                     "analysis": "Failed to generate reflection",
                     "success_rating": 0.0,
@@ -260,7 +259,7 @@ Please provide:
 
         return MockLangGraph(nodes)
 
-    def _get_available_tools(self) -> List[Dict[str, Any]]:
+    def _get_available_tools(self) -> list[dict[str, Any]]:
         """Get available tools for LLM requests."""
         available_tools = []
         for tool in self.tool_manager:
@@ -284,7 +283,7 @@ Please provide:
                 descriptions.append(f"- {tool.name}: {tool.description}")
         return "\n".join(descriptions) if descriptions else "No tools available"
 
-    async def run(self) -> Optional[str]:
+    async def run(self) -> str | None:
         """Run the LangGraph-based agent loop."""
         self.current_iteration = 0
         self.final_answer = None
@@ -480,7 +479,7 @@ class TestLangGraphCompatibility:
             def __init__(self, agent_loop: AgentLoop):
                 self.agent_loop = agent_loop
 
-            async def orchestrate_simple_chain(self, prompt: str) -> Dict[str, Any]:
+            async def orchestrate_simple_chain(self, prompt: str) -> dict[str, Any]:
                 """Simple orchestration that uses AgentLoop for execution."""
                 # This simulates how a real graph orchestrator might use AgentLoop
                 # as one of its execution nodes

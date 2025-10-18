@@ -8,7 +8,6 @@ from local_coding_assistant.config.loader import load_config
 from local_coding_assistant.core.app_context import AppContext
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.tools.builtin import SumTool
-from local_coding_assistant.tools.tool_manager import ToolManager
 from local_coding_assistant.utils.logging import get_logger, setup_logging
 
 logger = get_logger("core.bootstrap")
@@ -59,6 +58,9 @@ def bootstrap(
         # For now, we'll skip LLM initialization if it fails
         # In a production system, you might want to use a mock or fallback
         llm_manager = None
+
+    # Import here to avoid circular imports
+    from local_coding_assistant.tools.tool_manager import ToolManager
 
     tool_manager = ToolManager()
     # Register builtin tools

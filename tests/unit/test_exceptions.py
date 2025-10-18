@@ -1,12 +1,13 @@
 import pytest
 
 from local_coding_assistant.core.exceptions import (
-    LocalAssistantError,
     AgentError,
-    ToolRegistryError,
-    RuntimeError,
-    ConfigError,
     CLIError,
+    ConfigError,
+    LLMError,
+    LocalAssistantError,
+    RuntimeFlowError,
+    ToolRegistryError,
 )
 
 
@@ -24,8 +25,9 @@ def test_local_assistant_error_override_subsystem():
     "exc_class,expected",
     [
         (AgentError, "[agent] oops"),
+        (LLMError, "[llm] oops"),
         (ToolRegistryError, "[tools] oops"),
-        (RuntimeError, "[runtime] oops"),
+        (RuntimeFlowError, "[runtime] oops"),
         (ConfigError, "[config] oops"),
         (CLIError, "[cli] oops"),
     ],
