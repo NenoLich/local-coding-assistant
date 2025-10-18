@@ -1,12 +1,13 @@
 # Local Coding Assistant (LOCCA)
 
-A sophisticated local-first Python project for building an advanced AI coding assistant with agent loops, tool systems, session management, and LangGraph compatibility.
+A sophisticated local-first Python project for building an advanced AI coding assistant with agent loops, tool systems, session management, LangGraph compatibility, and sophisticated opar-agent implementation.
 
 ---
 
 ## Goals
 - **Local-first, privacy-respecting assistant** with advanced AI patterns.
 - **Sophisticated agent architecture** with observe-plan-act-reflect loops.
+- **LangGraph opar-agent** with advanced graph-based reasoning capabilities.
 - **Graph-based orchestration** compatibility with LangGraph.
 - **Extensible tool system** with JSON schema validation.
 - **Session and context awareness** for persistent conversations.
@@ -26,6 +27,12 @@ A sophisticated local-first Python project for building an advanced AI coding as
   - Session persistence and context management
   - Error recovery and retry mechanisms
   - Integration with LangGraph node interface
+- **`langgraph_agent.py`**: Sophisticated LangGraph opar-agent implementation featuring:
+  - Advanced graph-based reasoning with observe-plan-act-reflect nodes
+  - Sophisticated state management across multiple execution phases
+  - Streaming support for all agent phases (observe, plan, act, reflect)
+  - Robust error handling with fallback mechanisms
+  - LangGraph orchestration with proper node isolation
 - **`llm_manager.py`**: Advanced LLM interface supporting:
   - Local and remote LLM providers
   - Streaming responses and tool calling
@@ -96,6 +103,45 @@ Each phase includes error handling, retry logic, and proper state management.
 - JSON schema validation for tool inputs/outputs
 - Automatic tool discovery and calling
 - Tool result caching and error handling
+
+---
+
+## LangGraph Opar-Agent
+
+### Advanced Graph-Based Agent Implementation
+
+The LangGraph opar-agent (`langgraph_agent.py`) provides sophisticated multi-step reasoning capabilities:
+
+#### Core Architecture
+- **Graph-Based Execution**: Uses LangGraph for orchestrating complex reasoning workflows
+- **Four-Phase Pattern**: Implements observe-plan-act-reflect cycle as LangGraph nodes
+- **State Management**: Sophisticated state handling across multiple execution phases
+- **Streaming Integration**: Real-time streaming support for all agent phases
+
+#### Node Implementations
+1. **Observe Node**: Context gathering and information synthesis
+2. **Plan Node**: Strategic planning with LLM-powered reasoning and tool identification
+3. **Act Node**: Tool execution with comprehensive result processing
+4. **Reflect Node**: Outcome analysis and learning from results
+
+#### Key Features
+- **Error Recovery**: Robust error handling with fallback mechanisms in each node
+- **State Persistence**: Maintains complex state across graph execution
+- **Streaming Support**: Real-time updates during long-running operations
+- **Tool Integration**: Seamless integration with the tool registry system
+- **Session Awareness**: Context management across multiple interactions
+
+#### Usage Patterns
+```python
+# Create and run LangGraph opar-agent
+agent = LangGraphAgent(
+    llm_manager=llm,
+    tool_manager=tools,
+    max_iterations=5,
+    streaming=True
+)
+result = await agent.run()
+```
 
 ---
 
@@ -174,6 +220,12 @@ uv run locca config show
 ---
 
 ## Recent Major Additions
+
+### LangGraph Opar-Agent Implementation
+- Sophisticated graph-based agent with observe-plan-act-reflect nodes
+- Advanced state management across multiple execution phases
+- Streaming support for all agent phases
+- Robust error handling with fallback mechanisms
 
 ### Agent Loop Implementation
 - Full observe-plan-act-reflect pattern
@@ -260,6 +312,7 @@ uv run locca config show
 
 ## Quick Links (Key Files)
 - `src/local_coding_assistant/agent/agent_loop.py` - Main agent loop implementation
+- `src/local_coding_assistant/agent/langgraph_agent.py` - LangGraph opar-agent implementation
 - `src/local_coding_assistant/agent/llm_manager.py` - LLM interface with streaming
 - `src/local_coding_assistant/tools/base/tool_base.py` - Tool system foundation
 - `src/local_coding_assistant/runtime/runtime_manager.py` - Session management
@@ -267,4 +320,4 @@ uv run locca config show
 - `tests/integration/test_langgraph_compatibility.py` - Graph integration tests
 - `tests/integration/conftest.py` - Test fixtures and mocks
 
-This document reflects the current sophisticated state of LOCCA with advanced AI patterns, robust architecture, and comprehensive testing. Update after any major architectural changes.
+This document reflects the current sophisticated state of LOCCA with advanced AI patterns, robust architecture, comprehensive testing, and the new LangGraph opar-agent implementation. Update after any major architectural changes.

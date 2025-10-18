@@ -1,12 +1,13 @@
 # Local Coding Assistant (LOCCA)
 
-An AI-powered coding assistant that runs locally with support for LLMs, tools, and advanced agent patterns including observe-plan-act-reflect loops and LangGraph compatibility.
+An AI-powered coding assistant that runs locally with support for LLMs, tools, and advanced agent patterns including observe-plan-act-reflect loops, LangGraph compatibility, and sophisticated opar-agent implementation.
 
 ## Features
 
 - **Local-first architecture** with optional cloud backend support
 - **Advanced Agent Patterns** - Observe-Plan-Act-Reflect loop implementation
 - **LangGraph Compatibility** - Integration with LangGraph for graph-based orchestration
+- **LangGraph Opar-Agent** - Sophisticated agent implementation with advanced reasoning capabilities
 - **Streaming LLM Support** - Real-time streaming responses and tool calling
 - **Plugin System** - Extensible tools and integrations
 - **Session Management** - Persistent sessions with context awareness
@@ -29,6 +30,7 @@ LOCCA implements a sophisticated agent architecture with the following key compo
 - **Graph-based Orchestration** - AgentLoop can serve as execution engine in LangGraph workflows
 - **Node Compatibility** - Implements LangGraph node interface for seamless integration
 - **State Management** - Proper state passing between graph nodes
+- **LangGraph Opar-Agent** - Advanced agent implementation using LangGraph for sophisticated reasoning
 
 ### Core Systems
 - **LLM Manager** - Unified interface for local and remote LLMs with streaming support
@@ -104,6 +106,7 @@ You can also provide YAML configuration files that will be merged with environme
 │   └── local_coding_assistant/  # Main package
 │       ├── agent/              # Agent loop and LLM management
 │       │   ├── agent_loop.py   # Observe-Plan-Act-Reflect implementation
+│       │   ├── langgraph_agent.py # LangGraph opar-agent implementation
 │       │   └── llm_manager.py  # LLM interface with streaming
 │       ├── tools/              # Tool system
 │       │   ├── base/           # Base tool classes and schemas
@@ -178,6 +181,16 @@ LOCCA implements sophisticated agent patterns:
 - **Tool Calling** - Automatic tool discovery and execution
 - **Error Recovery** - Graceful handling of failures with retry logic
 
+### LangGraph Opar-Agent
+
+LOCCA now includes a sophisticated LangGraph-based opar-agent implementation:
+
+- **Graph-based Reasoning** - Advanced multi-step reasoning using LangGraph orchestration
+- **Sophisticated State Management** - Complex state handling across multiple nodes
+- **Streaming Support** - Real-time streaming for all agent phases
+- **Error Recovery** - Robust error handling with fallback mechanisms
+- **Node Specialization** - Dedicated nodes for observe, plan, act, and reflect phases
+
 ### LangGraph Integration
 
 The system is designed for LangGraph compatibility:
@@ -214,6 +227,7 @@ uv run pytest tests/e2e/ -v
 
 ## Recent Additions
 
+- **LangGraph Opar-Agent** - Sophisticated graph-based agent implementation with advanced reasoning
 - **LangGraph Compatibility Tests** - Integration tests for graph-based orchestration
 - **Streaming LLM Responses** - Real-time streaming for better user experience
 - **Advanced Agent Loop** - Observe-Plan-Act-Reflect pattern implementation
