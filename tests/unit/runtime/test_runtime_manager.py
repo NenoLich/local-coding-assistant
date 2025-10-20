@@ -5,9 +5,13 @@ from typing import Any
 
 import pytest
 
-from local_coding_assistant.agent.llm_manager import LLMConfig, LLMManager, LLMResponse
+from local_coding_assistant.agent.llm_manager import LLMManager, LLMResponse
 from local_coding_assistant.config.schemas import RuntimeConfig
-from local_coding_assistant.core.exceptions import AgentError, ToolRegistryError
+from local_coding_assistant.core.exceptions import (
+    AgentError,
+    ToolRegistryError,
+    LLMError,
+)
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.tools.builtin import SumTool
 from local_coding_assistant.tools.tool_manager import ToolManager
@@ -21,11 +25,52 @@ class FakeLLM(LLMManager):
     """
 
     def __init__(self) -> None:
+        super().__init__()
         self.calls: list[dict[str, Any]] = []
-        self.config = LLMConfig(model_name="fake-model", provider="fake")
+        # Initialize config manager and set current config
+        from local_coding_assistant.config.schemas import LLMConfig
 
-    async def generate(self, request) -> LLMResponse:
+        self._current_llm_config = LLMConfig(model_name="fake-model", provider="fake")
+
+    async def generate(
+        self, request, *, provider=None, model_name=None, overrides=None
+    ) -> LLMResponse:
         """Mock generate method that returns deterministic responses."""
+        # Handle configuration overrides
+        if overrides:
+            # Validate overrides before applying them (similar to real LLMManager)
+            # Check for specific invalid values that should raise LLMError
+            for key, value in overrides.items():
+                if (
+                    key == "llm.temperature"
+                    and isinstance(value, (int, float))
+                    and value < 0
+                ):
+                    from local_coding_assistant.core.exceptions import LLMError
+
+                    raise LLMError(
+                        f"Configuration update validation failed: temperature must be >= 0.0, got {value}"
+                    )
+                elif key == "llm.max_tokens" and isinstance(value, int) and value <= 0:
+                    from local_coding_assistant.core.exceptions import LLMError
+
+                    raise LLMError(
+                        f"Configuration update validation failed: max_tokens must be > 0, got {value}"
+                    )
+
+            # If validation passes, apply the overrides
+            for key, value in overrides.items():
+                if key == "llm.model_name" and model_name is None:
+                    self._current_llm_config.model_name = value
+                elif key == "llm.temperature":
+                    self._current_llm_config.temperature = value
+                elif key == "llm.max_tokens":
+                    self._current_llm_config.max_tokens = value
+
+        # Handle direct model_name override
+        if model_name is not None:
+            self._current_llm_config.model_name = model_name
+
         self.calls.append(
             {
                 "session_id": request.context.get("session_id")
@@ -37,7 +82,7 @@ class FakeLLM(LLMManager):
                 "tool_calls": len(request.context.get("tool_calls", []))
                 if request.context
                 else 0,
-                "model": self.config.model_name,
+                "model": self._current_llm_config.model_name,
                 "tool_outputs": request.tool_outputs,
             }
         )
@@ -47,7 +92,7 @@ class FakeLLM(LLMManager):
 
         return LLMResponse(
             content=content,
-            model_used=self.config.model_name,
+            model_used=self._current_llm_config.model_name,
             tokens_used=50,
             tool_calls=None,
         )
@@ -68,8 +113,13 @@ def make_manager(
     tools = ToolManagerHelper()
     # Register the sum tool for testing
     tools.register_tool(SumTool())
-    config = RuntimeConfig(persistent_sessions=persistent)
-    mgr = RuntimeManager(llm_manager=llm, tool_manager=tools, config=config)
+    # RuntimeManager doesn't take config directly, uses config_manager
+    mgr = RuntimeManager(llm_manager=llm, tool_manager=tools)
+
+    # Set up persistent sessions if requested
+    if persistent:
+        mgr.config_manager.set_session_overrides({"runtime.persistent_sessions": True})
+
     return mgr, llm, tools
 
 
@@ -88,7 +138,7 @@ async def test_orchestrate_with_model_override():
     assert len(llm.calls) == 1
 
     # Config should be updated after the call (not restored)
-    assert mgr._llm_manager.config.model_name == "gpt-4"
+    assert mgr._llm_manager._current_llm_config.model_name == "gpt-4"
 
     # Verify the response
     assert result["model_used"] == "gpt-4"  # Should use the overridden model
@@ -106,8 +156,8 @@ async def test_orchestrate_with_multiple_overrides():
     )
 
     # Config should be updated after the call (not restored)
-    assert mgr._llm_manager.config.model_name == "gpt-4"
-    assert mgr._llm_manager.config.temperature == 0.8
+    assert mgr._llm_manager._current_llm_config.model_name == "gpt-4"
+    assert mgr._llm_manager._current_llm_config.temperature == 0.8
 
     assert result["model_used"] == "gpt-4"
     assert "test query" in result["message"]
@@ -122,15 +172,15 @@ async def test_orchestrate_config_persists_across_calls():
     result1 = await mgr.orchestrate("test query 1", model="gpt-4", temperature=0.8)
 
     # Config should be updated
-    assert mgr._llm_manager.config.model_name == "gpt-4"
-    assert mgr._llm_manager.config.temperature == 0.8
+    assert mgr._llm_manager._current_llm_config.model_name == "gpt-4"
+    assert mgr._llm_manager._current_llm_config.temperature == 0.8
 
     # Second call without overrides should use the updated config
     result2 = await mgr.orchestrate("test query 2")
 
     # Config should remain updated
-    assert mgr._llm_manager.config.model_name == "gpt-4"
-    assert mgr._llm_manager.config.temperature == 0.8
+    assert mgr._llm_manager._current_llm_config.model_name == "gpt-4"
+    assert mgr._llm_manager._current_llm_config.temperature == 0.8
 
     # Both calls should succeed
     assert result1["model_used"] == "gpt-4"
@@ -145,11 +195,11 @@ async def test_orchestrate_config_override_validation():
     mgr, _llm, _ = make_manager(persistent=False)
 
     # Test invalid temperature override
-    with pytest.raises(AgentError, match="Configuration update validation failed"):
+    with pytest.raises(LLMError, match="Configuration update validation failed"):
         await mgr.orchestrate("test query", temperature=-1)
 
     # Test invalid max_tokens override
-    with pytest.raises(AgentError, match="Configuration update validation failed"):
+    with pytest.raises(LLMError, match="Configuration update validation failed"):
         await mgr.orchestrate("test query", max_tokens=0)
 
 

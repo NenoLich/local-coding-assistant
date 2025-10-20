@@ -1,15 +1,15 @@
 """Configuration management for Local Coding Assistant."""
 
+from .config_manager import ConfigManager, get_config_manager, load_config
 from .env_loader import EnvLoader
-from .loader import ConfigLoader, get_config_loader, load_config
 from .schemas import AppConfig, LLMConfig, RuntimeConfig
 
 __all__ = [
     "AppConfig",
-    "ConfigLoader",
+    "ConfigManager",
     "EnvLoader",
     "LLMConfig",
     "RuntimeConfig",
-    "get_config_loader",
+    "get_config_manager",
     "load_config",
 ]

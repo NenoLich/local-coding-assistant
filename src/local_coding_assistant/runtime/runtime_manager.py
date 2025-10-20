@@ -1,5 +1,4 @@
-"""Runtime management (task loop, process orchestration).
-
+"""
 This module provides `RuntimeManager`, which is responsible for orchestrating
 end-to-end query handling across the LLM and tools using a per-run session.
 """
@@ -10,7 +9,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
-from local_coding_assistant.config.schemas import RuntimeConfig
+from local_coding_assistant.config import get_config_manager
 from local_coding_assistant.runtime.session import SessionState
 
 if TYPE_CHECKING:
@@ -21,22 +20,26 @@ from local_coding_assistant.utils.logging import get_logger
 
 class RuntimeManager:
     def __init__(
-        self, llm_manager: LLMManager, tool_manager: ToolManager, config: RuntimeConfig
+        self, llm_manager: LLMManager, tool_manager: ToolManager, config_manager=None
     ) -> None:
         """Initialize the runtime with its dependencies.
 
         Args:
             llm_manager: An LLM manager providing `generate()` method.
             tool_manager: A tool manager capable of being iterated or invoked.
-            config: Runtime configuration settings.
+            config_manager: ConfigManager instance for resolving configuration.
+                          If None, uses the global config manager.
         """
         self._llm_manager = llm_manager
         self._tool_manager = tool_manager
         self._log = get_logger("runtime.runtime_manager")
-        self.config = config
-        self.session: SessionState | None = (
-            SessionState() if config.persistent_sessions else None
-        )
+        self.config_manager = config_manager or get_config_manager()
+
+        # Ensure config manager has global configuration loaded
+        if self.config_manager.global_config is None:
+            self.config_manager.load_global_config()
+
+        self.session: SessionState | None = None
 
     def start(self) -> None:
         """Start the runtime (no-op placeholder)."""
@@ -87,8 +90,12 @@ class RuntimeManager:
     ) -> dict[str, Any]:
         """Run a single query in regular mode."""
         # Resolve session and reset if non-persistent
-        session = self.session or SessionState()
-        if not self.config.persistent_sessions:
+        if self.session is None:
+            self.session = SessionState()
+
+        session = self.session
+        runtime_config = self.config_manager.resolve().runtime
+        if not runtime_config.persistent_sessions:
             session.reset()
 
         self._log.info("Runtime starting query; model=%s", model or "default")
@@ -134,14 +141,18 @@ class RuntimeManager:
         )
 
         # Handle configuration overrides
-        if model is not None or temperature is not None or max_tokens is not None:
-            self._llm_manager.update_config(
-                model_name=model, temperature=temperature, max_tokens=max_tokens
-            )
-            self._log.debug("Applied LLM config overrides for request")
+        overrides = {}
+        if model is not None:
+            overrides["llm.model_name"] = model
+        if temperature is not None:
+            overrides["llm.temperature"] = temperature
+        if max_tokens is not None:
+            overrides["llm.max_tokens"] = max_tokens
 
         # Ask LLM with context
-        response = await self._llm_manager.generate(request)
+        response = await self._llm_manager.generate(
+            request, overrides=overrides if overrides else None
+        )
         self._log.debug("LLM returned response; len=%d", len(response.content))
 
         # Record assistant message
@@ -187,8 +198,9 @@ class RuntimeManager:
     ) -> dict[str, Any]:
         """Run the runtime in agent mode, delegating to AgentLoop or LangGraphAgent."""
         # Determine which agent implementation to use
-        use_graph_mode = graph_mode or self.config.use_graph_mode
-        stream_mode = streaming if streaming is not None else self.config.stream
+        runtime_config = self.config_manager.resolve().runtime
+        use_graph_mode = graph_mode or runtime_config.use_graph_mode
+        stream_mode = streaming if streaming is not None else runtime_config.stream
 
         if use_graph_mode:
             return await self._run_langgraph_agent_mode(

@@ -9,24 +9,20 @@ from typer.testing import CliRunner
 
 from local_coding_assistant.agent.agent_loop import AgentLoop
 from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
-from local_coding_assistant.config.loader import load_config
-from local_coding_assistant.config.schemas import LLMConfig, RuntimeConfig
-from local_coding_assistant.core.app_context import AppContext
-from local_coding_assistant.core.bootstrap import bootstrap
+from local_coding_assistant.config import get_config_manager, load_config
+from local_coding_assistant.config.schemas import RuntimeConfig, LLMConfig
+from local_coding_assistant.core import AppContext
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
+from local_coding_assistant.core.bootstrap import bootstrap
+from local_coding_assistant.tools import ToolManager
 from local_coding_assistant.tools.builtin import SumTool
-from local_coding_assistant.tools.tool_manager import ToolManager
 
 
 class MockStreamingLLMManager(LLMManager):
     """Mock LLM manager that supports streaming responses and tool calls."""
 
     def __init__(self, responses: list[dict[str, Any]]):
-        super().__init__(
-            config=LLMConfig(
-                model_name="gpt-5-mini", provider="openai", temperature=0.7
-            )
-        )
+        super().__init__()  # LLMManager now uses ConfigManager
         self.responses = responses
         self.call_count = 0
         self.streaming_enabled = True
@@ -490,10 +486,14 @@ def ctx_with_mocked_llm(mock_llm_manager):
         log_level="INFO",
     )
 
+    # Initialize config manager with global configuration
+    config_manager = get_config_manager()
+    config_manager.load_global_config()
+
     runtime = RuntimeManager(
         llm_manager=mock_llm_manager,
         tool_manager=ToolManager(),
-        config=runtime_config,
+        config_manager=config_manager,
     )
     # Register the SumTool for testing
     runtime._tool_manager.register_tool(SumTool)

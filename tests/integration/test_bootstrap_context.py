@@ -32,10 +32,16 @@ def test_bootstrap_runtime_manager_has_config(ctx: AppContext):
     runtime = ctx.get("runtime")
     # Runtime may be None if LLM is not available
     if runtime is not None:
-        assert hasattr(runtime, "config")
-        assert isinstance(runtime.config, RuntimeConfig)
-        assert hasattr(runtime.config, "persistent_sessions")
-        assert hasattr(runtime.config, "max_session_history")
+        assert hasattr(runtime, "config_manager")
+        # Import ConfigManager to check the type
+        from local_coding_assistant.config import ConfigManager
+
+        assert isinstance(runtime.config_manager, ConfigManager)
+        # Test that config_manager has runtime configuration
+        resolved_config = runtime.config_manager.resolve()
+        assert hasattr(resolved_config, "runtime")
+        assert hasattr(resolved_config.runtime, "persistent_sessions")
+        assert hasattr(resolved_config.runtime, "max_session_history")
 
 
 def test_bootstrap_llm_manager_has_config(ctx: AppContext):
@@ -43,8 +49,11 @@ def test_bootstrap_llm_manager_has_config(ctx: AppContext):
     llm = ctx.get("llm")
     # LLM may be None if dependencies aren't available
     if llm is not None:
-        assert hasattr(llm, "config")
-        # LLMConfig should be accessible via the config attribute
-        assert hasattr(llm.config, "model_name")
-        assert hasattr(llm.config, "provider")
-        assert hasattr(llm.config, "temperature")
+        assert isinstance(llm, LLMManager)
+        # LLMManager should have _current_llm_config attribute
+        assert hasattr(llm, "_current_llm_config")
+        if llm._current_llm_config is not None:
+            # LLMConfig should be accessible via _current_llm_config
+            assert hasattr(llm._current_llm_config, "model_name")
+            assert hasattr(llm._current_llm_config, "provider")
+            assert hasattr(llm._current_llm_config, "temperature")

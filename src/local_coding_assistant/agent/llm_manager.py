@@ -6,7 +6,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from local_coding_assistant.config.schemas import LLMConfig
 from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("agent.llm_manager")
@@ -49,34 +48,59 @@ class LLMManager:
 
     Uses OpenAI's new Responses API (responses.create) instead of the legacy
     Chat Completions API (chat.completions.create) for improved functionality.
+
+    This manager no longer holds configuration directly. Instead, it resolves
+    configuration on-demand using the ConfigManager for proper 3-layer hierarchy.
     """
 
-    def __init__(self, config: LLMConfig):
-        """Initialize the LLM manager with configuration.
+    def __init__(self, config_manager=None):
+        """Initialize the LLM manager with a config manager.
 
         Args:
-            config: Configuration object containing model and provider settings.
-
-        Raises:
-            LLMError: If the provider is not supported or configuration is invalid.
+            config_manager: ConfigManager instance for resolving configuration.
+                          If None, uses the global config manager.
         """
-        self.config = config
-        self.client = None
-        self._setup_client()
+        from local_coding_assistant.config import get_config_manager
 
-    def _setup_client(self) -> None:
+        self.config_manager = config_manager or get_config_manager()
+        self.client = None
+        self._current_llm_config = None
+
+    def _get_llm_config(self, provider=None, model_name=None, overrides=None):
+        """Get resolved LLM configuration for the current request.
+
+        Args:
+            provider: Optional provider override
+            model_name: Optional model_name override
+            overrides: Optional additional overrides
+
+        Returns:
+            Resolved LLMConfig
+        """
+        resolved_config = self.config_manager.resolve(
+            provider=provider, model_name=model_name, overrides=overrides
+        )
+        return resolved_config.llm
+
+    def _setup_client(self, llm_config=None) -> None:
         """Set up the LLM client based on the provider configuration.
+
+        Args:
+            llm_config: LLM configuration to use. If None, gets current config.
 
         Raises:
             LLMError: If the provider is not supported.
         """
+        if llm_config is None:
+            llm_config = self._get_llm_config()
+
         try:
-            if self.config.provider == "openai":
-                self._setup_openai_client()
+            if llm_config.provider == "openai":
+                self._setup_openai_client(llm_config)
             else:
                 from local_coding_assistant.core.exceptions import LLMError
 
-                raise LLMError(f"Unsupported provider: {self.config.provider}")
+                raise LLMError(f"Unsupported provider: {llm_config.provider}")
         except Exception as e:
             logger.error(f"Failed to setup LLM client: {e}")
             from local_coding_assistant.core.exceptions import LLMError
@@ -84,9 +108,9 @@ class LLMManager:
             # Preserve LLMError messages, don't wrap them
             if isinstance(e, LLMError):
                 raise
-            raise LLMError(f"Failed to initialize {self.config.provider} client") from e
+            raise LLMError(f"Failed to initialize {llm_config.provider} client") from e
 
-    def _setup_openai_client(self) -> None:
+    def _setup_openai_client(self, llm_config) -> None:
         """Set up OpenAI client."""
         # Check if openai is available at runtime
         try:
@@ -104,18 +128,23 @@ class LLMManager:
             from openai import AsyncOpenAI
 
             # Use explicit API key from config if provided, otherwise let OpenAI client handle env vars
-            api_key = self.config.api_key
+            api_key = llm_config.api_key
 
             self.client = AsyncOpenAI(api_key=api_key)
-            logger.info(
-                f"Initialized OpenAI client for model: {self.config.model_name}"
-            )
+            logger.info(f"Initialized OpenAI client for model: {llm_config.model_name}")
         except Exception as e:
             from local_coding_assistant.core.exceptions import LLMError
 
             raise LLMError(f"Failed to initialize OpenAI client: {e}") from e
 
-    async def generate(self, request: LLMRequest) -> LLMResponse:
+    async def generate(
+        self,
+        request: LLMRequest,
+        *,
+        provider: str | None = None,
+        model_name: str | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> LLMResponse:
         """Generate a response using the LLM with the given request.
 
         Uses OpenAI's new Responses API which provides enhanced functionality
@@ -123,6 +152,9 @@ class LLMManager:
 
         Args:
             request: Structured request containing prompt, context, and tool information.
+            provider: Optional provider override for this call
+            model_name: Optional model_name override for this call
+            overrides: Optional additional configuration overrides for this call
 
         Returns:
             Structured response with generated content and metadata.
@@ -133,6 +165,20 @@ class LLMManager:
         # Check if we're in test mode and should return mock responses
         if os.environ.get("LOCCA_TEST_MODE") == "true":
             return self._generate_mock_response(request)
+
+        # Get resolved LLM configuration for this request
+        llm_config = self._get_llm_config(provider, model_name, overrides)
+
+        # Setup client if needed or if config changed
+        if (
+            self.client is None
+            or self._current_llm_config is None
+            or self._current_llm_config.provider != llm_config.provider
+            or self._current_llm_config.model_name != llm_config.model_name
+            or self._current_llm_config.api_key != llm_config.api_key
+        ):
+            self._current_llm_config = llm_config
+            self._setup_client(llm_config)
 
         if not self.client:
             from local_coding_assistant.core.exceptions import LLMError
@@ -147,16 +193,16 @@ class LLMManager:
 
             # Prepare generation parameters for new Responses API
             gen_params = {
-                "model": self.config.model_name,
+                "model": llm_config.model_name,
                 "input": messages,
-                "temperature": self.config.temperature,
+                "temperature": llm_config.temperature,
             }
 
             # Note: Responses API may use different parameter names for token limits
             # The new API might handle token limits differently or not support max_tokens
             # For now, we'll skip max_tokens and let the API handle it
-            # if self.config.max_tokens:
-            #     gen_params["max_tokens"] = self.config.max_tokens
+            # if llm_config.max_tokens:
+            #     gen_params["max_tokens"] = llm_config.max_tokens
 
             # Add tools if provided (new API may handle this differently)
             if request.tools:
@@ -254,7 +300,7 @@ class LLMManager:
 
             llm_response = LLMResponse(
                 content=content,
-                model_used=getattr(response, "model", self.config.model_name),
+                model_used=getattr(response, "model", llm_config.model_name),
                 tokens_used=getattr(response.usage, "output_tokens", None)
                 if response.usage
                 else None,
@@ -262,7 +308,7 @@ class LLMManager:
             )
 
             logger.info(
-                f"Generated response with {len(content)} characters using model {getattr(response, 'model', self.config.model_name)}"
+                f"Generated response with {len(content)} characters using model {getattr(response, 'model', llm_config.model_name)}"
             )
             return llm_response
 
@@ -311,86 +357,6 @@ class LLMManager:
             # For streaming, tool calls would typically be yielded at the end
             # or as separate metadata, but for compatibility, we'll just yield the content
             pass
-
-    def update_config(
-        self,
-        *,
-        model_name: str | None = None,
-        provider: str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        api_key: str | None = None,
-    ) -> None:
-        """Update LLM configuration with intelligent client management.
-
-        Args:
-            model_name: New model name (requires new client if changed)
-            provider: New provider (requires new client if changed)
-            temperature: New temperature (safe config update)
-            max_tokens: New max tokens (safe config update)
-            api_key: New API key (may require new client)
-
-        Raises:
-            LLMError: If configuration update fails
-        """
-        # Determine which parameters require client recreation
-        requires_new_client = (
-            (model_name is not None and model_name != self.config.model_name)
-            or (provider is not None and provider != self.config.provider)
-            or (api_key is not None and api_key != self.config.api_key)
-        )
-
-        # Build update dictionary with only provided values
-        updates = {}
-        if model_name is not None:
-            updates["model_name"] = model_name
-        if provider is not None:
-            updates["provider"] = provider
-        if temperature is not None:
-            updates["temperature"] = temperature
-        if max_tokens is not None:
-            updates["max_tokens"] = max_tokens
-        if api_key is not None:
-            updates["api_key"] = api_key
-
-        if not updates:
-            logger.debug("No configuration updates provided")
-            return
-
-        # Validate the new configuration
-        try:
-            old_config_dict = self.config.model_dump()
-            new_config_dict = {**old_config_dict, **updates}
-            # This will raise ValidationError if invalid
-            LLMConfig(**new_config_dict)
-        except Exception as e:
-            logger.error(f"Configuration update validation failed: {e}")
-            from local_coding_assistant.core.exceptions import LLMError
-
-            raise LLMError(f"Configuration update validation failed: {e}") from e
-
-        logger.info(f"Updating LLM config: {updates}")
-
-        # Update configuration
-        if model_name is not None:
-            self.config.model_name = model_name
-        if provider is not None:
-            self.config.provider = provider
-        if temperature is not None:
-            self.config.temperature = temperature
-        if max_tokens is not None:
-            self.config.max_tokens = max_tokens
-        if api_key is not None:
-            self.config.api_key = api_key
-
-        # Recreate client if necessary
-        if requires_new_client:
-            logger.info("Configuration change requires new client - recreating")
-            self._client = None  # Force recreation on next use
-            # Access _client property to trigger recreation
-            _ = self._client
-        else:
-            logger.debug("Configuration updated without requiring new client")
 
     async def ainvoke(self, request: LLMRequest) -> LLMResponse:
         """Generate a response using the LLM with the given request (async version of generate).
@@ -463,7 +429,9 @@ class LLMManager:
 
         return LLMResponse(
             content=content,
-            model_used=self.config.model_name,
+            model_used=self.config_manager.global_config.llm.model_name
+            if self.config_manager.global_config
+            else "mock-model",
             tokens_used=50,
             tool_calls=None,
         )

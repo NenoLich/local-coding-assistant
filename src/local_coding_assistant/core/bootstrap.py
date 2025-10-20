@@ -3,8 +3,8 @@
 from pathlib import Path
 
 from local_coding_assistant.agent.llm_manager import LLMManager
+from local_coding_assistant.config import get_config_manager, load_config
 from local_coding_assistant.config.env_loader import EnvLoader
-from local_coding_assistant.config.loader import load_config
 from local_coding_assistant.core.app_context import AppContext
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.tools.builtin import SumTool
@@ -68,8 +68,15 @@ def bootstrap(
 
     # Only create runtime manager if we have LLM
     if llm_manager is not None:
+        # Initialize config manager with global configuration if not already done
+        config_manager = get_config_manager()
+        if config_manager.global_config is None:
+            config_manager.load_global_config()
+
         runtime = RuntimeManager(
-            llm_manager=llm_manager, tool_manager=tool_manager, config=config.runtime
+            llm_manager=llm_manager,
+            tool_manager=tool_manager,
+            config_manager=config_manager,
         )
     else:
         logger.warning("Skipping runtime manager creation due to missing LLM")

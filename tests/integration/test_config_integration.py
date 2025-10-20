@@ -8,7 +8,9 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from local_coding_assistant.agent import LLMManager
 from local_coding_assistant.core.exceptions import AgentError, ConfigError
+from local_coding_assistant.runtime import RuntimeManager
 
 
 class TestBootstrapIntegration:
@@ -20,8 +22,10 @@ class TestBootstrapIntegration:
         # Check that the runtime manager was created with config
         runtime = ctx.get("runtime")
         assert runtime is not None
-        assert hasattr(runtime, "config")
-        assert runtime.config.persistent_sessions is False  # Default value
+        assert hasattr(runtime, "config_manager")
+        # Test that config_manager can resolve runtime config
+        resolved_config = runtime.config_manager.resolve()
+        assert resolved_config.runtime.persistent_sessions is False  # Default value
 
     def test_bootstrap_with_custom_config_file(self):
         """Test bootstrap with a custom configuration file."""
@@ -47,10 +51,14 @@ class TestBootstrapIntegration:
 
             assert llm is not None
             assert runtime is not None
-            assert llm.config.model_name == "gpt-4.1"
-            assert llm.config.temperature == 0.8
-            assert runtime.config.persistent_sessions is True
-            assert runtime.config.log_level == "DEBUG"
+            # Check LLM config via config manager
+            llm_resolved = llm.config_manager.resolve()
+            assert llm_resolved.llm.model_name == "gpt-4.1"
+            assert llm_resolved.llm.temperature == 0.8
+            # Check runtime config via config manager
+            runtime_resolved = runtime.config_manager.resolve()
+            assert runtime_resolved.runtime.persistent_sessions is True
+            assert runtime_resolved.runtime.log_level == "DEBUG"
 
         finally:
             config_path.unlink()
@@ -74,9 +82,13 @@ class TestBootstrapIntegration:
 
             assert llm is not None
             assert runtime is not None
-            assert llm.config.model_name == "gpt-4-turbo"
-            assert runtime.config.persistent_sessions is True
-            assert runtime.config.max_session_history == 50
+            # Check LLM config via config manager
+            llm_resolved = llm.config_manager.resolve()
+            assert llm_resolved.llm.model_name == "gpt-4-turbo"
+            # Check runtime config via config manager
+            runtime_resolved = runtime.config_manager.resolve()
+            assert runtime_resolved.runtime.persistent_sessions is True
+            assert runtime_resolved.runtime.max_session_history == 50
 
     def test_bootstrap_config_priority_order(self):
         """Test that configuration priority order is correct: ENV > YAML > Defaults."""
@@ -108,8 +120,12 @@ class TestBootstrapIntegration:
 
                 assert llm is not None
                 assert runtime is not None
-                assert llm.config.model_name == "gpt-4-from-env"  # From ENV
-                assert runtime.config.persistent_sessions is True  # From ENV
+                # Check LLM config via config manager
+                llm_resolved = llm.config_manager.resolve()
+                assert llm_resolved.llm.model_name == "gpt-4-from-env"  # From ENV
+                # Check runtime config via config manager
+                runtime_resolved = runtime.config_manager.resolve()
+                assert runtime_resolved.runtime.persistent_sessions is True  # From ENV
 
         finally:
             config_path.unlink()
@@ -143,14 +159,15 @@ class TestBootstrapIntegration:
         """Test that configuration is properly injected into services."""
         # Check LLM manager got config
         llm = ctx.get("llm")
-        assert hasattr(llm, "config")
-        assert isinstance(llm.config.model_name, str)
+        assert isinstance(llm, LLMManager)
+        # Check that LLM has config manager
+        assert hasattr(llm, "config_manager")
 
         # Check runtime manager got config
         runtime = ctx.get("runtime")
-        assert hasattr(runtime, "config")
-        assert isinstance(runtime.config.persistent_sessions, bool)
-        assert isinstance(runtime.config.max_session_history, int)
+        assert isinstance(runtime, RuntimeManager)
+        # Check that runtime has config manager
+        assert hasattr(runtime, "config_manager")
 
         # Check tool manager is available
         tools = ctx.get("tools")
@@ -198,8 +215,9 @@ class TestBootstrapIntegration:
             # Runtime should have logging disabled
             runtime = ctx.get("runtime")
             assert runtime is not None
-            assert runtime.config is not None
-            assert runtime.config.enable_logging is False
+            # Check runtime config via config manager
+            runtime_resolved = runtime.config_manager.resolve()
+            assert runtime_resolved.runtime.enable_logging is False
 
         finally:
             config_path.unlink()
@@ -223,8 +241,9 @@ class TestConfigurationEdgeCases:
             # Should use default values
             llm = ctx.get("llm")
             assert llm is not None
-            assert llm.config is not None
-            assert llm.config.model_name == "gpt-5-mini"
+            # Check LLM config via config manager
+            llm_resolved = llm.config_manager.resolve()
+            assert llm_resolved.llm.model_name == "gpt-5-mini"
 
         finally:
             config_path.unlink()
@@ -245,7 +264,9 @@ class TestConfigurationEdgeCases:
             # Should handle null values properly
             llm = ctx.get("llm")
             assert llm is not None
-            assert llm.config.api_key is None
+            # Check LLM config via config manager
+            llm_resolved = llm.config_manager.resolve()
+            assert llm_resolved.llm.api_key is None
 
         finally:
             config_path.unlink()
@@ -268,14 +289,16 @@ class TestConfigurationEdgeCases:
             runtime = ctx.get("runtime")
 
             assert llm is not None
-            assert llm.config is not None
-            assert isinstance(llm.config.temperature, float)
-            assert llm.config.temperature == 0.8
+            # Check LLM config via config manager
+            llm_resolved = llm.config_manager.resolve()
+            assert isinstance(llm_resolved.llm.temperature, float)
+            assert llm_resolved.llm.temperature == 0.8
 
             assert runtime is not None
-            assert runtime.config is not None
-            assert isinstance(runtime.config.max_session_history, int)
-            assert runtime.config.max_session_history == 200
+            # Check runtime config via config manager
+            runtime_resolved = runtime.config_manager.resolve()
+            assert isinstance(runtime_resolved.runtime.max_session_history, int)
+            assert runtime_resolved.runtime.max_session_history == 200
 
     @pytest.mark.asyncio
     async def test_runtime_manager_orchestrate_with_model_override(
@@ -333,21 +356,21 @@ class TestConfigurationEdgeCases:
     ):
         """Test that configuration overrides don't affect the base configuration."""
         runtime = ctx_with_mocked_llm.get("runtime")
-
-        # Get initial config
-        initial_model = runtime._llm_manager.config.model_name
+        # Get initial LLM config via config manager
+        initial_llm_config = runtime._llm_manager.config_manager.resolve()
+        initial_model = initial_llm_config.llm.model_name
 
         # Call with override
         await runtime.orchestrate("test query", model="gpt-5-mini")
 
         # Base config should remain unchanged
-        assert runtime._llm_manager.config.model_name == initial_model
+        updated_llm_config = runtime._llm_manager.config_manager.resolve()
+        assert updated_llm_config.llm.model_name == initial_model
 
     @pytest.mark.asyncio
     async def test_runtime_manager_handles_quota_errors_gracefully(self, ctx):
         """Test that RuntimeManager handles quota exceeded errors gracefully."""
         runtime = ctx.get("runtime")
-
         # This test will actually make a real API call and may hit quota limits
         # In a real scenario, you might want to mock this or skip based on quota status
 
