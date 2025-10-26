@@ -1,0 +1,22 @@
+policies:
+  planner:
+    models:
+      - openrouter:qwen/qwen3-coder:free
+      - google_gemini:gemini-2.5-flash
+      - github_models:microsoft/Phi-4
+      - fallback:any
+  researcher:
+    models:
+      - google_gemini:gemini-2.5-flash
+      - openrouter:qwen/qwen3-235b-a22b:free
+      - fallback:any
+  analyzer:
+    models:
+      - openrouter:moonshotai/kimi-dev-72b:free
+      - github_models:mistral-ai/Codestral-2501
+      - google_gemini:gemini-2.5-flash
+      - fallback:any
+  general:
+    models:
+      - google_gemini:gemini-2.5-flash
+      - fallback:any

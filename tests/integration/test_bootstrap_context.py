@@ -1,5 +1,4 @@
 from local_coding_assistant.agent.llm_manager import LLMManager
-from local_coding_assistant.config.schemas import RuntimeConfig
 from local_coding_assistant.core.app_context import AppContext
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.tools.tool_manager import ToolManager

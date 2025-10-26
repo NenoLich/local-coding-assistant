@@ -23,12 +23,13 @@ def _serialize_tool(tool: object) -> dict[str, str]:
 @app.command("list")
 @safe_entrypoint("cli.list_tools")
 def list_available(
-    category: str | None = typer.Option(None, help="Filter tools by category (unused)"),
+    category: str | None = typer.Option(
+        "All", "--cat", help="Filter tools by category (unused)"
+    ),
     json_out: bool = typer.Option(False, "--json", help="Output as JSON"),
     log_level: str = typer.Option(
         "INFO", "--log-level", help="Logging level (e.g., DEBUG, INFO, WARNING)"
     ),
-    verbose: bool = typer.Option(False, "--verbose", help="Verbose error output"),
 ) -> None:
     """List all available tools."""
     level = getattr(logging, log_level.upper(), logging.INFO)

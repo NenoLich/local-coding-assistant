@@ -4,7 +4,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
+from local_coding_assistant.agent.llm_manager_v2 import LLMManager, LLMRequest
 from local_coding_assistant.core.exceptions import AgentError
 
 if TYPE_CHECKING:
@@ -73,25 +73,38 @@ class AgentLoop:
 
     def _setup_default_handlers(self) -> None:
         """Set up default handlers for each phase of the agent loop."""
+        # Store handlers
+        self.observe_handler = self._default_observe_handler
+        self.plan_handler = self._default_plan_handler
+        self.act_handler = self._default_act_handler
+        self.reflect_handler = self._default_reflect_handler
 
-        # Observe handler - generate observation based on current context
-        async def observe() -> dict[str, Any]:
-            # For now, create a simple observation based on current state
-            # In a real implementation, this might gather information from the environment
-            content = f"Agent iteration {self.current_iteration + 1} in session {self.session_id}"
-            return {
-                "content": content,
-                "metadata": {
-                    "session_id": self.session_id,
-                    "iteration": self.current_iteration + 1,
-                },
-                "timestamp": time.time(),
-                "source": "agent_loop",
-            }
+        logger.info(f"Set up default handlers for agent '{self.name}'")
 
-        # Plan handler - use LLM to create a plan
-        async def plan(observation: dict[str, Any]) -> dict[str, Any]:
-            prompt = f"""
+    def _default_observe_handler(self) -> dict[str, Any]:
+        """Generate observation based on current context.
+
+        For now, create a simple observation based on current state.
+        In a real implementation, this might gather information from the environment.
+        """
+        content = (
+            f"Agent iteration {self.current_iteration + 1} in session {self.session_id}"
+        )
+        return {
+            "content": content,
+            "metadata": {
+                "session_id": self.session_id,
+                "iteration": self.current_iteration + 1,
+            },
+            "timestamp": time.time(),
+            "source": "agent_loop",
+        }
+
+    async def _default_plan_handler(
+        self, observation: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Use LLM to create a plan based on the observation."""
+        prompt = f"""
 Based on the following observation, create a plan for what the agent should do next:
 
 Observation: {observation["content"]}
@@ -105,41 +118,41 @@ Please provide a plan with specific actions to take. Respond in JSON format with
 - actions: list of specific actions to take
 - confidence: confidence level (0-1)
 """
-            try:
-                request = LLMRequest(
-                    prompt=prompt,
-                    tools=self._cached_tools,
-                )
+        try:
+            request = LLMRequest(
+                prompt=prompt,
+                tools=self._cached_tools,
+            )
 
-                response_content = (
-                    await self._stream_response(request)
-                    if self.streaming
-                    else (await self.llm_manager.generate(request)).content
-                )
+            response_content = (
+                await self._stream_response(request)
+                if self.streaming
+                else (await self.llm_manager.generate(request)).content
+            )
 
-                # For now, create a simple plan - in a real implementation,
-                # this would parse structured output from the LLM
-                return {
-                    "reasoning": f"Based on observation: {observation['content'][:100]}...",
-                    "actions": ["analyze_current_state", "determine_next_action"],
-                    "confidence": 0.8,
-                    "metadata": {"llm_response": response_content},
-                }
-            except Exception as e:
-                logger.error(f"Failed to generate plan: {e}")
-                # Fallback plan
-                return {
-                    "reasoning": "Failed to generate plan, using fallback",
-                    "actions": ["retry_planning"],
-                    "confidence": 0.3,
-                    "metadata": {"error": str(e)},
-                }
+            # For now, create a simple plan - in a real implementation,
+            # this would parse structured output from the LLM
+            return {
+                "reasoning": f"Based on observation: {observation['content'][:100]}...",
+                "actions": ["analyze_current_state", "determine_next_action"],
+                "confidence": 0.8,
+                "metadata": {"llm_response": response_content},
+            }
+        except Exception as e:
+            logger.error(f"Failed to generate plan: {e}")
+            # Fallback plan
+            return {
+                "reasoning": "Failed to generate plan, using fallback",
+                "actions": ["retry_planning"],
+                "confidence": 0.3,
+                "metadata": {"error": str(e)},
+            }
 
-        # Act handler - execute actions using tools and LLM
-        async def act(plan: dict[str, Any]) -> dict[str, Any]:
-            try:
-                # Create a prompt that includes tool calling instructions
-                action_prompt = f"""
+    async def _default_act_handler(self, plan: dict[str, Any]) -> dict[str, Any]:
+        """Execute actions using tools and LLM."""
+        try:
+            # Create a prompt that includes tool calling instructions
+            action_prompt = f"""
 Execute the following plan:
 
 Plan: {plan["reasoning"]}
@@ -155,95 +168,93 @@ If you need to provide a final answer, use the final_answer tool.
 
 Please describe what actions were taken and their results.
 """
-                request = LLMRequest(
-                    prompt=action_prompt,
-                    tools=self._cached_tools,
-                )
+            request = LLMRequest(
+                prompt=action_prompt,
+                tools=self._cached_tools,
+            )
 
-                response_content = (
-                    await self._stream_response(request)
-                    if self.streaming
-                    else (await self.llm_manager.generate(request)).content
-                )
+            response_content = (
+                await self._stream_response(request)
+                if self.streaming
+                else (await self.llm_manager.generate(request)).content
+            )
 
-                # For now, we'll need the complete response to parse tool calls
-                # In a real streaming implementation, tool calls would be detected
-                # as they stream in, but for simplicity, we'll use the complete response
-                if self.streaming:
-                    # For streaming, we need to get tool calls from the complete response
-                    # This is a simplified approach - a real implementation would
-                    # need more sophisticated parsing of streaming content
-                    response = await self.llm_manager.generate(request)
-                    tool_calls = response.tool_calls or []
-                else:
-                    # For non-streaming, we already have the response object
-                    response = await self.llm_manager.generate(request)
-                    tool_calls = response.tool_calls or []
+            # For now, we'll need the complete response to parse tool calls
+            # In a real streaming implementation, tool calls would be detected
+            # as they stream in, but for simplicity, we'll use the complete response
+            if self.streaming:
+                # For streaming, we need to get tool calls from the complete response
+                # This is a simplified approach - a real implementation would
+                # need more sophisticated parsing of streaming content
+                response = await self.llm_manager.generate(request)
+                tool_calls = response.tool_calls or []
+            else:
+                # For non-streaming, we already have the response object
+                response = await self.llm_manager.generate(request)
+                tool_calls = response.tool_calls or []
 
-                # Check if this is a tool call response
-                if tool_calls:
-                    for tool_call in tool_calls:
-                        if "function" in tool_call:
-                            func_name = tool_call["function"]["name"]
-                            try:
-                                # Parse arguments and invoke tool
-                                args = json.loads(tool_call["function"]["arguments"])
-                                tool_result = self.tool_manager.run_tool(
-                                    func_name, args
+            # Check if this is a tool call response
+            if tool_calls:
+                for tool_call in tool_calls:
+                    if "function" in tool_call:
+                        func_name = tool_call["function"]["name"]
+                        try:
+                            # Parse arguments and invoke tool
+                            args = json.loads(tool_call["function"]["arguments"])
+                            tool_result = self.tool_manager.run_tool(func_name, args)
+
+                            # Special handling for final_answer tool
+                            if func_name == "final_answer":
+                                self.final_answer = args.get("answer", "")
+                                logger.info(
+                                    f"Final answer received: {self.final_answer}"
                                 )
-
-                                # Special handling for final_answer tool
-                                if func_name == "final_answer":
-                                    self.final_answer = args.get("answer", "")
-                                    logger.info(
-                                        f"Final answer received: {self.final_answer}"
-                                    )
-                                    return {
-                                        "success": True,
-                                        "output": f"Final answer: {self.final_answer}",
-                                        "metadata": {
-                                            "tool_calls": tool_calls,
-                                            "stopped": True,
-                                        },
-                                    }
-
-                                logger.debug(f"Tool call: {func_name} => {tool_result}")
                                 return {
                                     "success": True,
-                                    "output": f"Tool {func_name} executed successfully",
+                                    "output": f"Final answer: {self.final_answer}",
                                     "metadata": {
                                         "tool_calls": tool_calls,
-                                        "tool_results": {func_name: tool_result},
+                                        "stopped": True,
                                     },
                                 }
-                            except Exception as e:
-                                logger.error(f"Tool call failed: {e}")
-                                return {
-                                    "success": False,
-                                    "error": str(e),
-                                    "metadata": {"plan_actions": plan["actions"]},
-                                }
 
-                # If no tool calls, return the LLM response as output
-                return {
-                    "success": True,
-                    "output": response_content,
-                    "metadata": {"tool_calls": tool_calls},
-                }
-            except Exception as e:
-                logger.error(f"Failed to execute actions: {e}")
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "metadata": {"plan_actions": plan["actions"]},
-                }
+                            logger.debug(f"Tool call: {func_name} => {tool_result}")
+                            return {
+                                "success": True,
+                                "output": f"Tool {func_name} executed successfully",
+                                "metadata": {
+                                    "tool_calls": tool_calls,
+                                    "tool_results": {func_name: tool_result},
+                                },
+                            }
+                        except Exception as e:
+                            logger.error(f"Tool call failed: {e}")
+                            return {
+                                "success": False,
+                                "error": str(e),
+                                "metadata": {"plan_actions": plan["actions"]},
+                            }
 
-        # Reflect handler - analyze results and learn
-        async def reflect(
-            action_result: dict[str, Any], plan: dict[str, Any]
-        ) -> dict[str, Any]:
-            try:
-                reflection_prompt = f"""
+            # If no tool calls, return the LLM response as output
+            return {
+                "success": True,
+                "output": response_content,
+                "metadata": {"tool_calls": tool_calls},
+            }
+        except Exception as e:
+            logger.error(f"Failed to execute actions: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "metadata": {"plan_actions": plan["actions"]},
+            }
+
+    async def _default_reflect_handler(
+        self, action_result: dict[str, Any], plan: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Analyze results and learn from the action execution."""
+        try:
+            reflection_prompt = f"""
 Analyze the following action results and provide reflection:
 
 Plan: {plan["reasoning"]}
@@ -258,44 +269,36 @@ Please provide:
 - improvements: suggested improvements
 - success_rating: success rating (0-1)
 """
-                request = LLMRequest(prompt=reflection_prompt)
-                response_content = (
-                    await self._stream_response(request)
-                    if self.streaming
-                    else (await self.llm_manager.generate(request)).content
-                )
+            request = LLMRequest(prompt=reflection_prompt)
+            response_content = (
+                await self._stream_response(request)
+                if self.streaming
+                else (await self.llm_manager.generate(request)).content
+            )
 
-                # For now, create a simple reflection - in a real implementation,
-                # this would parse structured output from the LLM
-                return {
-                    "analysis": f"Plan execution {'succeeded' if action_result['success'] else 'failed'}: {response_content[:200]}",
-                    "lessons_learned": [
-                        "Monitor action results carefully",
-                        "Adjust plans based on outcomes",
-                    ],
-                    "improvements": [
-                        "Better error handling",
-                        "More detailed action planning",
-                    ]
-                    if not action_result["success"]
-                    else [],
-                    "success_rating": 0.9 if action_result["success"] else 0.3,
-                }
-            except Exception as e:
-                logger.error(f"Failed to generate reflection: {e}")
-                return {
-                    "analysis": "Failed to generate reflection",
-                    "success_rating": 0.0,
-                    "lessons_learned": ["Improve reflection process"],
-                }
-
-        # Store handlers
-        self.observe_handler = observe
-        self.plan_handler = plan
-        self.act_handler = act
-        self.reflect_handler = reflect
-
-        logger.info(f"Set up default handlers for agent '{self.name}'")
+            # For now, create a simple reflection - in a real implementation,
+            # this would parse structured output from the LLM
+            return {
+                "analysis": f"Plan execution {'succeeded' if action_result['success'] else 'failed'}: {response_content[:200]}",
+                "lessons_learned": [
+                    "Monitor action results carefully",
+                    "Adjust plans based on outcomes",
+                ],
+                "improvements": [
+                    "Better error handling",
+                    "More detailed action planning",
+                ]
+                if not action_result["success"]
+                else [],
+                "success_rating": 0.9 if action_result["success"] else 0.3,
+            }
+        except Exception as e:
+            logger.error(f"Failed to generate reflection: {e}")
+            return {
+                "analysis": "Failed to generate reflection",
+                "success_rating": 0.0,
+                "lessons_learned": ["Improve reflection process"],
+            }
 
     def _get_available_tools(self) -> list[dict[str, Any]]:
         """Get available tools for LLM requests - cached for performance."""
@@ -337,26 +340,190 @@ Please provide:
         # Use streaming for real-time response processing
         logger.debug("Using streaming LLM response")
         response_content = ""
-        async for chunk in self.llm_manager.generate_stream(request):
+        async for chunk in self.llm_manager.stream(request):
             response_content += chunk
         return response_content
 
-    async def run(self) -> str | None:
-        """Run the agent loop until completion, final answer, or error.
+    def _execute_observe_phase(self, iteration_data: dict[str, Any]) -> dict[str, Any]:
+        """Execute the observe phase of the agent loop."""
+        try:
+            logger.debug("Executing observe phase")
+            observation = self.observe_handler()
+            iteration_data["observation"] = observation
+            logger.info(f"Observation collected: {observation['content'][:100]}...")
+            return observation
+        except Exception as e:
+            logger.error(f"Error in observe phase: {e}")
+            raise AgentError(f"Observation phase failed: {e}") from e
+
+    async def _execute_plan_phase(
+        self, observation: dict[str, Any], iteration_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Execute the plan phase of the agent loop."""
+        try:
+            logger.debug("Executing plan phase")
+            plan = await self.plan_handler(observation)
+            iteration_data["plan"] = plan
+            logger.info(f"Plan created with {len(plan['actions'])} actions")
+            return plan
+        except Exception as e:
+            logger.error(f"Error in plan phase: {e}")
+            # For error recovery testing, handle planning errors gracefully
+            # Create a basic plan and continue
+            plan = {
+                "reasoning": "Planning phase encountered an error, using fallback",
+                "actions": ["retry"],
+                "confidence": 0.1,
+                "metadata": {"error": str(e)},
+            }
+            iteration_data["plan"] = plan
+            return plan
+
+    async def _execute_act_phase(
+        self, plan: dict[str, Any], iteration_data: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Execute the act phase of the agent loop."""
+        try:
+            logger.debug("Executing act phase")
+            action_result = await self.act_handler(plan)
+            iteration_data["action_result"] = action_result
+            logger.info(
+                f"Action completed: {'success' if action_result['success'] else 'failed'}"
+            )
+            return action_result
+        except Exception as e:
+            logger.error(f"Error in act phase: {e}")
+            # For error recovery testing, handle action errors gracefully
+            action_result = {
+                "success": False,
+                "error": str(e),
+                "output": "Action phase failed",
+                "metadata": {"plan_actions": plan["actions"]},
+            }
+            iteration_data["action_result"] = action_result
+            # Stop the loop after action error since act is critical
+            logger.info("Stopping due to critical action error")
+            # Still need to add reflection and append to history
+            iteration_data["reflection"] = {
+                "analysis": "Action phase failed - loop terminated",
+                "success_rating": 0.0,
+                "lessons_learned": ["Action execution is critical"],
+                "improvements": ["Better error handling for actions"],
+            }
+            self.history.append(iteration_data)
+            raise e
+
+    async def _execute_reflect_phase(
+        self,
+        action_result: dict[str, Any],
+        plan: dict[str, Any],
+        iteration_data: dict[str, Any],
+    ) -> None:
+        """Execute the reflect phase of the agent loop."""
+        try:
+            logger.debug("Executing reflect phase")
+            reflection = await self.reflect_handler(action_result, plan)
+            iteration_data["reflection"] = reflection
+            logger.info(
+                f"Reflection completed with success rating: {reflection['success_rating']}"
+            )
+        except Exception as e:
+            logger.error(f"Error in reflect phase: {e}")
+            # Reflection failure is not critical, create a basic reflection
+            reflection = {
+                "analysis": "Reflection phase encountered an error",
+                "success_rating": 0.0,
+                "lessons_learned": [],
+                "improvements": [],
+            }
+            iteration_data["reflection"] = reflection
+
+    def _check_early_termination(
+        self, plan: dict[str, Any], action_result: dict[str, Any]
+    ) -> bool:
+        """Check if the loop should terminate early based on various conditions."""
+        # Check if final answer was provided
+        if action_result.get("metadata", {}).get("stopped"):
+            return True
+
+        # Check if we should stop early due to critical failures
+        plan_confidence = plan.get("confidence", 1.0)
+        try:
+            plan_confidence = float(plan_confidence)
+        except (ValueError, TypeError):
+            plan_confidence = 1.0
+
+        metadata = plan.get("metadata", {})
+        plan_had_error = (
+            isinstance(metadata, dict) and metadata.get("error") is not None
+        )
+
+        return (plan_confidence < 0.5 and plan_had_error) or not action_result[
+            "success"
+        ]
+
+    def _handle_final_answer(
+        self, action_result: dict[str, Any], iteration_data: dict[str, Any]
+    ) -> bool:
+        """Handle final answer termination and return whether to stop."""
+        if action_result.get("metadata", {}).get("stopped"):
+            logger.info("Loop stopped due to final answer")
+            # Still append to history even if stopping early, but skip reflection
+            # since we're terminating due to final answer
+            iteration_data["reflection"] = {
+                "analysis": "Loop terminated by final answer - reflection skipped",
+                "success_rating": 1.0,
+                "lessons_learned": ["Final answer tool works correctly"],
+                "improvements": [],
+            }
+            self.history.append(iteration_data)
+            return True
+        return False
+
+    async def _execute_single_iteration(self, iteration_data: dict[str, Any]) -> bool:
+        """Execute a single iteration of the agent loop.
 
         Returns:
-            Final answer if provided, None otherwise
-
-        Raises:
-            AgentError: If the loop is already running or handlers are missing
+            True if the loop should continue, False if it should stop
         """
+        # Execute observe phase
+        try:
+            observation = self._execute_observe_phase(iteration_data)
+        except AgentError:
+            # Observe phase is critical, re-raise if it fails
+            raise
+
+        # Execute plan phase
+        plan = await self._execute_plan_phase(observation, iteration_data)
+
+        # Execute act phase
+        try:
+            action_result = await self._execute_act_phase(plan, iteration_data)
+        except Exception:
+            # Act phase error was handled in _execute_act_phase
+            # The method already added reflection and history, so we can break
+            return False
+
+        # Check if final answer was provided
+        if self._handle_final_answer(action_result, iteration_data):
+            return False
+
+        # Execute reflect phase
+        await self._execute_reflect_phase(action_result, plan, iteration_data)
+
+        # Add to history
+        self.history.append(iteration_data)
+
+        # Check if we should stop early
+        return not self._check_early_termination(plan, action_result)
+
+    async def run(self) -> str | None:
         if self.is_running:
             raise AgentError("Agent loop is already running")
 
         self.is_running = True
         self.current_iteration = 0
         self.final_answer = None
-
         logger.info(f"Starting agent loop '{self.name}'")
 
         try:
@@ -375,129 +542,16 @@ Please provide:
                     "reflection": None,
                 }
 
-                # Observe phase
+                # Execute single iteration
                 try:
-                    logger.debug("Executing observe phase")
-                    observation = await self.observe_handler()
-                    iteration_data["observation"] = observation
-                    logger.info(
-                        f"Observation collected: {observation['content'][:100]}..."
+                    should_continue = await self._execute_single_iteration(
+                        iteration_data
                     )
-                except Exception as e:
-                    logger.error(f"Error in observe phase: {e}")
-                    raise AgentError(f"Observation phase failed: {e}") from e
-
-                # Plan phase
-                try:
-                    logger.debug("Executing plan phase")
-                    plan = await self.plan_handler(observation)
-                    iteration_data["plan"] = plan
-                    logger.info(f"Plan created with {len(plan['actions'])} actions")
-                except Exception as e:
-                    logger.error(f"Error in plan phase: {e}")
-                    # For error recovery testing, handle planning errors gracefully
-                    # Create a basic plan and continue
-                    plan = {
-                        "reasoning": "Planning phase encountered an error, using fallback",
-                        "actions": ["retry"],
-                        "confidence": 0.1,
-                        "metadata": {"error": str(e)},
-                    }
-                    iteration_data["plan"] = plan
-
-                # Act phase
-                try:
-                    logger.debug("Executing act phase")
-                    action_result = await self.act_handler(plan)
-                    iteration_data["action_result"] = action_result
-                    logger.info(
-                        f"Action completed: {'success' if action_result['success'] else 'failed'}"
-                    )
-
-                except Exception as e:
-                    logger.error(f"Error in act phase: {e}")
-                    # For error recovery testing, handle action errors gracefully
-                    action_result = {
-                        "success": False,
-                        "error": str(e),
-                        "output": "Action phase failed",
-                        "metadata": {"plan_actions": plan["actions"]},
-                    }
-                    iteration_data["action_result"] = action_result
-                    # Stop the loop after action error since act is critical
-                    logger.info("Stopping due to critical action error")
-                    # Still need to add reflection and append to history
-                    iteration_data["reflection"] = {
-                        "analysis": "Action phase failed - loop terminated",
-                        "success_rating": 0.0,
-                        "lessons_learned": ["Action execution is critical"],
-                        "improvements": ["Better error handling for actions"],
-                    }
-                    self.history.append(iteration_data)
-                    break
-
-                # Check if final answer was provided
-                if action_result.get("metadata", {}).get("stopped"):
-                    logger.info("Loop stopped due to final answer")
-                    # Still append to history even if stopping early, but skip reflection
-                    # since we're terminating due to final answer
-                    iteration_data["reflection"] = {
-                        "analysis": "Loop terminated by final answer - reflection skipped",
-                        "success_rating": 1.0,
-                        "lessons_learned": ["Final answer tool works correctly"],
-                        "improvements": [],
-                    }
-                    self.history.append(iteration_data)
-                    break
-
-                # Reflect phase
-                try:
-                    logger.debug("Executing reflect phase")
-                    reflection = await self.reflect_handler(action_result, plan)
-                    iteration_data["reflection"] = reflection
-                    logger.info(
-                        f"Reflection completed with success rating: {reflection['success_rating']}"
-                    )
-                except Exception as e:
-                    logger.error(f"Error in reflect phase: {e}")
-                    # Reflection failure is not critical, create a basic reflection
-                    reflection = {
-                        "analysis": "Reflection phase encountered an error",
-                        "success_rating": 0.0,
-                        "lessons_learned": [],
-                        "improvements": [],
-                    }
-                    iteration_data["reflection"] = reflection
-
-                self.history.append(iteration_data)
-
-                # Check if we should stop early due to critical failures
-                # Stop if plan confidence is very low AND there was an error during planning
-                plan_confidence = plan.get("confidence", 1.0)
-                # Ensure confidence is a number for comparison
-                try:
-                    plan_confidence = float(plan_confidence)
-                except (ValueError, TypeError):
-                    plan_confidence = (
-                        1.0  # Default to high confidence if conversion fails
-                    )
-
-                # Check if metadata exists and has error field
-                metadata = plan.get("metadata", {})
-                if not isinstance(metadata, dict):
-                    metadata = {}
-                plan_had_error = metadata.get("error") is not None
-
-                if plan_confidence < 0.5 and plan_had_error:
-                    logger.info(
-                        f"Stopping due to low plan confidence ({plan_confidence}) and planning error"
-                    )
-                    break
-
-                # Check if we should continue based on action success
-                if not action_result["success"]:
-                    logger.info("Stopping due to action failure")
-                    break
+                    if not should_continue:
+                        break
+                except AgentError:
+                    # Re-raise critical errors
+                    raise
 
             logger.info(
                 f"Agent loop '{self.name}' completed after {self.current_iteration} iterations"

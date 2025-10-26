@@ -252,7 +252,7 @@ class TestEndToEndReasoningChain:
         async def mock_act(plan):
             # Simulate processing streaming response
             response_content = ""
-            async for chunk in streaming_llm_single_response.generate_stream(
+            async for chunk in streaming_llm_single_response.stream(
                 LLMRequest(prompt="Test streaming")
             ):
                 response_content += chunk + " "

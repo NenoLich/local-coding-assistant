@@ -1,3 +1,4 @@
+# ruff: noqa: C901
 """Agent layer: LLM & reasoning management."""
 
 import os
@@ -323,14 +324,24 @@ class LLMManager:
 
                 raise LLMError(f"LLM generation failed: {e}") from e
 
-    async def generate_stream(self, request: LLMRequest) -> AsyncIterator[str]:
+    async def stream(
+        self,
+        request: LLMRequest,
+        *,
+        provider: str | None = None,
+        model_name: str | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> AsyncIterator[str]:
         """Generate a streaming response using the LLM with the given request.
 
-        This is a placeholder implementation that falls back to regular generation.
-        Subclasses should override this method to provide actual streaming functionality.
+        Uses OpenAI's new Responses API which provides enhanced functionality
+        compared to the legacy Chat Completions API.
 
         Args:
             request: Structured request containing prompt, context, and tool information.
+            provider: Optional provider override for this call
+            model_name: Optional model_name override for this call
+            overrides: Optional additional configuration overrides for this call
 
         Yields:
             Partial response content as strings.
@@ -338,25 +349,107 @@ class LLMManager:
         Raises:
             LLMError: If streaming generation fails or client is not properly initialized.
         """
-        # Placeholder implementation - fall back to regular generation
-        # Subclasses should override this for actual streaming
-        logger.warning(
-            "generate_stream() not implemented for this provider, falling back to generate()"
-        )
+        # Check if we're in test mode and should return mock responses
+        if os.environ.get("LOCCA_TEST_MODE") == "true":
+            response = self._generate_mock_response(request)
+            if response.content:
+                yield response.content
+            return
 
-        # Get the full response using regular generation
-        response = await self.generate(request)
+        # Get resolved LLM configuration for this request
+        llm_config = self._get_llm_config(provider, model_name, overrides)
 
-        # Yield the complete content as a single chunk
-        # In a real implementation, this would yield partial tokens
-        if response.content:
-            yield response.content
+        # Setup client if needed or if config changed
+        if (
+            self.client is None
+            or self._current_llm_config is None
+            or self._current_llm_config.provider != llm_config.provider
+            or self._current_llm_config.model_name != llm_config.model_name
+            or self._current_llm_config.api_key != llm_config.api_key
+        ):
+            self._current_llm_config = llm_config
+            self._setup_client(llm_config)
 
-        # Also handle tool calls if present
-        if response.tool_calls:
-            # For streaming, tool calls would typically be yielded at the end
-            # or as separate metadata, but for compatibility, we'll just yield the content
-            pass
+        if not self.client:
+            from local_coding_assistant.core.exceptions import LLMError
+
+            raise LLMError("LLM client not initialized")
+
+        try:
+            logger.debug(f"Streaming response for prompt: {request.prompt[:100]}...")
+
+            # Build messages from session context and request
+            messages = self._build_messages(request)
+
+            # Prepare generation parameters for new Responses API with streaming
+            gen_params = {
+                "model": llm_config.model_name,
+                "input": messages,
+                "temperature": llm_config.temperature,
+                "stream": True,  # Enable streaming
+            }
+
+            # Add tools if provided (new API may handle this differently)
+            if request.tools:
+                # Convert tools from old Chat Completions format to new Responses API format
+                converted_tools = []
+                for tool in request.tools:
+                    if tool.get("type") == "function":
+                        # Convert from old format to new format
+                        converted_tools.append(
+                            {
+                                "type": "function",  # Keep as function for compatibility
+                                "name": tool["function"]["name"],
+                                "description": tool["function"].get("description", ""),
+                                "parameters": tool["function"].get("parameters", {}),
+                            }
+                        )
+                    else:
+                        # Pass through as-is for other tool types
+                        converted_tools.append(tool)
+
+                gen_params["tools"] = converted_tools
+
+            # Add text formatting options for new Responses API
+            text_options = {}
+            if request.context:
+                # Use context to determine appropriate verbosity/format
+                text_options["verbosity"] = "medium"
+
+            if text_options:
+                gen_params["text"] = text_options
+
+            # Make the streaming API call
+            stream = await self.client.responses.create(**gen_params)
+
+            # Process the streaming response
+            async for chunk in stream:
+                # Extract content from the new Responses API structure
+                content = ""
+                if hasattr(chunk, "output_text"):
+                    content = chunk.output_text
+                elif hasattr(chunk, "output") and chunk.output:
+                    # Handle multiple output items
+                    for item in chunk.output:
+                        if hasattr(item, "content"):
+                            for content_item in item.content:
+                                if hasattr(content_item, "text"):
+                                    content += content_item.text
+
+                # Yield content if present
+                if content:
+                    yield content
+
+        except Exception as e:
+            logger.error(f"Error during LLM streaming generation: {e}")
+            if "openai" in str(type(e)).lower():
+                from local_coding_assistant.core.exceptions import LLMError
+
+                raise LLMError(f"OpenAI API streaming error: {e}") from e
+            else:
+                from local_coding_assistant.core.exceptions import LLMError
+
+                raise LLMError(f"LLM streaming generation failed: {e}") from e
 
     async def ainvoke(self, request: LLMRequest) -> LLMResponse:
         """Generate a response using the LLM with the given request (async version of generate).

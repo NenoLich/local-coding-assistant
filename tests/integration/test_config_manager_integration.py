@@ -1,9 +1,6 @@
 """Integration tests for the ConfigManager system."""
 
-import os
 from unittest.mock import patch
-
-import pytest
 
 from local_coding_assistant.agent.llm_manager import LLMManager
 from local_coding_assistant.config import ConfigManager

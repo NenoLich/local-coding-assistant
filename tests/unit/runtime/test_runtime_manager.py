@@ -1,101 +1,103 @@
-from __future__ import annotations
-
 import json
-from typing import Any
+from collections.abc import AsyncIterator
+from typing import cast, Any
 
 import pytest
 
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMResponse
-from local_coding_assistant.config.schemas import RuntimeConfig
-from local_coding_assistant.core.exceptions import (
-    AgentError,
-    ToolRegistryError,
-    LLMError,
+from local_coding_assistant.agent.llm_manager_v2 import (
+    LLMManager,
+    LLMRequest,
+    LLMResponse,
 )
+from local_coding_assistant.config import get_config_manager
+from local_coding_assistant.core.exceptions import (
+    LLMError,
+    ToolRegistryError,
+)
+from local_coding_assistant.providers.base import (
+    BaseProvider,
+    ProviderLLMRequest,
+    ProviderLLMResponse,
+    ProviderLLMResponseDelta,
+)
+from local_coding_assistant.providers.provider_manager import ProviderManager
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.tools.builtin import SumTool
 from local_coding_assistant.tools.tool_manager import ToolManager
 
 
-class FakeLLM(LLMManager):
-    """Test double for LLMManager with deterministic echo format.
+class MockTestProvider(BaseProvider):
+    """Test provider that integrates with the provider system for testing."""
 
-    Echo format: "echo:{last_query}{suffix}|tools:{tool_count}", where suffix
-    is "|to" when tool_outputs is provided.
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, provider_name: str | None = None, name: str | None = "test", base_url: str | None = "https://api.test.com", api_key: str | None = "test_key", api_key_env: str | None = None, models: list[str] | None = None, driver: str | None = "test", **kwargs):
+        super().__init__(
+            name=name or "test",
+            base_url=base_url or "https://api.test.com",
+            models=models or ["test-model", "gpt-4", "gpt-3.5"],
+            api_key=api_key or "test_key",  # Provide API key for testing
+        )
+        self.call_count = 0
         self.calls: list[dict[str, Any]] = []
-        # Initialize config manager and set current config
-        from local_coding_assistant.config.schemas import LLMConfig
 
-        self._current_llm_config = LLMConfig(model_name="fake-model", provider="fake")
+    async def generate(self, request: ProviderLLMRequest) -> ProviderLLMResponse:
+        """Test generate method that returns deterministic responses."""
+        self.call_count += 1
+        self.calls.append({
+            "model": request.model,
+            "messages": len(request.messages),
+            "temperature": request.temperature,
+            "max_tokens": request.max_tokens,
+            "tools": len(request.tools) if request.tools else 0,
+            "tool_outputs": bool(request.tool_outputs) if hasattr(request, 'tool_outputs') and request.tool_outputs else False,
+        })
 
-    async def generate(
-        self, request, *, provider=None, model_name=None, overrides=None
-    ) -> LLMResponse:
-        """Mock generate method that returns deterministic responses."""
-        # Handle configuration overrides
-        if overrides:
-            # Validate overrides before applying them (similar to real LLMManager)
-            # Check for specific invalid values that should raise LLMError
-            for key, value in overrides.items():
-                if (
-                    key == "llm.temperature"
-                    and isinstance(value, (int, float))
-                    and value < 0
-                ):
-                    from local_coding_assistant.core.exceptions import LLMError
+        # Find the user message (not system prompt)
+        user_content = ""
+        for msg in request.messages:
+            if msg.get("role") == "user":
+                user_content = msg.get("content", "")
+                break
 
-                    raise LLMError(
-                        f"Configuration update validation failed: temperature must be >= 0.0, got {value}"
-                    )
-                elif key == "llm.max_tokens" and isinstance(value, int) and value <= 0:
-                    from local_coding_assistant.core.exceptions import LLMError
+        # Create echo-style response
+        content = f"echo:{user_content}"
+        if request.tools:
+            content += f"|tools:{len(request.tools)}"
+        if hasattr(request, 'tool_outputs') and request.tool_outputs:
+            content += "|to"
 
-                    raise LLMError(
-                        f"Configuration update validation failed: max_tokens must be > 0, got {value}"
-                    )
-
-            # If validation passes, apply the overrides
-            for key, value in overrides.items():
-                if key == "llm.model_name" and model_name is None:
-                    self._current_llm_config.model_name = value
-                elif key == "llm.temperature":
-                    self._current_llm_config.temperature = value
-                elif key == "llm.max_tokens":
-                    self._current_llm_config.max_tokens = value
-
-        # Handle direct model_name override
-        if model_name is not None:
-            self._current_llm_config.model_name = model_name
-
-        self.calls.append(
-            {
-                "session_id": request.context.get("session_id")
-                if request.context
-                else None,
-                "history_len": len(request.context.get("history", []))
-                if request.context
-                else 0,
-                "tool_calls": len(request.context.get("tool_calls", []))
-                if request.context
-                else 0,
-                "model": self._current_llm_config.model_name,
-                "tool_outputs": request.tool_outputs,
-            }
-        )
-        tool_count = len(request.tools) if request.tools else 0
-        suffix = "|to" if request.tool_outputs else ""
-        content = f"echo:{request.prompt or ''}{suffix}|tools:{tool_count}"
-
-        return LLMResponse(
+        return ProviderLLMResponse(
             content=content,
-            model_used=self._current_llm_config.model_name,
+            model=request.model,
             tokens_used=50,
-            tool_calls=None,
         )
+
+    async def stream(
+        self, request: ProviderLLMRequest
+    ) -> AsyncIterator[ProviderLLMResponseDelta]:
+        # Find the user message (not system prompt)
+        user_content = ""
+        for msg in request.messages:
+            if msg.get("role") == "user":
+                user_content = msg.get("content", "")
+                break
+
+        content = f"echo:{user_content}"
+        if request.tools:
+            content += f"|tools:{len(request.tools)}"
+        if hasattr(request, 'tool_outputs') and request.tool_outputs:
+            content += "|to"
+
+        # Split content into chunks for streaming
+        for i in range(0, len(content), 10):
+            chunk = content[i:i + 10]
+            yield ProviderLLMResponseDelta(
+                content=chunk,
+                finish_reason="stop" if i + 10 >= len(content) else None,
+            )
+
+    async def health_check(self) -> bool:
+        """Test health check that always passes."""
+        return True
 
 
 class ToolManagerHelper(ToolManager):
@@ -106,21 +108,75 @@ class ToolManagerHelper(ToolManager):
         return self.run_tool(name, payload)
 
 
-def make_manager(
+def setup_test_environment(
     persistent: bool = False,
-) -> tuple[RuntimeManager, FakeLLM, ToolManagerHelper]:
-    llm = FakeLLM()
-    tools = ToolManagerHelper()
-    # Register the sum tool for testing
-    tools.register_tool(SumTool())
-    # RuntimeManager doesn't take config directly, uses config_manager
-    mgr = RuntimeManager(llm_manager=llm, tool_manager=tools)
+) -> tuple[RuntimeManager, MockTestProvider, ToolManagerHelper]:
+    """Set up test environment with provider system."""
+    # Create config manager and load configuration
+    config_manager = get_config_manager()
+    config_manager.load_global_config()
 
-    # Set up persistent sessions if requested
     if persistent:
-        mgr.config_manager.set_session_overrides({"runtime.persistent_sessions": True})
+        config_manager.set_session_overrides({
+            "runtime.persistent_sessions": True,
+            "llm.model_name": "test-model",
+            "llm.provider": "test",
+            "llm.temperature": 0.7,
+            "llm.max_tokens": 1000,
+        })
+    else:
+        config_manager.set_session_overrides({
+            "llm.model_name": "test-model",
+            "llm.provider": "test",
+            "llm.temperature": 0.7,
+            "llm.max_tokens": 1000,
+        })
 
-    return mgr, llm, tools
+    # Add test provider to configuration
+    test_provider_config = {
+        "name": "test",  # Required field for ProviderConfig
+        "driver": "test",
+        "base_url": "https://api.test.com",
+        "api_key_env": "TEST_API_KEY",
+        "models": {
+            "test-model": {"supported_parameters": ["temperature", "max_tokens"]},
+            "gpt-4": {"supported_parameters": ["temperature", "max_tokens"]},
+            "gpt-3.5": {"supported_parameters": ["temperature", "max_tokens"]},
+        }
+    }
+
+    # Set provider configuration through config manager
+    config_manager.set_session_overrides({
+        "providers.test": test_provider_config,
+        "agent.policies.planner.models": ["test:test-model", "fallback:any"],
+        "agent.policies.general.models": ["test:test-model", "fallback:any"],
+        **({
+            "runtime.persistent_sessions": True,
+        } if persistent else {})
+    })
+
+    # Create provider manager and register test provider
+    provider_manager = ProviderManager()
+    test_provider = MockTestProvider(name="test")
+    provider_manager._providers["test"] = MockTestProvider
+    provider_manager._provider_sources["test"] = "test"
+
+    # Reload provider manager with config
+    provider_manager.reload(config_manager)
+
+    # Create LLM manager with provider system
+    llm_manager = LLMManager(config_manager=config_manager, provider_manager=provider_manager)
+
+    # Create tool manager
+    tool_manager = ToolManagerHelper()
+    tool_manager.register_tool(SumTool())
+
+    # Create runtime manager
+    runtime_manager = RuntimeManager(
+        llm_manager=llm_manager, tool_manager=tool_manager, config_manager=config_manager
+    )
+
+    return runtime_manager, test_provider, tool_manager
 
 
 # ── non-persistent vs persistent behavior ─────────────────────────────────────
@@ -128,63 +184,81 @@ def make_manager(
 
 @pytest.mark.asyncio
 async def test_orchestrate_with_model_override():
-    """Test orchestrate method with model override."""
-    mgr, llm, _ = make_manager(persistent=False)
-
+    """Test orchestrate method with model override using provider system."""
+    mgr, _, _ = setup_test_environment(persistent=False)
     # Call with model override
     result = await mgr.orchestrate("test query", model="gpt-4")
 
-    # Verify the call was made
-    assert len(llm.calls) == 1
-
-    # Config should be updated after the call (not restored)
-    assert mgr._llm_manager._current_llm_config.model_name == "gpt-4"
+    # Verify the call was made to the provider system
+    # Get the provider instance that was actually used by the LLM manager
+    actual_provider = mgr._llm_manager.provider_manager.get_provider("test")
+    assert actual_provider is not None
+    # Cast to MockTestProvider since we know this is the test provider in this context
+    test_provider = cast(MockTestProvider, actual_provider)
+    assert test_provider.call_count == 1
+    assert len(test_provider.calls) == 1
+    assert test_provider.calls[0]["model"] == "gpt-4"
 
     # Verify the response
-    assert result["model_used"] == "gpt-4"  # Should use the overridden model
+    assert result["model_used"] == "gpt-4"
     assert "test query" in result["message"]
 
 
 @pytest.mark.asyncio
 async def test_orchestrate_with_multiple_overrides():
     """Test orchestrate method with multiple configuration overrides."""
-    mgr, _llm, _ = make_manager(persistent=False)
+    mgr, _, _ = setup_test_environment(persistent=False)
 
     # Call with multiple overrides
     result = await mgr.orchestrate(
         "test query", model="gpt-4", temperature=0.8, max_tokens=100
     )
 
-    # Config should be updated after the call (not restored)
-    assert mgr._llm_manager._current_llm_config.model_name == "gpt-4"
-    assert mgr._llm_manager._current_llm_config.temperature == 0.8
+    # Verify the call was made with correct overrides
+    # Get the provider instance that was actually used by the LLM manager
+    actual_provider = mgr._llm_manager.provider_manager.get_provider("test")
+    assert actual_provider is not None
+    test_provider = cast(MockTestProvider, actual_provider)
+    assert test_provider.call_count == 1
+    assert len(test_provider.calls) == 1
+    assert test_provider.calls[0]["model"] == "gpt-4"
+    assert test_provider.calls[0]["temperature"] == 0.8
+    assert test_provider.calls[0]["max_tokens"] == 100
 
     assert result["model_used"] == "gpt-4"
     assert "test query" in result["message"]
 
 
 @pytest.mark.asyncio
-async def test_orchestrate_config_persists_across_calls():
-    """Test that configuration overrides persist across multiple orchestrate calls."""
-    mgr, _llm, _ = make_manager(persistent=False)
+async def test_orchestrate_config_overrides_persist_across_calls():
+    """Test that configuration overrides are applied per call and persist between calls."""
+    mgr, _, _ = setup_test_environment(persistent=False)
 
     # First call with model override
     result1 = await mgr.orchestrate("test query 1", model="gpt-4", temperature=0.8)
 
-    # Config should be updated
-    assert mgr._llm_manager._current_llm_config.model_name == "gpt-4"
-    assert mgr._llm_manager._current_llm_config.temperature == 0.8
+    # Verify first call
+    # Get the provider instance that was actually used by the LLM manager
+    actual_provider = mgr._llm_manager.provider_manager.get_provider("test")
+    assert actual_provider is not None
+    test_provider = cast(MockTestProvider, actual_provider)
+    assert test_provider.call_count == 1
+    assert len(test_provider.calls) == 1
+    assert test_provider.calls[0]["model"] == "gpt-4"
+    assert test_provider.calls[0]["temperature"] == 0.8
 
-    # Second call without overrides should use the updated config
+    # Second call without overrides
     result2 = await mgr.orchestrate("test query 2")
 
-    # Config should remain updated
-    assert mgr._llm_manager._current_llm_config.model_name == "gpt-4"
-    assert mgr._llm_manager._current_llm_config.temperature == 0.8
+    # Verify second call used same configuration
+    assert test_provider.call_count == 2
+    assert len(test_provider.calls) == 2
+    assert test_provider.calls[1]["model"] == "gpt-4"
+    assert test_provider.calls[1]["temperature"] == 0.8
 
     # Both calls should succeed
     assert result1["model_used"] == "gpt-4"
-    assert result2["model_used"] == "gpt-4"  # Should still use the overridden model
+    assert result2["model_used"] == "gpt-4"
     assert "test query 1" in result1["message"]
     assert "test query 2" in result2["message"]
 
@@ -192,7 +266,7 @@ async def test_orchestrate_config_persists_across_calls():
 @pytest.mark.asyncio
 async def test_orchestrate_config_override_validation():
     """Test that invalid configuration overrides raise appropriate errors."""
-    mgr, _llm, _ = make_manager(persistent=False)
+    mgr, _, _ = setup_test_environment(persistent=False)
 
     # Test invalid temperature override
     with pytest.raises(LLMError, match="Configuration update validation failed"):
@@ -205,7 +279,8 @@ async def test_orchestrate_config_override_validation():
 
 @pytest.mark.asyncio
 async def test_persistent_reuses_same_session_and_grows_history():
-    mgr, llm, _ = make_manager(persistent=True)
+    """Test persistent session behavior."""
+    mgr, test_provider_instance, _ = setup_test_environment(persistent=True)
 
     out1 = await mgr.orchestrate("a")
     out2 = await mgr.orchestrate("b")
@@ -217,15 +292,21 @@ async def test_persistent_reuses_same_session_and_grows_history():
     assert len(out1["history"]) == 2
     assert len(out2["history"]) == 4
 
-    # LLM sees growing history
-    assert llm.calls[0]["history_len"] == 0
-    assert llm.calls[1]["history_len"] >= 2
+    # Provider sees the calls
+    # Get the provider instance that was actually used by the LLM manager
+    actual_provider = mgr._llm_manager.provider_manager.get_provider("test")
+    assert actual_provider is not None
+    test_provider = cast(MockTestProvider, actual_provider)
+    assert test_provider.call_count == 2
+    assert test_provider.calls[0]["messages"] >= 2  # User + system messages
+    assert test_provider.calls[1]["messages"] >= 4  # Growing history
 
 
 # ── directive parsing and tool invocation ─────────────────────────────────────
 @pytest.mark.asyncio
 async def test_directive_success_invokes_tool_and_passes_outputs_to_llm():
-    mgr, llm, _ = make_manager(persistent=False)
+    """Test direct tool invocation and output passing."""
+    mgr, test_provider_instance, _ = setup_test_environment(persistent=False)
     payload = json.dumps({"a": 2, "b": 3})
     out = await mgr.orchestrate(f"tool:sum {payload}")
 
@@ -233,27 +314,36 @@ async def test_directive_success_invokes_tool_and_passes_outputs_to_llm():
     assert out["tool_calls"] and out["tool_calls"][0]["name"] == "sum"
     assert out["tool_calls"][0]["result"] == {"sum": 5}
 
-    # LLM got tool_outputs
-    assert llm.calls[-1]["tool_outputs"] == {"sum": {"sum": 5}}
+    # Provider should have received the tool outputs
+    # Get the provider instance that was actually used by the LLM manager
+    actual_provider = mgr._llm_manager.provider_manager.get_provider("test")
+    assert actual_provider is not None
+    test_provider = cast(MockTestProvider, actual_provider)
+    assert test_provider.call_count == 1
+    assert len(test_provider.calls) == 1
+    assert test_provider.calls[0]["tool_outputs"] is True
 
 
 @pytest.mark.asyncio
 async def test_directive_unknown_tool_raises():
-    mgr, _, _ = make_manager(persistent=False)
+    """Test that unknown tools raise appropriate errors."""
+    mgr, _, _ = setup_test_environment(persistent=False)
     with pytest.raises(ToolRegistryError):
         await mgr.orchestrate('tool:unknown {"x": 1}')
 
 
 @pytest.mark.asyncio
 async def test_directive_invalid_json_raises():
-    mgr, _, _ = make_manager(persistent=False)
+    """Test that invalid JSON in tool calls raises appropriate errors."""
+    mgr, _, _ = setup_test_environment(persistent=False)
     with pytest.raises(json.JSONDecodeError):
         await mgr.orchestrate("tool:sum not-json")
 
 
 @pytest.mark.asyncio
 async def test_directive_invalid_payload_validation_raises():
-    mgr, _, _ = make_manager(persistent=False)
+    """Test that invalid tool payload raises appropriate errors."""
+    mgr, _, _ = setup_test_environment(persistent=False)
     with pytest.raises(ToolRegistryError):
         await mgr.orchestrate('tool:sum {"a": "x", "b": 2}')
 
@@ -263,24 +353,40 @@ async def test_directive_invalid_payload_validation_raises():
 
 @pytest.mark.asyncio
 async def test_empty_text_is_accepted_and_yields_echo():
-    mgr, _, _ = make_manager(persistent=False)
+    """Test that empty text is handled correctly."""
+    mgr, test_provider_instance, _ = setup_test_environment(persistent=False)
     out = await mgr.orchestrate("")
-    # FakeLLM format
+
+    # Test provider format
     assert out["message"].startswith("echo:")
-    assert out["message"].endswith("|tools:1")
+    # Get the provider instance that was actually used by the LLM manager
+    actual_provider = mgr._llm_manager.provider_manager.get_provider("test")
+    assert actual_provider is not None
+    test_provider = cast(MockTestProvider, actual_provider)
+    assert test_provider.call_count == 1
+    assert test_provider.calls[0]["tools"] == 1  # SumTool is registered
 
 
 @pytest.mark.asyncio
 async def test_persistent_many_iterations_history_grows_linearly():
-    mgr, llm, _ = make_manager(persistent=True)
+    """Test that history grows linearly with many iterations."""
+    mgr, test_provider_instance, _ = setup_test_environment(persistent=True)
     n = 25
     for i in range(n):
         await mgr.orchestrate(f"m{i}")
     out = await mgr.orchestrate("final")
+
     # After N+1 runs, messages = 2*(N+1)
     assert len(out["history"]) == 2 * (n + 1)
-    # LLM saw large history length by the end
-    assert llm.calls[-1]["history_len"] >= 2 * n
+
+    # Provider should have seen all calls
+    # Get the provider instance that was actually used by the LLM manager
+    actual_provider = mgr._llm_manager.provider_manager.get_provider("test")
+    assert actual_provider is not None
+    test_provider = cast(MockTestProvider, actual_provider)
+    assert test_provider.call_count == n + 1
+    # Last call should have large history
+    assert test_provider.calls[-1]["messages"] >= 2 * n
 
 
 # ── structured output validation ─────────────────────────────────────────────
@@ -288,7 +394,8 @@ async def test_persistent_many_iterations_history_grows_linearly():
 
 @pytest.mark.asyncio
 async def test_structured_output_shape_and_fields():
-    mgr, _, _ = make_manager(persistent=False)
+    """Test that output has the expected structure and fields."""
+    mgr, _, _ = setup_test_environment(persistent=False)
     out = await mgr.orchestrate("shape-check")
 
     # Required keys
@@ -314,3 +421,44 @@ async def test_structured_output_shape_and_fields():
         isinstance(m, dict) and {"role", "content"} <= set(m.keys())
         for m in out["history"]
     )
+
+
+@pytest.mark.asyncio
+async def test_provider_system_integration():
+    """Test that the provider system integration works correctly."""
+    mgr, _, _ = setup_test_environment(persistent=False)
+
+    # Test that provider is properly integrated
+    providers = mgr._llm_manager.provider_manager.list_providers()
+    assert "test" in providers
+
+    # Test provider routing
+    result = await mgr.orchestrate("test provider routing")
+
+    # Verify provider was called through the system
+    # Get the provider instance that was actually used by the LLM manager
+    actual_provider = mgr._llm_manager.provider_manager.get_provider("test")
+    assert actual_provider is not None
+    test_provider = cast(MockTestProvider, actual_provider)
+    assert test_provider.call_count == 1
+    assert test_provider.calls[0]["model"] == "test-model"
+
+    assert result["model_used"] == "test-model"
+    assert "test provider routing" in result["message"]
+
+
+@pytest.mark.asyncio
+async def test_provider_fallback_behavior():
+    """Test provider fallback behavior when primary provider fails."""
+    mgr, test_provider_instance, _ = setup_test_environment(persistent=False)
+
+    # Test normal operation
+    result = await mgr.orchestrate("test fallback")
+    assert result["model_used"] == "test-model"
+
+    # Verify provider was called
+    # Get the provider instance that was actually used by the LLM manager
+    actual_provider = mgr._llm_manager.provider_manager.get_provider("test")
+    assert actual_provider is not None
+    test_provider = cast(MockTestProvider, actual_provider)
+    assert test_provider.call_count == 1

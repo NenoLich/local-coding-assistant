@@ -1,4 +1,0 @@
-llm:
-  temperature: -1
-runtime:
-  max_session_history: 0

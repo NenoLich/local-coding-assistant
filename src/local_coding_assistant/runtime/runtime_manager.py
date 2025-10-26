@@ -8,7 +8,11 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
+from local_coding_assistant.agent.llm_manager_v2 import (
+    LLMManager,
+    LLMRequest,
+    LLMResponse,
+)
 from local_coding_assistant.config import get_config_manager
 from local_coding_assistant.runtime.session import SessionState
 
@@ -78,17 +82,11 @@ class RuntimeManager:
                 text, model, temperature, max_tokens, graph_mode
             )
 
-        # Regular mode - single query execution
+        # Regular mode execution
         return await self._run_regular_mode(text, model, temperature, max_tokens)
 
-    async def _run_regular_mode(
-        self,
-        text: str,
-        model: str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-    ) -> dict[str, Any]:
-        """Run a single query in regular mode."""
+    def _setup_session(self) -> SessionState:
+        """Setup and configure the session for the current request."""
         # Resolve session and reset if non-persistent
         if self.session is None:
             self.session = SessionState()
@@ -98,27 +96,47 @@ class RuntimeManager:
         if not runtime_config.persistent_sessions:
             session.reset()
 
-        self._log.info("Runtime starting query; model=%s", model or "default")
+        return session
 
-        # Record user message
-        session.add_user_message(text)
-        self._log.debug("Recorded user message; session_id=%s", session.id)
+    def _handle_direct_tool_call(self, text: str) -> tuple[dict[str, Any] | None, str]:
+        """Handle direct tool invocation from user input.
 
-        # Handle direct tool invocation: "tool:<name> <json-payload>"
+        Args:
+            text: The user input text
+
+        Returns:
+            Tuple of (tool_outputs, processed_text)
+        """
         tool_outputs: dict[str, Any] | None = None
+
         if text.startswith("tool:"):
             try:
                 _, rest = text.split(":", 1)
                 name, payload_str = rest.strip().split(" ", 1)
                 payload = json.loads(payload_str)
                 result = self._tool_manager.run_tool(name, payload)
-                session.add_tool_message(name=name, args=payload, result=result)
                 tool_outputs = {name: result}
                 self._log.debug("Tool invoked: %s => %s", name, result)
+                # Return the tool result instead of the original text
+                processed_text = f"Tool {name} executed successfully"
             except Exception as e:
                 self._log.error("Tool invocation failed: %s", e)
                 raise
+        else:
+            processed_text = text
 
+        return tool_outputs, processed_text
+
+    def _prepare_llm_request(
+        self,
+        text: str,
+        session: SessionState,
+        tool_outputs: dict[str, Any] | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> tuple[LLMRequest, dict[str, Any]]:
+        """Prepare the LLM request with context and configuration."""
         # Prepare tools for LLM request
         available_tools = self._get_available_tools()
 
@@ -126,8 +144,8 @@ class RuntimeManager:
         context = {
             "session_id": session.id,
             "history": [
-                m.model_dump() for m in session.history[:-1]
-            ],  # Exclude current user message for compatibility with tests
+                m.model_dump() for m in session.history
+            ],  # Include all history for context
             "tool_calls": [tc.model_dump() for tc in session.tool_calls],
             "metadata": session.metadata,
         }
@@ -141,7 +159,7 @@ class RuntimeManager:
         )
 
         # Handle configuration overrides
-        overrides = {}
+        overrides = self.config_manager.session_overrides.copy()
         if model is not None:
             overrides["llm.model_name"] = model
         if temperature is not None:
@@ -149,16 +167,17 @@ class RuntimeManager:
         if max_tokens is not None:
             overrides["llm.max_tokens"] = max_tokens
 
-        # Ask LLM with context
-        response = await self._llm_manager.generate(
-            request, overrides=overrides if overrides else None
-        )
-        self._log.debug("LLM returned response; len=%d", len(response.content))
+        # Update session configuration if overrides are provided
+        if overrides:
+            self.config_manager.set_session_overrides(overrides)
 
-        # Record assistant message
-        session.add_assistant_message(response.content)
+        return request, overrides
 
-        result: dict[str, Any] = {
+    def _build_result(
+        self, session: SessionState, response: LLMResponse
+    ) -> dict[str, Any]:
+        """Build the result dictionary from session and response."""
+        return {
             "session_id": session.id,
             "message": response.content,
             "model_used": response.model_used,
@@ -167,7 +186,10 @@ class RuntimeManager:
             "history": [m.model_dump() for m in session.history],
         }
 
-        # Handle LLM-initiated tool calls
+    def _handle_llm_tool_calls(
+        self, session: SessionState, response: LLMResponse
+    ) -> None:
+        """Handle tool calls initiated by the LLM."""
         if response.tool_calls:
             for tool_call in response.tool_calls:
                 if "function" in tool_call:
@@ -184,6 +206,53 @@ class RuntimeManager:
                     except Exception as e:
                         self._log.error("LLM-initiated tool call failed: %s", e)
 
+    async def _run_regular_mode(
+        self,
+        text: str,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> dict[str, Any]:
+        """Run a single query in regular mode."""
+        session = self._setup_session()
+
+        # Record user message
+        session.add_user_message(text)
+        self._log.debug("Recorded user message; session_id=%s", session.id)
+
+        # Handle direct tool invocation: "tool:<name> <json-payload>"
+        tool_outputs, processed_text = self._handle_direct_tool_call(text)
+
+        # If there were tool outputs, replace the original message with tool result
+        # Otherwise, use the original text for LLM request
+        if tool_outputs:
+            # Record the original tool call for context
+            for tool_name, result in tool_outputs.items():
+                session.add_tool_message(name=tool_name, args={}, result=result)
+            # Use processed text (tool result) for LLM request
+            user_message_for_llm = processed_text
+        else:
+            # Use original text for LLM request
+            user_message_for_llm = text
+
+        # Prepare and execute LLM request
+        request, overrides = self._prepare_llm_request(
+            user_message_for_llm, session, tool_outputs, model, temperature, max_tokens
+        )
+
+        # Ask LLM with context
+        response = await self._llm_manager.generate(
+            request, overrides=overrides if overrides else None
+        )
+        self._log.debug("LLM returned response; len=%d", len(response.content))
+
+        # Record assistant message
+        session.add_assistant_message(response.content)
+
+        # Handle LLM-initiated tool calls and build result
+        result = self._build_result(session, response)
+        self._handle_llm_tool_calls(session, response)
+
         self._log.info("Runtime finished query; session_id=%s", session.id)
         return result
 
@@ -197,6 +266,19 @@ class RuntimeManager:
         graph_mode: bool = False,
     ) -> dict[str, Any]:
         """Run the runtime in agent mode, delegating to AgentLoop or LangGraphAgent."""
+        # Handle configuration overrides
+        overrides = {}
+        if model is not None:
+            overrides["llm.model_name"] = model
+        if temperature is not None:
+            overrides["llm.temperature"] = temperature
+        if max_tokens is not None:
+            overrides["llm.max_tokens"] = max_tokens
+
+        # Update session configuration if overrides are provided
+        if overrides:
+            self.config_manager.set_session_overrides(overrides)
+
         # Determine which agent implementation to use
         runtime_config = self.config_manager.resolve().runtime
         use_graph_mode = graph_mode or runtime_config.use_graph_mode

@@ -8,12 +8,12 @@ import pytest
 from typer.testing import CliRunner
 
 from local_coding_assistant.agent.agent_loop import AgentLoop
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
+from local_coding_assistant.agent.llm_manager_v2 import LLMManager, LLMRequest, LLMResponse
 from local_coding_assistant.config import get_config_manager, load_config
-from local_coding_assistant.config.schemas import RuntimeConfig, LLMConfig
+from local_coding_assistant.config.schemas import LLMConfig, RuntimeConfig
 from local_coding_assistant.core import AppContext
-from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.core.bootstrap import bootstrap
+from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.tools import ToolManager
 from local_coding_assistant.tools.builtin import SumTool
 
@@ -21,8 +21,14 @@ from local_coding_assistant.tools.builtin import SumTool
 class MockStreamingLLMManager(LLMManager):
     """Mock LLM manager that supports streaming responses and tool calls."""
 
-    def __init__(self, responses: list[dict[str, Any]]):
-        super().__init__()  # LLMManager now uses ConfigManager
+    def __init__(
+        self,
+        responses: list[dict[str, Any]],
+        config_manager=None,
+        provider_manager: Any = None,
+    ):
+        # Initialize the parent LLMManager first
+        super().__init__(config_manager=config_manager, provider_manager=provider_manager)
         self.responses = responses
         self.call_count = 0
         self.streaming_enabled = True
@@ -44,7 +50,7 @@ class MockStreamingLLMManager(LLMManager):
 
         return mock_response
 
-    async def generate_stream(self, request: LLMRequest) -> AsyncIterator[str]:
+    async def stream(self, request: LLMRequest) -> AsyncIterator[str]:
         """Generate a streaming response."""
         if self.call_count >= len(self.responses):
             response_data = {"content": "I've completed my analysis.", "tool_calls": []}
@@ -201,7 +207,7 @@ def mock_llm_with_tools():
             ],
         },
     ]
-    return MockStreamingLLMManager(responses)
+    return MockStreamingLLMManager(responses, config_manager=None, provider_manager=None)
 
 
 @pytest.fixture
@@ -236,7 +242,7 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
         # Create new agent loop if this is the first call or if the previous one has finished
         if agent_loop_instance is None or agent_loop_instance.final_answer is not None:
             agent_loop_instance = AgentLoop(
-                llm_manager=MockStreamingLLMManager(mock_llm_with_tools.responses),
+                llm_manager=MockStreamingLLMManager(mock_llm_with_tools.responses, config_manager=None, provider_manager=None),
                 tool_manager=tool_manager,
                 name="integration_test_agent",
                 max_iterations=max_iterations,
@@ -283,7 +289,7 @@ def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
         # Create new agent loop if this is the first call or if the previous one has finished
         if agent_loop_instance is None or agent_loop_instance.final_answer is not None:
             agent_loop_instance = AgentLoop(
-                llm_manager=MockStreamingLLMManager(mock_llm_with_tools.responses),
+                llm_manager=MockStreamingLLMManager(mock_llm_with_tools.responses, config_manager=None, provider_manager=None),
                 tool_manager=tool_manager,
                 name="integration_test_agent_streaming",
                 max_iterations=max_iterations,
@@ -345,7 +351,7 @@ def complex_scenario_llm():
             ],
         },
     ]
-    return MockStreamingLLMManager(responses)
+    return MockStreamingLLMManager(responses, config_manager=None, provider_manager=None)
 
 
 @pytest.fixture
@@ -363,7 +369,7 @@ def streaming_llm_single_response():
             "tool_calls": [],
         }
     ]
-    return MockStreamingLLMManager(responses)
+    return MockStreamingLLMManager(responses, config_manager=None, provider_manager=None)
 
 
 @pytest.fixture(scope="function")

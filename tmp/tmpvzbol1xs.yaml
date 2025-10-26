@@ -1,6 +1,0 @@
-llm:
-  model_name: gpt-4
-  temperature: 0.8
-runtime:
-  log_level: DEBUG
-  persistent_sessions: true

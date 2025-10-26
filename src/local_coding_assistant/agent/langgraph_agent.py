@@ -9,7 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StreamWriter
 from pydantic import BaseModel, Field
 
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
+from local_coding_assistant.agent.llm_manager_v2 import LLMManager, LLMRequest
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.tools.tool_manager import ToolManager
 from local_coding_assistant.utils.langgraph_utility import (
@@ -317,22 +317,8 @@ Please provide a plan with specific actions to take. Respond in JSON format with
 """
 
         try:
-            request = LLMRequest(
-                prompt=prompt,
-                tools=self._cached_tools,
-            )
-
-            if self.streaming:
-                # Use astream for streaming mode
-                response_content = ""
-                async for chunk in self.llm_manager.generate_stream(request):
-                    response_content += chunk
-                    # Stream LLM tokens if streaming is enabled
-                    writer({"phase": "plan", "type": "llm_token", "content": chunk})
-            else:
-                # Use ainvoke for non-streaming mode
-                response = await self.llm_manager.ainvoke(request)
-                response_content = response.content
+            # Get LLM response using unified method
+            response_content = await self._get_llm_response(prompt, writer, "plan")
 
             # Parse response as JSON for structured output
             try:
@@ -387,6 +373,147 @@ Please provide a plan with specific actions to take. Respond in JSON format with
 
             return state
 
+    async def _get_llm_response_with_tools(
+        self, prompt: str, writer: StreamWriter, phase: str
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Get LLM response and extract tool calls.
+
+        Unified method to interact with llm_manager.stream/ainvoke.
+
+        Args:
+            prompt: The prompt to send to LLM
+            writer: Stream writer for streaming output
+            phase: The current phase (for streaming metadata)
+
+        Returns:
+            Tuple of (response_content, tool_calls)
+        """
+        request = LLMRequest(
+            prompt=prompt,
+            tools=self._cached_tools,
+        )
+
+        if self.streaming:
+            # Use astream for streaming mode
+            response_content = ""
+            async for chunk in self.llm_manager.stream(request):
+                response_content += chunk
+                # Stream LLM tokens if streaming is enabled
+                writer({"phase": phase, "type": "llm_token", "content": chunk})
+
+            # For streaming mode, we need to get tool calls from complete response
+            response = await self.llm_manager.ainvoke(request)
+            tool_calls = response.tool_calls or []
+        else:
+            # Use ainvoke for non-streaming mode
+            response = await self.llm_manager.ainvoke(request)
+            response_content = response.content
+            tool_calls = response.tool_calls or []
+
+        return response_content, tool_calls
+
+    async def _get_llm_response(
+        self, prompt: str, writer: StreamWriter, phase: str
+    ) -> str:
+        """Get LLM response without tool calls.
+
+        Unified method for nodes that don't need tool calling (plan, reflect).
+
+        Args:
+            prompt: The prompt to send to LLM
+            writer: Stream writer for streaming output
+            phase: The current phase (for streaming metadata)
+
+        Returns:
+            Response content as string
+        """
+        request = LLMRequest(prompt=prompt)
+
+        if self.streaming:
+            # Use stream for streaming mode
+            response_content = ""
+            async for chunk in self.llm_manager.stream(request):
+                response_content += chunk
+                # Stream LLM tokens if streaming is enabled
+                writer({"phase": phase, "type": "llm_token", "content": chunk})
+        else:
+            # Use ainvoke for non-streaming mode
+            response = await self.llm_manager.ainvoke(request)
+            response_content = response.content
+
+        return response_content
+
+    def _process_tool_calls(
+        self, tool_calls: list[dict[str, Any]], plan: dict[str, Any], state: AgentState
+    ) -> dict[str, Any] | None:
+        """Process tool calls and return action result.
+
+        Args:
+            tool_calls: List of tool calls to process
+            plan: Current plan data
+            state: Current agent state
+
+        Returns:
+            Action result dict or None if no tool calls to process
+        """
+        if not tool_calls:
+            return None
+
+        for tool_call in tool_calls:
+            if "function" in tool_call:
+                return self._handle_tool_call(tool_call, plan, state)
+
+        return None
+
+    def _handle_tool_call(
+        self, tool_call: dict[str, Any], plan: dict[str, Any], state: AgentState
+    ) -> dict[str, Any]:
+        """Handle execution of a single tool call."""
+        func_name = tool_call["function"]["name"]
+        try:
+            # Parse arguments and invoke tool
+            args = json.loads(tool_call["function"]["arguments"])
+            tool_result = self.tool_manager.run_tool(func_name, args)
+
+            # Special handling for final_answer tool
+            if func_name == "final_answer":
+                # Set final answer on state and return action result
+                state.set_final_answer(args.get("answer", ""))
+                return {
+                    "success": True,
+                    "output": f"Final answer: {args.get('answer', '')}",
+                    "metadata": {
+                        "tool_calls": [tool_call],
+                        "stopped": True,
+                    },
+                }
+            else:
+                return {
+                    "success": True,
+                    "output": f"Tool {func_name} executed successfully",
+                    "metadata": {
+                        "tool_calls": [tool_call],
+                        "tool_results": {func_name: tool_result},
+                    },
+                }
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "metadata": {"plan_actions": plan.get("actions", [])},
+            }
+
+    def _create_action_result(
+        self, response_content: str, tool_calls: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Create action result from LLM response."""
+        return {
+            "success": True,
+            "output": response_content,
+            "metadata": {"tool_calls": tool_calls},
+        }
+
     @safe_node("act")
     async def act_node(self, state: AgentState, writer: StreamWriter) -> AgentState:
         """Act node - execute actions using tools and LLM."""
@@ -413,80 +540,17 @@ If you need to provide a final answer, use the final_answer tool.
 Please describe what actions were taken and their results.
 """
 
-            request = LLMRequest(
-                prompt=action_prompt,
-                tools=self._cached_tools,
+            # Get LLM response and tool calls
+            response_content, tool_calls = self._get_llm_response_with_tools(
+                action_prompt, writer, "act"
             )
 
-            if self.streaming:
-                # Use astream for streaming mode
-                response_content = ""
-                async for chunk in self.llm_manager.generate_stream(request):
-                    response_content += chunk
-                    # Stream LLM tokens if streaming is enabled
-                    writer({"phase": "act", "type": "llm_token", "content": chunk})
+            # Process tool calls if any
+            action_result = self._process_tool_calls(tool_calls, plan, state)
 
-                # For streaming mode, we need to get tool calls from complete response
-                response = await self.llm_manager.ainvoke(request)
-                tool_calls = response.tool_calls or []
-            else:
-                # Use ainvoke for non-streaming mode
-                response = await self.llm_manager.ainvoke(request)
-                response_content = response.content
-                tool_calls = response.tool_calls or []
-
-            # Check if this is a tool call response
-            if tool_calls:
-                for tool_call in tool_calls:
-                    if "function" in tool_call:
-                        func_name = tool_call["function"]["name"]
-                        try:
-                            # Parse arguments and invoke tool
-                            args = json.loads(tool_call["function"]["arguments"])
-                            tool_result = self.tool_manager.run_tool(func_name, args)
-
-                            # Special handling for final_answer tool
-                            if func_name == "final_answer":
-                                state.set_final_answer(args.get("answer", ""))
-                                node_logger_instance.info(
-                                    f"Final answer received: {state.final_answer}"
-                                )
-
-                                action_result = {
-                                    "success": True,
-                                    "output": f"Final answer: {state.final_answer}",
-                                    "metadata": {
-                                        "tool_calls": tool_calls,
-                                        "stopped": True,
-                                    },
-                                }
-                            else:
-                                node_logger_instance.debug(
-                                    f"Tool call: {func_name} => {tool_result}"
-                                )
-                                action_result = {
-                                    "success": True,
-                                    "output": f"Tool {func_name} executed successfully",
-                                    "metadata": {
-                                        "tool_calls": tool_calls,
-                                        "tool_results": {func_name: tool_result},
-                                    },
-                                }
-
-                        except Exception as e:
-                            node_logger_instance.error(f"Tool call failed: {e}")
-                            action_result = {
-                                "success": False,
-                                "error": str(e),
-                                "metadata": {"plan_actions": plan.get("actions", [])},
-                            }
-            else:
-                # If no tool calls, return the LLM response as output
-                action_result = {
-                    "success": True,
-                    "output": response_content,
-                    "metadata": {"tool_calls": tool_calls},
-                }
+            # If no tool calls were processed, create default action result
+            if action_result is None:
+                action_result = self._create_action_result(response_content, tool_calls)
 
             # Add to state and history
             state.current_action = action_result
@@ -543,19 +607,10 @@ Please provide:
 - success_rating: success rating (0-1)
 """
 
-            request = LLMRequest(prompt=reflection_prompt)
-
-            if self.streaming:
-                # Use astream for streaming mode
-                response_content = ""
-                async for chunk in self.llm_manager.generate_stream(request):
-                    response_content += chunk
-                    # Stream LLM tokens if streaming is enabled
-                    writer({"phase": "reflect", "type": "llm_token", "content": chunk})
-            else:
-                # Use ainvoke for non-streaming mode
-                response = await self.llm_manager.ainvoke(request)
-                response_content = response.content
+            # Get LLM response using unified method
+            response_content = await self._get_llm_response(
+                reflection_prompt, writer, "reflect"
+            )
 
             # Parse response as JSON for structured output
             try:
@@ -615,21 +670,6 @@ Please provide:
                 writer({"phase": "reflect", "data": reflection_result, "error": str(e)})
 
             return state
-
-    async def _stream_response(self, request: LLMRequest) -> str:
-        """Generate LLM response using streaming.
-
-        Args:
-            request: The LLM request to process
-
-        Returns:
-            The complete response content as a string
-        """
-        logger.debug("Using streaming LLM response")
-        response_content = ""
-        async for chunk in self.llm_manager.generate_stream(request):
-            response_content += chunk
-        return response_content
 
     async def run(self, initial_state: AgentState | None = None) -> str | None:
         """Run the LangGraph agent until completion.

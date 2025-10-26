@@ -1,12 +1,12 @@
 """Unit tests for AgentLoop functionality."""
 
 import time
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 from local_coding_assistant.agent.agent_loop import AgentLoop
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMResponse
+from local_coding_assistant.agent.llm_manager_v2 import LLMManager, LLMResponse
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.tools.tool_manager import ToolManager
 
@@ -151,7 +151,7 @@ class TestAgentLoopControlFlow:
     ):
         """Test single iteration execution with proper state management."""
         # Mock the handlers to return predictable results
-        agent_loop_single.observe_handler = AsyncMock(
+        agent_loop_single.observe_handler = Mock(
             return_value={
                 "content": "Test observation",
                 "metadata": {"session_id": "test_session"},
@@ -206,7 +206,7 @@ class TestAgentLoopControlFlow:
         # Mock handlers for multiple iterations
         call_count = {"observe": 0, "plan": 0, "act": 0, "reflect": 0}
 
-        async def mock_observe():
+        def mock_observe():
             call_count["observe"] += 1
             return {
                 "content": f"Test observation {call_count['observe']}",
@@ -319,7 +319,7 @@ class TestAgentLoopToolInvocation:
     ):
         """Test successful tool invocation in agent loop."""
         # Mock handlers to trigger tool usage
-        agent_loop_with_tools.observe_handler = AsyncMock(
+        agent_loop_with_tools.observe_handler = Mock(
             return_value={
                 "content": "Need to calculate 2 + 3",
                 "metadata": {"session_id": "test_session"},
@@ -379,7 +379,7 @@ class TestAgentLoopToolInvocation:
     ):
         """Test that final_answer tool terminates the loop and returns the answer."""
         # Mock handlers to trigger final answer
-        agent_loop_with_tools.observe_handler = AsyncMock(
+        agent_loop_with_tools.observe_handler = Mock(
             return_value={
                 "content": "Analysis complete",
                 "metadata": {"session_id": "test_session"},
@@ -467,7 +467,7 @@ class TestAgentLoopErrorHandling:
         """Test that AgentLoop handles LLM errors gracefully with fallback responses."""
         # Mock handlers - observe should work, but plan will fail due to LLM error
         # Don't override plan_handler - let the default handler trigger the LLM error and use fallback
-        agent_loop_error.observe_handler = AsyncMock(
+        agent_loop_error.observe_handler = Mock(
             return_value={
                 "content": "Test observation",
                 "metadata": {"session_id": "test_session"},
@@ -500,7 +500,7 @@ class TestAgentLoopErrorHandling:
     ):
         """Test that AgentLoop handles tool execution errors."""
         # Mock handlers to trigger tool error
-        agent_loop_error.observe_handler = AsyncMock(
+        agent_loop_error.observe_handler = Mock(
             return_value={
                 "content": "Need to use tool",
                 "metadata": {"session_id": "test_session"},
@@ -557,7 +557,7 @@ class TestAgentLoopErrorHandling:
     async def test_agent_loop_action_failure_stops_loop(self, agent_loop_error):
         """Test that action failures stop the loop appropriately."""
         # Mock handlers where action fails
-        agent_loop_error.observe_handler = AsyncMock(
+        agent_loop_error.observe_handler = Mock(
             return_value={
                 "content": "Test observation",
                 "metadata": {"session_id": "test_session"},
@@ -639,7 +639,7 @@ class TestAgentLoopMessageAccumulation:
         # Mock handlers that return consistent results
         iteration_results = []
 
-        async def mock_observe():
+        def mock_observe():
             # Use the AgentLoop's current iteration (already 1-based)
             current_iter = agent_loop_accumulation.current_iteration
             result = {
@@ -721,7 +721,7 @@ class TestAgentLoopMessageAccumulation:
 
         call_sequence = []
 
-        async def mock_observe():
+        def mock_observe():
             call_sequence.append("observe")
             return {
                 "content": "Sequential observation",

@@ -21,7 +21,6 @@ def start(
     log_level: str = typer.Option(
         "INFO", "--log-level", help="Logging level (e.g., DEBUG, INFO, WARNING)"
     ),
-    verbose: bool = typer.Option(False, "--verbose", help="Verbose error output"),
 ) -> None:
     """Start the assistant server (placeholder)."""
     level = getattr(logging, log_level.upper(), logging.INFO)

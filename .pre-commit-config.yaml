@@ -3,17 +3,36 @@ repos:
     rev: v0.11.0
     hooks:
       - id: ruff
+        name: ruff lint
         args: [--fix]
         files: \.py$
-        exclude: ^(tests).*$
-      - id: ruff-format
-        files: \.py$
+        exclude: ^(tests|build|dist|.venv|.temp).*$
         stages: [pre-commit]
+      - id: ruff
+        name: ruff isort
+        args: ["check", "--select", "I", "--fix"]
+        files: \.py$
+        exclude: ^(tests|build|dist|.venv|.temp).*$
+        stages: [pre-commit]
+      - id: ruff-format
+        name: ruff format
+        files: \.py$
+        exclude: ^(tests|build|dist|.venv|.temp).*$
+        stages: [pre-commit]
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.21.0
+    hooks:
+      - id: pyupgrade
+        name: pyupgrade
+        args: [--py312-plus]
+        files: \.py$
+        stages: [ pre-commit ]
+        exclude: ^(tests|build|dist|.venv|.temp).*$
   - repo: local
     hooks:
       - id: ty
-        name: ty check
-        entry: uvx ty check . --ignore unresolved-import
+        name: ty type check
+        entry: uvx ty check --ignore unresolved-import
         language: python
         stages: [pre-commit]
   - repo: local

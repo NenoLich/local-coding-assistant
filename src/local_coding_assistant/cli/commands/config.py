@@ -21,8 +21,6 @@ def _k(key: str) -> str:
 @safe_entrypoint("cli.config.get")
 def get_config(
     key: str | None = typer.Argument(None, help="Configuration key to get"),
-    log_level: str = typer.Option("INFO", "--log-level", help="Logging level"),
-    verbose: bool = typer.Option(False, "--verbose", help="Verbose error output"),
 ) -> None:
     """Get configuration value(s) from environment (prefix LOCCA_)."""
     # Logging level can be honored by bootstrap if needed; here we just use module logger
@@ -45,8 +43,6 @@ def get_config(
 def set_config(
     key: str = typer.Argument(..., help="Configuration key to set"),
     value: str = typer.Argument(..., help="Value to set"),
-    log_level: str = typer.Option("INFO", "--log-level", help="Logging level"),
-    verbose: bool = typer.Option(False, "--verbose", help="Verbose error output"),
 ) -> None:
     """Set a configuration value in the current process environment (prefix LOCCA_)."""
     env_key = _k(key)

@@ -29,20 +29,6 @@ dependencies = [
     "langgraph>=1.0.0a4",
 ]
 
-[project.optional-dependencies]
-# Legacy format - keeping for backward compatibility
-dev = [
-    "pytest>=8.0.0",
-    "pytest-cov>=4.0.0",
-    "pytest-mock>=3.12.0",
-    "pytest-asyncio>=1.2.0",
-    "ruff>=0.6.0",
-    "ty>=0.0.1a20",
-    "pre-commit>=4.3.0",
-    "black>=24.0.0",
-    "isort>=5.13.0",
-]
-
 [project.scripts]
 locca = "local_coding_assistant.cli.main:main"
 
@@ -55,11 +41,16 @@ test-all = "pytest -v -s -x tests"
 [tool.ruff.lint]
 select = [
     "E", "F", "I", "B", "A",  # Base rules
-    "UP", "N", "Q", "RUF",      # Additional useful rules
+    "UP", "N", "Q", "RUF",    # Additional rules
+    "C90", "S", "T20", "PT",  # Complexity, security, print statements, pytest
 ]
 ignore = [
-    "E501",  # Line length (handled by black)
+    "E501",  # Line length (handled by ruff format)
+    "S101",  # Allow `assert` in tests
+    "T201",  # Allow `print` in tests
 ]
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "T201"]  # Ignore assert/print in tests
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10
@@ -76,15 +67,6 @@ include = ["tests/**", "**/test_*.py"]
 
 [tool.ty.overrides.rules]
 possibly-unresolved-reference = "ignore"
-
-[tool.isort]
-profile = "black"
-line_length = 88
-multi_line_output = 3
-include_trailing_comma = true
-force_grid_wrap = 0
-use_parentheses = true
-ensure_newline_before_comments = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -110,7 +92,6 @@ dev = [
     "ruff>=0.6.0",
     "ty>=0.0.1a20",
     "pre-commit>=4.3.0",
-    "black>=24.0.0",
-    "isort>=5.13.0",
     "taskipy>=1.14.1",
+    "pyupgrade>=3.21.0",
 ]

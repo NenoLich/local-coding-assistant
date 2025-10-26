@@ -1,67 +1,92 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
-from local_coding_assistant.config.schemas import LLMConfig
-from local_coding_assistant.core.exceptions import LLMError
+from local_coding_assistant.agent.llm_manager_v2 import LLMManager, LLMRequest, LLMResponse
+from local_coding_assistant.config.schemas import LLMConfig, ProviderConfig, AppConfig
+from local_coding_assistant.providers.base import ProviderLLMResponseDelta
+from local_coding_assistant.providers.exceptions import ProviderError, ProviderConnectionError
 
 
 class TestLLMConfig:
     """Test LLMConfig pydantic model validation."""
-
     def test_valid_config_creation(self):
         """Test creating a valid LLMConfig."""
         config = LLMConfig(
-            model_name="gpt-3.5-turbo",
-            provider="openai",
             temperature=0.7,
             max_tokens=1000,
-            api_key="test-key",
+            max_retries=3,
+            retry_delay=1.0,
         )
-        assert config.model_name == "gpt-3.5-turbo"
-        assert config.provider == "openai"
         assert config.temperature == 0.7
         assert config.max_tokens == 1000
-        assert config.api_key == "test-key"
+        assert config.max_retries == 3
+        assert config.retry_delay == 1.0
 
     def test_config_defaults(self):
         """Test LLMConfig default values."""
-        config = LLMConfig(model_name="gpt-4")
-        assert config.provider == "openai"
+        config = LLMConfig()
         assert config.temperature == 0.7
         assert config.max_tokens is None
-        assert config.api_key is None
+        assert config.max_retries == 3
+        assert config.retry_delay == 1.0
+        assert config.providers == []
 
     def test_temperature_validation(self):
         """Test temperature field validation."""
         # Valid range
-        LLMConfig(model_name="test", temperature=0.0)
-        LLMConfig(model_name="test", temperature=2.0)
+        LLMConfig(temperature=0.0)
+        LLMConfig(temperature=2.0)
 
         # Invalid range
         with pytest.raises(ValueError):
-            LLMConfig(model_name="test", temperature=-0.1)
+            LLMConfig(temperature=-0.1)
 
         with pytest.raises(ValueError):
-            LLMConfig(model_name="test", temperature=2.1)
+            LLMConfig(temperature=2.1)
 
     def test_max_tokens_validation(self):
         """Test max_tokens field validation."""
         # Valid values
-        LLMConfig(model_name="test", max_tokens=1)
-        LLMConfig(model_name="test", max_tokens=1000)
+        LLMConfig(max_tokens=1)
+        LLMConfig(max_tokens=1000)
 
         # Invalid values
         with pytest.raises(ValueError):
-            LLMConfig(model_name="test", max_tokens=0)
+            LLMConfig(max_tokens=0)
 
         with pytest.raises(ValueError):
-            LLMConfig(model_name="test", max_tokens=-1)
+            LLMConfig(max_tokens=-1)
+
+    def test_max_retries_validation(self):
+        """Test max_retries field validation."""
+        # Valid values
+        LLMConfig(max_retries=1)
+        LLMConfig(max_retries=10)
+
+        # Invalid values
+        with pytest.raises(ValueError):
+            LLMConfig(max_retries=0)
+
+        with pytest.raises(ValueError):
+            LLMConfig(max_retries=-1)
+
+    def test_retry_delay_validation(self):
+        """Test retry_delay field validation."""
+        # Valid values
+        LLMConfig(retry_delay=0.1)
+        LLMConfig(retry_delay=10.0)
+
+        # Invalid values
+        with pytest.raises(ValueError):
+            LLMConfig(retry_delay=0.0)
+
+        with pytest.raises(ValueError):
+            LLMConfig(retry_delay=-1.0)
 
 
 class TestLLMRequest:
-    """Test LLMRequest pydantic model."""
+    """Test LLMRequest class."""
 
     def test_valid_request_creation(self):
         """Test creating a valid LLMRequest."""
@@ -75,21 +100,38 @@ class TestLLMRequest:
         assert request.prompt == "Hello, world!"
         assert request.context == {"user": "test"}
         assert request.system_prompt == "You are a helpful assistant"
-        assert request.tools is not None
-        assert len(request.tools) == 1
+        assert request.tools == [{"type": "function", "function": {"name": "test"}}]
         assert request.tool_outputs == {"test": "result"}
 
     def test_request_defaults(self):
         """Test LLMRequest default values."""
         request = LLMRequest(prompt="test prompt")
-        assert request.context is None
+        assert request.context == {}
         assert request.system_prompt is None
-        assert request.tools is None
-        assert request.tool_outputs is None
+        assert request.tools == []
+        assert request.tool_outputs == {}
+
+    def test_to_provider_request(self):
+        """Test conversion to provider request format."""
+        request = LLMRequest(
+            prompt="Test prompt",
+            system_prompt="System prompt",
+            context={"test": "value"},
+            tools=[{"type": "function", "function": {"name": "test"}}],
+        )
+
+        provider_request = request.to_provider_request("test-model")
+
+        assert provider_request.model == "test-model"
+        assert provider_request.temperature == 0.7
+        assert len(provider_request.messages) == 3  # system, context, prompt
+        assert provider_request.messages[0]["role"] == "system"
+        assert provider_request.messages[1]["role"] == "user"
+        assert provider_request.messages[2]["role"] == "user"
 
 
 class TestLLMResponse:
-    """Test LLMResponse pydantic model."""
+    """Test LLMResponse class."""
 
     def test_valid_response_creation(self):
         """Test creating a valid LLMResponse."""
@@ -102,8 +144,7 @@ class TestLLMResponse:
         assert response.content == "Test response"
         assert response.model_used == "gpt-3.5-turbo"
         assert response.tokens_used == 100
-        assert response.tool_calls is not None
-        assert len(response.tool_calls) == 1
+        assert response.tool_calls == [{"id": "call_1", "type": "function"}]
 
     def test_response_defaults(self):
         """Test LLMResponse default values."""
@@ -112,236 +153,298 @@ class TestLLMResponse:
         assert response.tool_calls is None
 
 
+class TestProviderConfig:
+    """Test ProviderConfig pydantic model."""
+
+    def test_valid_provider_creation(self):
+        """Test creating a valid ProviderConfig."""
+        provider = ProviderConfig(
+            name="openai",
+            driver="openai_chat",
+            base_url="https://api.openai.com/v1",
+            api_key_env="OPENAI_API_KEY",
+            models={"gpt-3.5-turbo": {"max_tokens": 4096}},
+        )
+        assert provider.name == "openai"
+        assert provider.driver == "openai_chat"
+        assert provider.base_url == "https://api.openai.com/v1"
+        assert provider.api_key_env == "OPENAI_API_KEY"
+        assert provider.models == {"gpt-3.5-turbo": {"max_tokens": 4096}}
+
+    def test_provider_defaults(self):
+        """Test ProviderConfig default values."""
+        provider = ProviderConfig(
+            name="test",
+            driver="openai_chat",
+            base_url="https://api.example.com",
+            api_key_env="TEST_API_KEY",
+        )
+        assert provider.models == {}
+
+
+class TestAppConfig:
+    """Test AppConfig integration."""
+
+    def test_valid_app_config(self):
+        """Test creating a valid AppConfig."""
+        provider = ProviderConfig(
+            name="openai",
+            driver="openai_chat",
+            base_url="https://api.openai.com/v1",
+            api_key_env="OPENAI_API_KEY",
+        )
+
+        app_config = AppConfig(
+            providers={"openai": provider},
+            llm=LLMConfig(temperature=0.5),
+        )
+
+        assert app_config.providers["openai"].name == "openai"
+        assert app_config.llm.temperature == 0.5
+
+
 class TestLLMManager:
-    """Test LLMManager functionality."""
+    """Test LLMManager functionality with provider system."""
 
-    def test_initialization_with_valid_config(self):
-        """Test LLMManager initialization with valid config."""
-        config = LLMConfig(model_name="gpt-3.5-turbo", provider="openai")
+    @pytest.fixture
+    def mock_provider_manager(self):
+        """Create a mock provider manager."""
+        provider_manager = MagicMock()
+        provider_manager.list_providers.return_value = ["openai"]
+        provider_manager.get_provider.return_value = MagicMock()
+        return provider_manager
 
-        # Create comprehensive mock openai module
-        mock_openai = MagicMock()
-        mock_openai.AsyncOpenAI = MagicMock()
+    @pytest.fixture
+    def mock_provider_router(self):
+        """Create a mock provider router."""
+        router = MagicMock()
+        router.get_provider_for_request.return_value = (MagicMock(), "gpt-3.5-turbo")
+        router.mark_provider_success = MagicMock()
+        router.mark_provider_failure = MagicMock()
+        return router
 
-        # Mock client
-        mock_client = MagicMock()
-        mock_openai.AsyncOpenAI.return_value = mock_client
+    @pytest.fixture
+    def mock_config_manager(self):
+        """Create a mock config manager."""
+        config_manager = MagicMock()
+        config_manager.global_config = AppConfig()
+        return config_manager
 
-        # Patch sys.modules to include our mock
-        with patch.dict("sys.modules", {"openai": mock_openai}):
-            llm = LLMManager()
-            llm.config_manager = MagicMock()
-            # Mock the resolve method to return proper config
-            mock_config = MagicMock()
-            mock_config.llm = config
-            llm.config_manager.resolve.return_value = mock_config
-            # Set up the config manually for testing
-            llm._current_llm_config = config
-            llm.client = mock_client
+    def test_initialization_with_provider_system(
+        self, mock_provider_manager, mock_config_manager
+    ):
+        """Test LLMManager initialization with provider system."""
+        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
 
-            # Verify the LLM was initialized properly
-            assert llm._current_llm_config == config
-            assert llm.client == mock_client
-
-    def test_initialization_with_unsupported_provider(self):
-        """Test LLMManager initialization fails with unsupported provider."""
-        config = LLMConfig(model_name="test", provider="unsupported")
-        llm = LLMManager()
-        llm.config_manager = MagicMock()
-        # Mock the resolve method to return the unsupported config
-        mock_config = MagicMock()
-        mock_config.llm = config
-        llm.config_manager.resolve.return_value = mock_config
-        llm._current_llm_config = config
-        # The error will be raised when trying to setup the client
-        with pytest.raises(LLMError, match="Unsupported provider"):
-            llm._setup_client(config)
-
-    def test_openai_client_setup_success(self):
-        """Test successful OpenAI client setup."""
-        # Create comprehensive mock openai module
-        mock_openai = MagicMock()
-        mock_openai.AsyncOpenAI = MagicMock()
-
-        # Mock client
-        mock_client = MagicMock()
-        mock_openai.AsyncOpenAI.return_value = mock_client
-
-        # Set up the mock in sys.modules
-        with patch.dict("sys.modules", {"openai": mock_openai}):
-            config = LLMConfig(model_name="gpt-3.5-turbo", provider="openai")
-            llm = LLMManager()
-            llm.config_manager = MagicMock()
-            # Mock the resolve method to return proper config
-            mock_config = MagicMock()
-            mock_config.llm = config
-            llm.config_manager.resolve.return_value = mock_config
-            llm._current_llm_config = config
-
-            # The client should be set up when we call generate
-            # Let's mock the _setup_openai_client method to avoid real API calls
-            with patch.object(llm, "_setup_openai_client") as mock_setup:
-                mock_setup.return_value = None
-
-                # Now when generate is called, it should call _setup_openai_client
-                # Let's create a simple test that just verifies the setup method gets called
-                llm.client = None  # Ensure client is None initially
-
-                # Mock the _get_llm_config method to return our config
-                with patch.object(llm, "_get_llm_config", return_value=config):
-                    # This should trigger client setup
-                    try:
-                        # Just test that _setup_client gets called, don't actually generate
-                        llm._setup_client()
-                        mock_setup.assert_called_once()
-                    except:
-                        # If _setup_client fails, that's expected since we're not mocking everything
-                        pass
-
-    def test_openai_client_setup_missing_package(self):
-        """Test OpenAI client setup fails when package not installed."""
-        config = LLMConfig(model_name="gpt-3.5-turbo", provider="openai")
-
-        with patch.dict("sys.modules", {"openai": None}):
-            llm = LLMManager()
-            llm.config_manager = MagicMock()
-            # Mock the resolve method to return proper config
-            mock_config = MagicMock()
-            mock_config.llm = config
-            llm.config_manager.resolve.return_value = mock_config
-            llm._current_llm_config = config
-            with pytest.raises(LLMError, match="OpenAI package not installed"):
-                llm._setup_openai_client(config)
+        assert llm.config_manager == mock_config_manager
+        assert llm.provider_manager == mock_provider_manager
+        assert llm.router is not None
 
     @pytest.mark.asyncio
-    async def test_generate_success(self):
-        """Test successful response generation."""
-        # Mock OpenAI response
-        mock_content_item = MagicMock()
-        mock_content_item.text = "Generated response"
+    async def test_generate_success_with_provider_system(
+        self, mock_provider_manager, mock_config_manager
+    ):
+        """Test successful response generation using provider system."""
+        # Mock provider and response
+        mock_provider = MagicMock()
+        mock_provider.name = "openai"
+        mock_provider.generate_with_retry = AsyncMock(
+            return_value=Mock(
+                content="Generated response",
+                model="gpt-3.5-turbo",
+                tokens_used=100,
+                tool_calls=None,
+            )
+        )
 
-        mock_output_item = MagicMock()
-        mock_output_item.content = [mock_content_item]
-        mock_output_item.tool_calls = None
+        # Mock router
+        mock_router = MagicMock()
+        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "gpt-3.5-turbo"))
+        mock_router.mark_provider_success = MagicMock()
+        mock_router.mark_provider_failure = MagicMock()
 
-        mock_response = MagicMock()
-        mock_response.model = "gpt-3.5-turbo"
-        mock_response.usage.output_tokens = 50
-        mock_response.output = [mock_output_item]
+        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        llm.router = mock_router
 
-        mock_client = AsyncMock()
-        mock_client.responses.create.return_value = mock_response
+        request = LLMRequest(prompt="Test prompt")
+        response = await llm.generate(request)
 
-        # Patch the client setup to return the mock client
-        with patch.object(LLMManager, "_setup_openai_client", return_value=None):
-            # Also patch the client attribute directly after __init__
-            config = LLMConfig(model_name="gpt-3.5-turbo", provider="openai")
-            llm = LLMManager()
-            llm.config_manager = MagicMock()
-            # Mock the resolve method to return proper config
-            mock_config = MagicMock()
-            mock_config.llm = config
-            llm.config_manager.resolve.return_value = mock_config
-            llm._current_llm_config = config
-            llm.client = mock_client  # Override the client after __init__
+        # Assertions
+        assert isinstance(response, LLMResponse)
+        assert response.content == "Generated response"
+        assert response.model_used == "gpt-3.5-turbo"
+        assert response.tokens_used == 100
+        mock_router.get_provider_for_request.assert_called_once()
+        mock_provider.generate_with_retry.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_generate_with_tools_using_provider_system(
+        self, mock_provider_manager, mock_config_manager
+    ):
+        """Test response generation with tool calls using provider system."""
+        # Mock provider and response with tool calls
+        mock_provider = MagicMock()
+        mock_provider.name = "openai"
+        mock_provider.generate_with_retry = AsyncMock(
+            return_value=Mock(
+                content="I'll use the tool",
+                model="gpt-3.5-turbo",
+                tokens_used=75,
+                tool_calls=[
+                    {
+                        "id": "call_123",
+                        "type": "function",
+                        "function": {
+                            "name": "test_tool",
+                            "arguments": '{"arg": "value"}',
+                        },
+                    }
+                ],
+            )
+        )
+
+        # Mock router
+        mock_router = MagicMock()
+        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "gpt-3.5-turbo"))
+        mock_router.mark_provider_success = MagicMock()
+        mock_router.mark_provider_failure = MagicMock()
+
+        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        llm.router = mock_router
+
+        request = LLMRequest(
+            prompt="Use the tool",
+            tools=[{"type": "function", "function": {"name": "test_tool"}}],
+        )
+        response = await llm.generate(request)
+
+        assert response is not None
+        assert response.tool_calls is not None
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0]["id"] == "call_123"
+        assert response.tool_calls[0]["function"]["name"] == "test_tool"
+
+    @pytest.mark.asyncio
+    async def test_generate_fallback_on_provider_error(
+        self, mock_provider_manager, mock_config_manager
+    ):
+        """Test fallback behavior when primary provider fails."""
+        # Mock failing provider
+        mock_failing_provider = MagicMock()
+        mock_failing_provider.name = "openai_primary"
+        mock_failing_provider.generate_with_retry = AsyncMock(
+            side_effect=ProviderConnectionError("API Error", provider="openai_primary")
+        )
+
+        # Mock fallback provider
+        mock_fallback_provider = MagicMock()
+        mock_fallback_provider.name = "openai_fallback"
+        mock_fallback_provider.generate_with_retry = AsyncMock(
+            return_value=Mock(
+                content="Fallback response",
+                model="gpt-3.5-turbo",
+                tokens_used=50,
+                tool_calls=None,
+            )
+        )
+
+        # Mock router with fallback
+        mock_router = MagicMock()
+        mock_router.get_provider_for_request = AsyncMock(side_effect=[
+            (mock_failing_provider, "gpt-3.5-turbo"),  # First call (fails)
+            (mock_fallback_provider, "gpt-3.5-turbo"),  # Fallback call (succeeds)
+        ])
+        mock_router.mark_provider_success = MagicMock()
+        mock_router.mark_provider_failure = MagicMock()
+
+        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        llm.router = mock_router
+
+        request = LLMRequest(prompt="Test prompt")
+
+        # Should succeed with fallback
+        response = await llm.generate(request)
+        assert response.content == "Fallback response"
+        assert mock_router.get_provider_for_request.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_generate_mock_mode(self, mock_provider_manager, mock_config_manager):
+        """Test mock mode for testing."""
+        import os
+
+        # Enable mock mode
+        with patch.dict(os.environ, {"LOCCA_TEST_MODE": "true"}):
+            llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
 
             request = LLMRequest(prompt="Test prompt")
             response = await llm.generate(request)
 
-            # Assertions
-            assert isinstance(response, LLMResponse)
-            assert response.content == "Generated response"
-            assert response.model_used == "gpt-3.5-turbo"
-            assert response.tokens_used == 50
-            assert response.tool_calls == []
-            mock_client.responses.create.assert_awaited_once()
+            assert response.content.startswith("[LLMManager] Echo:")
+            assert response.model_used == "mock-model"
 
     @pytest.mark.asyncio
-    async def test_generate_with_tools(self):
-        """Test response generation with tool calls."""
-        # Mock tool call response for new Responses API
-        mock_tool_call = MagicMock()
-        mock_tool_call.id = "call_123"
-        mock_tool_call.type = "function"
-        mock_tool_call.name = "test_tool"
-        mock_tool_call.arguments = '{"arg": "value"}'
+    async def test_streaming_generation(
+        self, mock_provider_manager, mock_config_manager
+    ):
+        """Test streaming response generation."""
+        # Mock provider with streaming
+        mock_provider = MagicMock()
+        mock_provider.name = "openai"
 
-        mock_response = MagicMock()
-        mock_response.model = "gpt-3.5-turbo"
-        mock_response.usage.output_tokens = 75
+        # Create an async generator that returns ProviderLLMResponseDelta objects
+        async def mock_stream_with_retry(request, max_retries=3, retry_delay=1.0):
+            yield ProviderLLMResponseDelta(content="Hello")
+            yield ProviderLLMResponseDelta(content=" world")
 
-        # Create mock output item with content and tool calls
-        mock_output_item = MagicMock()
-        mock_content_item = MagicMock()
-        mock_content_item.text = "I'll use the tool"
-        mock_output_item.content = [mock_content_item]
-        mock_output_item.tool_calls = [mock_tool_call]
-        mock_response.output = [mock_output_item]
+        # Make stream_with_retry return the async generator
+        mock_provider.stream_with_retry = mock_stream_with_retry
 
-        mock_client = AsyncMock()
-        mock_client.responses.create.return_value = mock_response
+        # Mock router
+        mock_router = MagicMock()
+        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "gpt-3.5-turbo"))
 
-        config = LLMConfig(model_name="gpt-3.5-turbo", provider="openai")
-        with patch.object(LLMManager, "_setup_openai_client"):
-            llm = LLMManager.__new__(LLMManager)
-            llm.config_manager = MagicMock()
-            # Mock the resolve method to return proper config
-            mock_config = MagicMock()
-            mock_config.llm = config
-            llm.config_manager.resolve.return_value = mock_config
-            llm._current_llm_config = config
-            llm.client = mock_client
+        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        llm.router = mock_router
 
-            request = LLMRequest(
-                prompt="Use the tool",
-                tools=[{"type": "function", "function": {"name": "test_tool"}}],
-            )
-            response = await llm.generate(request)
+        request = LLMRequest(prompt="Test streaming")
 
-            assert len(response.tool_calls) == 1
-            assert response.tool_calls[0]["id"] == "call_123"
-            assert response.tool_calls[0]["function"]["name"] == "test_tool"
+        # Collect streamed content
+        chunks = []
+        async for chunk in llm.stream(request):
+            chunks.append(chunk)
 
-    @pytest.mark.asyncio
-    async def test_generate_without_client(self):
-        """Test generate fails when client is not initialized."""
-        config = LLMConfig(model_name="gpt-3.5-turbo", provider="openai")
-        llm = LLMManager.__new__(LLMManager)
-        llm.config_manager = MagicMock()
-        # Mock the resolve method to return proper config
-        mock_config = MagicMock()
-        mock_config.llm = config
-        llm.config_manager.resolve.return_value = mock_config
-        llm._current_llm_config = config
-        llm.client = None
+        assert len(chunks) == 2
+        assert "Hello" in chunks[0]
+        assert "world" in chunks[1]
 
-        request = LLMRequest(prompt="test")
+    def test_provider_status_management(self, mock_provider_manager, mock_config_manager):
+        """Test provider status management."""
+        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
 
-        # Mock the _setup_client method to do nothing (simulating no client setup)
-        with patch.object(llm, "_setup_client") as mock_setup:
-            mock_setup.return_value = None
+        # Mock provider status
+        mock_provider_manager.list_providers.return_value = ["openai", "claude"]
+        mock_provider_manager.get_provider_source.return_value = "config"
 
-            with pytest.raises(LLMError, match="LLM client not initialized"):
-                await llm.generate(request)
+        status_list = llm.get_provider_status_list()
+
+        assert len(status_list) == 2
+        assert status_list[0]["name"] == "openai"
+        assert status_list[1]["name"] == "claude"
 
     @pytest.mark.asyncio
-    async def test_generate_openai_error(self):
-        """Test handling of OpenAI API errors."""
-        mock_client = AsyncMock()
-        mock_client.responses.create.side_effect = Exception("API Error")
+    async def test_provider_health_check(self, mock_provider_manager, mock_config_manager):
+        """Test provider health checking."""
+        # Mock healthy provider
+        mock_provider = MagicMock()
+        mock_provider.health_check = AsyncMock(return_value=True)
+        mock_provider.get_available_models.return_value = ["gpt-3.5-turbo", "gpt-4"]
 
-        config = LLMConfig(model_name="gpt-3.5-turbo", provider="openai")
-        with patch.object(LLMManager, "_setup_openai_client"):
-            llm = LLMManager.__new__(LLMManager)
-            llm.config_manager = MagicMock()
-            # Mock the resolve method to return proper config
-            mock_config = MagicMock()
-            mock_config.llm = config
-            llm.config_manager.resolve.return_value = mock_config
-            llm._current_llm_config = config
-            llm.client = mock_client
+        mock_provider_manager.get_provider.return_value = mock_provider
 
-            request = LLMRequest(prompt="test")
+        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
 
-            with pytest.raises(LLMError, match="LLM generation failed"):
-                await llm.generate(request)
+        status = await llm.get_provider_status()
+
+        assert "openai" in status
+        assert status["openai"]["healthy"] is True
+        assert len(status["openai"]["models"]) == 2

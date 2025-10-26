@@ -67,8 +67,14 @@ class ConfigManager:
         # Merge YAML files (in order provided)
         for config_path in self.config_paths:
             yaml_data = self._load_yaml_file(config_path)
-            config_data = self._deep_merge(config_data, yaml_data)
-            logger.debug(f"Merged YAML config from {config_path}")
+
+            if yaml_data is not None:
+                config_data = self._deep_merge(config_data, yaml_data)
+                logger.debug(f"Merged YAML config from {config_path}")
+            else:
+                logger.warning(
+                    f"YAML file {config_path} did not load as dict, skipping"
+                )
 
         # Merge environment variables (highest priority in global layer)
         env_data = self.env_loader.get_config_from_env()
@@ -98,8 +104,52 @@ class ConfigManager:
         Args:
             overrides: Dictionary of configuration overrides using dot notation
                       (e.g., {"llm.model_name": "gpt-4", "llm.temperature": 0.5})
+
+        Raises:
+            LLMError: If the overrides contain invalid LLM configuration values
         """
         logger.info(f"Setting session overrides: {list(overrides.keys())}")
+
+        # Validate overrides by attempting to resolve configuration with them
+        if overrides:
+            try:
+                # Apply overrides to global config (similar to resolve method)
+                if self._global_config is not None:
+                    resolved_data = self._global_config.to_dict()
+
+                    # Apply session overrides
+                    session_overrides = self._apply_overrides_to_dict(
+                        resolved_data, overrides
+                    )
+                    resolved_data = self._deep_merge(resolved_data, session_overrides)
+
+                    # Try to create AppConfig to validate the merged configuration
+                    AppConfig.from_dict(resolved_data)
+                else:
+                    # If no global config, just validate the overrides directly
+                    AppConfig.from_dict(overrides)
+
+            except ValidationError as e:
+                error_msg = f"Invalid resolved configuration: {e}"
+                logger.error(error_msg)
+
+                # Check if this is an LLM configuration validation error
+                error_details = str(e)
+                if any(
+                    field in error_details.lower()
+                    for field in ["temperature", "max_tokens", "llm"]
+                ):
+                    from local_coding_assistant.core.exceptions import LLMError
+
+                    raise LLMError(
+                        f"Configuration update validation failed: {e}"
+                    ) from e
+                else:
+                    from local_coding_assistant.core.exceptions import ConfigError
+
+                    raise ConfigError(error_msg) from e
+
+        # Only set overrides if validation passed (or if no overrides provided)
         self._session_overrides = deepcopy(overrides)
 
     def clear_session_overrides(self) -> None:

@@ -1,4 +1,0 @@
-llm:
-  model_name: gpt-4-from-yaml
-runtime:
-  persistent_sessions: false

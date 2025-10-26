@@ -10,6 +10,7 @@ wheels/
 .venv
 
 # Project specific
+.resources/
 .journal/
 .temp/
 
@@ -35,6 +36,9 @@ htmlcov/
 
 # Pytest
 .pytest_cache/
+*.py[cod]
+*$py.class
+pytest-cache-files-*/
 
 # Ruff
 .ruff_cache/
