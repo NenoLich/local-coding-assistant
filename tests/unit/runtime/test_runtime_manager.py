@@ -4,7 +4,7 @@ from typing import cast, Any
 
 import pytest
 
-from local_coding_assistant.agent.llm_manager_v2 import (
+from local_coding_assistant.agent.llm_manager import (
     LLMManager,
     LLMRequest,
     LLMResponse,

@@ -1,12 +1,12 @@
 """
-Unit tests for LLMManager v2 with provider system integration.
+Unit tests for LLMManager with provider system integration.
 """
 import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from local_coding_assistant.agent.llm_manager_v2 import LLMManager, LLMRequest, LLMResponse
+from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
 from local_coding_assistant.core.exceptions import LLMError
 from local_coding_assistant.providers.base import ProviderLLMResponseDelta
 

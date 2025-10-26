@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from local_coding_assistant.agent.llm_manager_v2 import LLMManager
+from local_coding_assistant.agent.llm_manager import LLMManager
 from local_coding_assistant.config import get_config_manager, load_config
 from local_coding_assistant.config.env_loader import EnvLoader
 from local_coding_assistant.core.app_context import AppContext

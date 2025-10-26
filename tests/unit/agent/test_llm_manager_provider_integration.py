@@ -1,5 +1,5 @@
 """
-Unit tests for LLMManager v2 with provider system integration.
+Unit tests for LLMManager with provider system integration.
 """
 
 import asyncio
@@ -9,11 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from local_coding_assistant.agent.llm_manager_v2 import (
-    LLMManager,
-    LLMRequest,
-    LLMResponse,
-)
+from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
 from local_coding_assistant.core.exceptions import LLMError
 from local_coding_assistant.providers import (
     BaseProvider,
@@ -144,7 +140,7 @@ class TestLLMManagerInitialization:
             mock_get_config.return_value = mock_config_manager
 
             # Mock the ProviderManager to ensure it has the expected methods
-            with patch("local_coding_assistant.agent.llm_manager_v2.ProviderManager") as mock_provider_manager_class:
+            with patch("local_coding_assistant.agent.llm_manager.ProviderManager") as mock_provider_manager_class:
                 mock_provider_manager = MagicMock()
                 mock_provider_manager_class.return_value = mock_provider_manager
 

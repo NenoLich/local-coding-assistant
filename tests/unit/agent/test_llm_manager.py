@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from local_coding_assistant.agent.llm_manager_v2 import LLMManager, LLMRequest, LLMResponse
+from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
 from local_coding_assistant.config.schemas import LLMConfig, ProviderConfig, AppConfig
 from local_coding_assistant.providers.base import ProviderLLMResponseDelta
 from local_coding_assistant.providers.exceptions import ProviderError, ProviderConnectionError

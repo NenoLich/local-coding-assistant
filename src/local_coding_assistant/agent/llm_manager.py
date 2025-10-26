@@ -1,496 +1,86 @@
-# ruff: noqa: C901
-"""Agent layer: LLM & reasoning management."""
+"""
+Enhanced LLM Manager with Provider System Integration
 
+This module provides an updated LLM manager that integrates with the new provider system
+while maintaining backward compatibility with existing code.
+"""
+
+import asyncio
 import os
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-from pydantic import BaseModel, Field
-
+from local_coding_assistant.core.exceptions import LLMError
+from local_coding_assistant.providers import (
+    ProviderError,
+    ProviderLLMRequest,
+    ProviderManager,
+    ProviderRouter,
+)
 from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("agent.llm_manager")
 
 
-class LLMRequest(BaseModel):
+class LLMRequest:
     """Request structure for LLM generation."""
 
-    prompt: str = Field(..., description="The main prompt to send to the LLM")
-    context: dict[str, Any] | None = Field(
-        default=None, description="Additional context data"
-    )
-    system_prompt: str | None = Field(
-        default=None, description="System prompt override"
-    )
-    tools: list[dict[str, Any]] | None = Field(
-        default=None, description="Available tools"
-    )
-    tool_outputs: dict[str, Any] | None = Field(
-        default=None, description="Previous tool call results"
-    )
-
-
-class LLMResponse(BaseModel):
-    """Response structure from LLM generation."""
-
-    content: str = Field(..., description="Generated response content")
-    model_used: str = Field(..., description="Model that was used for generation")
-    tokens_used: int | None = Field(default=None, description="Tokens consumed")
-    tool_calls: list[dict[str, Any]] | None = Field(
-        default=None, description="Tool calls made by the model"
-    )
-
-
-class LLMManager:
-    """Enhanced LLM manager with proper error handling, logging, and tool integration.
-
-    This class provides a facade for interacting with various LLM providers while
-    maintaining compatibility with the existing tool registry and session management.
-
-    Uses OpenAI's new Responses API (responses.create) instead of the legacy
-    Chat Completions API (chat.completions.create) for improved functionality.
-
-    This manager no longer holds configuration directly. Instead, it resolves
-    configuration on-demand using the ConfigManager for proper 3-layer hierarchy.
-    """
-
-    def __init__(self, config_manager=None):
-        """Initialize the LLM manager with a config manager.
-
-        Args:
-            config_manager: ConfigManager instance for resolving configuration.
-                          If None, uses the global config manager.
-        """
-        from local_coding_assistant.config import get_config_manager
-
-        self.config_manager = config_manager or get_config_manager()
-        self.client = None
-        self._current_llm_config = None
-
-    def _get_llm_config(self, provider=None, model_name=None, overrides=None):
-        """Get resolved LLM configuration for the current request.
-
-        Args:
-            provider: Optional provider override
-            model_name: Optional model_name override
-            overrides: Optional additional overrides
-
-        Returns:
-            Resolved LLMConfig
-        """
-        resolved_config = self.config_manager.resolve(
-            provider=provider, model_name=model_name, overrides=overrides
-        )
-        return resolved_config.llm
-
-    def _setup_client(self, llm_config=None) -> None:
-        """Set up the LLM client based on the provider configuration.
-
-        Args:
-            llm_config: LLM configuration to use. If None, gets current config.
-
-        Raises:
-            LLMError: If the provider is not supported.
-        """
-        if llm_config is None:
-            llm_config = self._get_llm_config()
-
-        try:
-            if llm_config.provider == "openai":
-                self._setup_openai_client(llm_config)
-            else:
-                from local_coding_assistant.core.exceptions import LLMError
-
-                raise LLMError(f"Unsupported provider: {llm_config.provider}")
-        except Exception as e:
-            logger.error(f"Failed to setup LLM client: {e}")
-            from local_coding_assistant.core.exceptions import LLMError
-
-            # Preserve LLMError messages, don't wrap them
-            if isinstance(e, LLMError):
-                raise
-            raise LLMError(f"Failed to initialize {llm_config.provider} client") from e
-
-    def _setup_openai_client(self, llm_config) -> None:
-        """Set up OpenAI client."""
-        # Check if openai is available at runtime
-        try:
-            import openai
-
-            # Handle case where openai is mocked as None in tests
-            if openai is None:
-                raise ImportError("OpenAI package not available")
-        except ImportError as e:
-            from local_coding_assistant.core.exceptions import LLMError
-
-            raise LLMError(f"OpenAI package not installed. Error: {e}") from e
-
-        try:
-            from openai import AsyncOpenAI
-
-            # Use explicit API key from config if provided, otherwise let OpenAI client handle env vars
-            api_key = llm_config.api_key
-
-            self.client = AsyncOpenAI(api_key=api_key)
-            logger.info(f"Initialized OpenAI client for model: {llm_config.model_name}")
-        except Exception as e:
-            from local_coding_assistant.core.exceptions import LLMError
-
-            raise LLMError(f"Failed to initialize OpenAI client: {e}") from e
-
-    async def generate(
+    def __init__(
         self,
-        request: LLMRequest,
-        *,
-        provider: str | None = None,
-        model_name: str | None = None,
-        overrides: dict[str, Any] | None = None,
-    ) -> LLMResponse:
-        """Generate a response using the LLM with the given request.
+        prompt: str,
+        context: dict[str, Any] | None = None,
+        system_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_outputs: dict[str, Any] | None = None,
+    ):
+        self.prompt = prompt
+        self.context = context or {}
+        self.system_prompt = system_prompt
+        self.tools = tools or []
+        self.tool_outputs = tool_outputs or {}
 
-        Uses OpenAI's new Responses API which provides enhanced functionality
-        compared to the legacy Chat Completions API.
-
-        Args:
-            request: Structured request containing prompt, context, and tool information.
-            provider: Optional provider override for this call
-            model_name: Optional model_name override for this call
-            overrides: Optional additional configuration overrides for this call
-
-        Returns:
-            Structured response with generated content and metadata.
-
-        Raises:
-            LLMError: If generation fails or client is not properly initialized.
-        """
-        # Check if we're in test mode and should return mock responses
-        if os.environ.get("LOCCA_TEST_MODE") == "true":
-            return self._generate_mock_response(request)
-
-        # Get resolved LLM configuration for this request
-        llm_config = self._get_llm_config(provider, model_name, overrides)
-
-        # Setup client if needed or if config changed
-        if (
-            self.client is None
-            or self._current_llm_config is None
-            or self._current_llm_config.provider != llm_config.provider
-            or self._current_llm_config.model_name != llm_config.model_name
-            or self._current_llm_config.api_key != llm_config.api_key
-        ):
-            self._current_llm_config = llm_config
-            self._setup_client(llm_config)
-
-        if not self.client:
-            from local_coding_assistant.core.exceptions import LLMError
-
-            raise LLMError("LLM client not initialized")
-
-        try:
-            logger.debug(f"Generating response for prompt: {request.prompt[:100]}...")
-
-            # Build messages from session context and request
-            messages = self._build_messages(request)
-
-            # Prepare generation parameters for new Responses API
-            gen_params = {
-                "model": llm_config.model_name,
-                "input": messages,
-                "temperature": llm_config.temperature,
-            }
-
-            # Note: Responses API may use different parameter names for token limits
-            # The new API might handle token limits differently or not support max_tokens
-            # For now, we'll skip max_tokens and let the API handle it
-            # if llm_config.max_tokens:
-            #     gen_params["max_tokens"] = llm_config.max_tokens
-
-            # Add tools if provided (new API may handle this differently)
-            if request.tools:
-                # Convert tools from old Chat Completions format to new Responses API format
-                converted_tools = []
-                for tool in request.tools:
-                    if tool.get("type") == "function":
-                        # Convert from old format to new format
-                        converted_tools.append(
-                            {
-                                "type": "function",  # Keep as function for compatibility
-                                "name": tool["function"]["name"],
-                                "description": tool["function"].get("description", ""),
-                                "parameters": tool["function"].get("parameters", {}),
-                            }
-                        )
-                    else:
-                        # Pass through as-is for other tool types
-                        converted_tools.append(tool)
-
-                gen_params["tools"] = converted_tools
-
-            # Add text formatting options for new Responses API
-            text_options = {}
-            if request.context:
-                # Use context to determine appropriate verbosity/format
-                text_options["verbosity"] = "medium"
-
-            if text_options:
-                gen_params["text"] = text_options
-
-            # Make the API call
-            response = await self.client.responses.create(**gen_params)
-
-            # Extract content from the new Responses API structure
-            content = ""
-            for item in response.output:
-                if hasattr(item, "content"):
-                    for content_item in item.content:
-                        if hasattr(content_item, "text"):
-                            content += content_item.text
-
-            # Extract tool calls if present (handle both old and new API formats)
-            tool_calls = None
-
-            # Try new Responses API format first
-            if hasattr(response, "output"):
-                for item in response.output:
-                    if hasattr(item, "tool_calls") and item.tool_calls:
-                        tool_calls = []
-                        for tool_call in item.tool_calls:
-                            tool_calls.append(
-                                {
-                                    "id": getattr(tool_call, "id", ""),
-                                    "type": getattr(tool_call, "type", "function"),
-                                    "function": {
-                                        "name": getattr(
-                                            tool_call,
-                                            "name",
-                                            getattr(tool_call.function, "name", ""),
-                                        ),
-                                        "arguments": getattr(
-                                            tool_call,
-                                            "arguments",
-                                            getattr(
-                                                tool_call.function, "arguments", "{}"
-                                            ),
-                                        ),
-                                    },
-                                }
-                            )
-                        break
-
-            # Fallback to old format if new format doesn't work
-            if tool_calls is None:
-                # Check if response has choices (old API format)
-                if hasattr(response, "choices") and response.choices:
-                    choice = response.choices[0]
-                    if (
-                        hasattr(choice, "message")
-                        and hasattr(choice.message, "tool_calls")
-                        and choice.message.tool_calls
-                    ):
-                        tool_calls = [
-                            {
-                                "id": tool_call.id,
-                                "type": tool_call.type,
-                                "function": {
-                                    "name": tool_call.function.name,
-                                    "arguments": tool_call.function.arguments,
-                                },
-                            }
-                            for tool_call in choice.message.tool_calls
-                        ]
-
-            llm_response = LLMResponse(
-                content=content,
-                model_used=getattr(response, "model", llm_config.model_name),
-                tokens_used=getattr(response.usage, "output_tokens", None)
-                if response.usage
-                else None,
-                tool_calls=tool_calls,
-            )
-
-            logger.info(
-                f"Generated response with {len(content)} characters using model {getattr(response, 'model', llm_config.model_name)}"
-            )
-            return llm_response
-
-        except Exception as e:
-            logger.error(f"Error during LLM generation: {e}")
-            if "openai" in str(type(e)).lower():
-                from local_coding_assistant.core.exceptions import LLMError
-
-                raise LLMError(f"OpenAI API error: {e}") from e
-            else:
-                from local_coding_assistant.core.exceptions import LLMError
-
-                raise LLMError(f"LLM generation failed: {e}") from e
-
-    async def stream(
-        self,
-        request: LLMRequest,
-        *,
-        provider: str | None = None,
-        model_name: str | None = None,
-        overrides: dict[str, Any] | None = None,
-    ) -> AsyncIterator[str]:
-        """Generate a streaming response using the LLM with the given request.
-
-        Uses OpenAI's new Responses API which provides enhanced functionality
-        compared to the legacy Chat Completions API.
-
-        Args:
-            request: Structured request containing prompt, context, and tool information.
-            provider: Optional provider override for this call
-            model_name: Optional model_name override for this call
-            overrides: Optional additional configuration overrides for this call
-
-        Yields:
-            Partial response content as strings.
-
-        Raises:
-            LLMError: If streaming generation fails or client is not properly initialized.
-        """
-        # Check if we're in test mode and should return mock responses
-        if os.environ.get("LOCCA_TEST_MODE") == "true":
-            response = self._generate_mock_response(request)
-            if response.content:
-                yield response.content
-            return
-
-        # Get resolved LLM configuration for this request
-        llm_config = self._get_llm_config(provider, model_name, overrides)
-
-        # Setup client if needed or if config changed
-        if (
-            self.client is None
-            or self._current_llm_config is None
-            or self._current_llm_config.provider != llm_config.provider
-            or self._current_llm_config.model_name != llm_config.model_name
-            or self._current_llm_config.api_key != llm_config.api_key
-        ):
-            self._current_llm_config = llm_config
-            self._setup_client(llm_config)
-
-        if not self.client:
-            from local_coding_assistant.core.exceptions import LLMError
-
-            raise LLMError("LLM client not initialized")
-
-        try:
-            logger.debug(f"Streaming response for prompt: {request.prompt[:100]}...")
-
-            # Build messages from session context and request
-            messages = self._build_messages(request)
-
-            # Prepare generation parameters for new Responses API with streaming
-            gen_params = {
-                "model": llm_config.model_name,
-                "input": messages,
-                "temperature": llm_config.temperature,
-                "stream": True,  # Enable streaming
-            }
-
-            # Add tools if provided (new API may handle this differently)
-            if request.tools:
-                # Convert tools from old Chat Completions format to new Responses API format
-                converted_tools = []
-                for tool in request.tools:
-                    if tool.get("type") == "function":
-                        # Convert from old format to new format
-                        converted_tools.append(
-                            {
-                                "type": "function",  # Keep as function for compatibility
-                                "name": tool["function"]["name"],
-                                "description": tool["function"].get("description", ""),
-                                "parameters": tool["function"].get("parameters", {}),
-                            }
-                        )
-                    else:
-                        # Pass through as-is for other tool types
-                        converted_tools.append(tool)
-
-                gen_params["tools"] = converted_tools
-
-            # Add text formatting options for new Responses API
-            text_options = {}
-            if request.context:
-                # Use context to determine appropriate verbosity/format
-                text_options["verbosity"] = "medium"
-
-            if text_options:
-                gen_params["text"] = text_options
-
-            # Make the streaming API call
-            stream = await self.client.responses.create(**gen_params)
-
-            # Process the streaming response
-            async for chunk in stream:
-                # Extract content from the new Responses API structure
-                content = ""
-                if hasattr(chunk, "output_text"):
-                    content = chunk.output_text
-                elif hasattr(chunk, "output") and chunk.output:
-                    # Handle multiple output items
-                    for item in chunk.output:
-                        if hasattr(item, "content"):
-                            for content_item in item.content:
-                                if hasattr(content_item, "text"):
-                                    content += content_item.text
-
-                # Yield content if present
-                if content:
-                    yield content
-
-        except Exception as e:
-            logger.error(f"Error during LLM streaming generation: {e}")
-            if "openai" in str(type(e)).lower():
-                from local_coding_assistant.core.exceptions import LLMError
-
-                raise LLMError(f"OpenAI API streaming error: {e}") from e
-            else:
-                from local_coding_assistant.core.exceptions import LLMError
-
-                raise LLMError(f"LLM streaming generation failed: {e}") from e
-
-    async def ainvoke(self, request: LLMRequest) -> LLMResponse:
-        """Generate a response using the LLM with the given request (async version of generate).
-
-        This is an alias for generate() to provide compatibility with LangGraph patterns.
-
-        Args:
-            request: Structured request containing prompt, context, and tool information.
-
-        Returns:
-            Structured response with generated content and metadata.
-
-        Raises:
-            LLMError: If generation fails or client is not properly initialized.
-        """
-        return await self.generate(request)
-
-    def _build_messages(self, request: LLMRequest) -> list[dict[str, str]]:
-        """Build OpenAI-compatible message list from request.
-
-        Args:
-            request: The LLM request containing prompt and context.
-
-        Returns:
-            List of message dictionaries for the OpenAI API.
-        """
+    def to_provider_request(self, model: str) -> ProviderLLMRequest:
+        """Convert to provider request format."""
+        # Convert messages format
         messages = []
 
         # Add system prompt
-        system_content = request.system_prompt or "You are a helpful coding assistant."
+        system_content = self.system_prompt or "You are a helpful coding assistant."
         messages.append({"role": "system", "content": system_content})
+        # Add history messages from context if provided
+        if self.context and "history" in self.context:
+            history = self.context.get("history", [])
+            for msg in history:
+                if isinstance(msg, dict) and "role" in msg and "content" in msg:
+                    messages.append({"role": msg["role"], "content": msg["content"]})
 
-        # Add context if provided
-        if request.context:
-            context_str = "\n".join(f"{k}: {v}" for k, v in request.context.items())
-            messages.append({"role": "user", "content": f"Context:\n{context_str}"})
+        # Add context if provided (but avoid duplicating the current prompt)
+        if self.context:
+            context_str = "\n".join(f"{k}: {v}" for k, v in self.context.items())
+
+            # Check if the prompt is already the last message in history to avoid duplication
+            history = self.context.get("history", [])
+            should_add_context = True
+
+            if history and self.prompt:
+                # Get the last message from history
+                last_history_message = history[-1]
+                if (
+                    isinstance(last_history_message, dict)
+                    and last_history_message.get("role") == "user"
+                    and last_history_message.get("content") == self.prompt
+                ):
+                    # Context already contains the current prompt, don't add it again
+                    should_add_context = False
+
+            if should_add_context:
+                messages.append({"role": "user", "content": f"Context:\n{context_str}"})
 
         # Add tool outputs if provided
-        if request.tool_outputs:
+        if self.tool_outputs:
             tool_outputs_str = "\n".join(
-                f"Tool {k} result: {v}" for k, v in request.tool_outputs.items()
+                f"Tool {k} result: {v}" for k, v in self.tool_outputs.items()
             )
             messages.append(
                 {
@@ -500,31 +90,750 @@ class LLMManager:
             )
 
         # Add the main prompt
-        messages.append({"role": "user", "content": request.prompt})
+        messages.append({"role": "user", "content": self.prompt})
 
-        return messages
+        return ProviderLLMRequest(
+            messages=messages,
+            model=model,
+            temperature=0.7,  # Default temperature
+            max_tokens=None,
+            stream=False,
+            tools=self.tools if self.tools else None,
+            tool_choice=None,
+            response_format=None,
+            tool_outputs=self.tool_outputs if self.tool_outputs else None,
+            extra_params=None,
+        )
+
+
+class LLMResponse:
+    """Response structure from LLM generation."""
+
+    def __init__(
+        self,
+        content: str,
+        model_used: str,
+        tokens_used: int | None = None,
+        tool_calls: list[dict[str, Any]] | None = None,
+    ):
+        self.content = content
+        self.model_used = model_used
+        self.tokens_used = tokens_used
+        self.tool_calls = tool_calls
+
+
+class LLMManager:
+    """Enhanced LLM manager with provider system integration."""
+
+    def __init__(
+        self, config_manager=None, provider_manager: ProviderManager | None = None
+    ):
+        """Initialize the LLM manager with a config manager."""
+        from local_coding_assistant.config import get_config_manager
+
+        self.config_manager = config_manager or get_config_manager()
+        self.provider_manager = provider_manager or ProviderManager()
+        self.router = ProviderRouter(self.config_manager, self.provider_manager)
+        self._current_provider = None
+        self._current_model = None
+        self._background_tasks = []
+
+        # Provider status cache
+        self._provider_status_cache: dict[str, dict[str, Any]] = {}
+        self._last_health_check: float = 0
+        self._cache_ttl: float = 30.0 * 60.0  # 30 minutes cache TTL
+
+        # Initialize provider system with config
+        self.provider_manager.reload(self.config_manager)
+
+    async def generate(
+        self,
+        request: LLMRequest,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        policy: str | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> LLMResponse:
+        """Generate a response using the provider system with fallback support."""
+
+        # Check if we're in test mode
+        if os.environ.get("LOCCA_TEST_MODE") == "true":
+            return self._generate_mock_response(request)
+
+        try:
+            # Route request and handle generation response
+            selected_provider, provider_request = await self._route_request(
+                request, provider, model, policy, overrides, stream=False
+            )
+
+            return await self._handle_generation_response(
+                selected_provider, provider_request
+            )
+
+        except Exception as e:
+            # Handle critical errors with fallback
+            return await self._handle_critical_error_generation(
+                e, request, provider, model, policy, overrides
+            )
+
+    async def ainvoke(self, request: LLMRequest) -> LLMResponse:
+        """Async invoke (alias for generate)."""
+        return await self.generate(request)
 
     def _generate_mock_response(self, request: LLMRequest) -> LLMResponse:
-        """Generate a mock response for testing purposes.
-
-        Args:
-            request: The LLM request.
-
-        Returns:
-            Mock LLM response.
-        """
-        # Create a simple echo response
+        """Generate a mock response for testing."""
         content = f"[LLMManager] Echo: {request.prompt}"
 
-        # If tool outputs are present, modify the response
         if request.tool_outputs:
             content = "[LLMManager] Echo: Received request with tool outputs"
 
         return LLMResponse(
             content=content,
-            model_used=self.config_manager.global_config.llm.model_name
-            if self.config_manager.global_config
-            else "mock-model",
+            model_used="mock-model",
             tokens_used=50,
             tool_calls=None,
         )
+
+    async def _route_request(
+        self,
+        request: LLMRequest,
+        provider: str | None = None,
+        model: str | None = None,
+        policy: str | None = None,
+        overrides: dict[str, Any] | None = None,
+        stream: bool = True,
+    ) -> tuple[Any, Any]:
+        """Route request to appropriate provider and convert request format.
+
+        Args:
+            request: The LLM request
+            provider: Optional provider override
+            model: Optional model override
+            policy: Optional policy override
+            overrides: Optional configuration overrides
+            stream: Whether to enable streaming in the request
+
+        Returns:
+            Tuple of (selected_provider, provider_request)
+        """
+        # Extract parameters from overrides if not provided directly
+        effective_model = model
+        effective_temperature = None
+        effective_max_tokens = None
+
+        if overrides:
+            if effective_model is None:
+                effective_model = overrides.get("llm.model_name")
+            effective_temperature = overrides.get("llm.temperature")
+            effective_max_tokens = overrides.get("llm.max_tokens")
+
+        # Route to appropriate provider and model
+        (
+            selected_provider,
+            selected_model,
+        ) = await self.router.get_provider_for_request(
+            provider_name=provider,
+            model_name=effective_model,
+            role=policy,
+            overrides=overrides,
+        )
+
+        # Convert request format
+        provider_request = request.to_provider_request(selected_model)
+        provider_request.stream = stream
+
+        # Apply overrides to the provider request
+        if effective_temperature is not None:
+            provider_request.temperature = effective_temperature
+        if effective_max_tokens is not None:
+            provider_request.max_tokens = effective_max_tokens
+
+        return selected_provider, provider_request
+
+    def _validate_provider_response(
+        self, response: Any, request: ProviderLLMRequest
+    ) -> bool:
+        """Validate that a provider response is successful and meaningful.
+
+        Args:
+            response: The ProviderLLMResponse to validate
+            request: The original ProviderLLMRequest that was sent
+
+        Returns:
+            True if response indicates successful generation, False otherwise
+        """
+        if not response:
+            return False
+
+        # Check basic response structure
+        try:
+            # Verify required fields are present and valid
+            if not hasattr(response, "content") or not hasattr(response, "model"):
+                return False
+
+            # Check content is meaningful (not empty, proper type)
+            content = response.content
+            if not isinstance(content, str) or not content.strip():
+                return False
+
+            # Check model is specified and valid
+            model = response.model
+            if not isinstance(model, str) or not model.strip():
+                return False
+
+            # Verify model matches what was requested (if specified)
+            if request.model and model != request.model:
+                logger.warning(
+                    f"Model mismatch: requested {request.model}, got {model}"
+                )
+                # This is not necessarily an error, but worth noting
+
+            return True
+
+        except (AttributeError, TypeError) as e:
+            logger.error(f"Error validating response structure: {e}")
+            return False
+
+    def _record_successful_generation(self, provider_name: str, model: str) -> None:
+        """Record that a provider successfully generated a response.
+
+        This uses the provider's own health check mechanism and logs success
+        for monitoring purposes, rather than directly manipulating health state.
+
+        Args:
+            provider_name: Name of the provider that succeeded
+            model: Model that was used successfully
+        """
+        logger.debug(
+            f"Provider {provider_name} successfully generated response using model {model}"
+        )
+
+        # Mark provider as successful through the public interface
+        self.router.mark_provider_success(provider_name)
+
+    def _record_failed_generation(self, provider_name: str, error: Exception) -> None:
+        """Record that a provider failed to generate a response.
+
+        Args:
+            provider_name: Name of the provider that failed
+            error: The exception that occurred
+        """
+        logger.error(f"Provider {provider_name} failed generation: {error}")
+
+        # Mark provider as failed through the public interface
+        self.router.mark_provider_failure(provider_name, error)
+
+    async def _handle_generation_response(
+        self,
+        selected_provider: Any,
+        provider_request: Any,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+    ) -> LLMResponse:
+        """Handle response generation with retry logic.
+
+        Args:
+            selected_provider: The selected provider
+            provider_request: The provider request
+            max_retries: Maximum number of retries
+            retry_delay: Delay between retries
+
+        Returns:
+            The generated LLM response
+        """
+        try:
+            # Generate response with retry logic
+            provider_response = await selected_provider.generate_with_retry(
+                provider_request, max_retries=max_retries, retry_delay=retry_delay
+            )
+
+            # Validate response before considering it successful
+            if self._validate_provider_response(provider_response, provider_request):
+                # Record successful generation
+                self._record_successful_generation(
+                    selected_provider.name, provider_response.model
+                )
+            else:
+                # Response validation failed - this shouldn't happen if the provider is working correctly
+                logger.warning(
+                    f"Provider {selected_provider.name} returned invalid response format"
+                )
+                self._record_failed_generation(
+                    selected_provider.name, ProviderError("Invalid response format")
+                )
+
+            # Convert back to our response format
+            return LLMResponse(
+                content=provider_response.content,
+                model_used=provider_response.model,
+                tokens_used=provider_response.tokens_used,
+                tool_calls=provider_response.tool_calls,
+            )
+
+        except Exception as e:
+            # Record the failure
+            self._record_failed_generation(selected_provider.name, e)
+            # Re-raise the exception to be handled by the calling method
+            raise
+
+    async def _handle_fallback_generation(
+        self,
+        request: LLMRequest,
+        provider: str | None = None,
+        model: str | None = None,
+        policy: str | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> LLMResponse:
+        """Handle fallback generation when primary provider fails.
+
+        Args:
+            request: The LLM request
+            provider: Optional provider override
+            model: Optional model override
+            policy: Optional policy override
+            overrides: Optional configuration overrides
+
+        Returns:
+            The generated response from fallback provider
+        """
+        # Extract model from overrides if not provided directly
+        effective_model = model
+        if effective_model is None and overrides:
+            effective_model = overrides.get("llm.model_name")
+
+        # Route to fallback provider
+        selected_provider, provider_request = await self._route_request(
+            request, provider, effective_model, policy, overrides, stream=False
+        )
+
+        # Generate response with fewer retries for fallback
+        try:
+            provider_response = await selected_provider.generate_with_retry(
+                provider_request,
+                max_retries=2,  # Fewer retries for fallback
+                retry_delay=1.0,
+            )
+
+            # Validate fallback response as well
+            if self._validate_provider_response(provider_response, provider_request):
+                self._record_successful_generation(
+                    selected_provider.name, provider_response.model
+                )
+            else:
+                logger.warning(
+                    f"Fallback provider {selected_provider.name} returned invalid response"
+                )
+                self._record_failed_generation(
+                    selected_provider.name, ProviderError("Invalid fallback response")
+                )
+
+            return LLMResponse(
+                content=provider_response.content,
+                model_used=provider_response.model,
+                tokens_used=provider_response.tokens_used,
+                tool_calls=provider_response.tool_calls,
+            )
+
+        except Exception as e:
+            self._record_failed_generation(selected_provider.name, e)
+            raise
+
+    async def _handle_critical_error_generation(
+        self,
+        e: Exception,
+        request: LLMRequest,
+        provider: str | None = None,
+        model: str | None = None,
+        policy: str | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> LLMResponse:
+        """Handle critical errors with fallback logic for generation.
+
+        Args:
+            e: The original error
+            request: The original LLM request
+            provider: Optional provider override
+            model: Optional model override
+            policy: Optional policy override
+            overrides: Optional configuration overrides
+
+        Returns:
+            The generated response from fallback provider if available
+        """
+        logger.error(f"Error during LLM generation: {e}")
+
+        # Check if this is a critical error that should trigger fallback
+        if isinstance(e, ProviderError) and self.router.is_critical_error(e):
+            # Mark the provider as unhealthy through public interface
+            if hasattr(e, "provider") and e.provider:
+                self.router.mark_provider_failure(e.provider, e)
+
+            # Extract model from overrides if not provided directly
+            effective_model = model
+            if effective_model is None and overrides:
+                effective_model = overrides.get("llm.model_name")
+
+            # Try fallback generation
+            try:
+                return await self._handle_fallback_generation(
+                    request, provider, effective_model, policy, overrides
+                )
+            except Exception as fallback_error:
+                logger.error(f"Fallback also failed: {fallback_error}")
+
+        # If it's a provider exception, convert to LLMError
+        if isinstance(e, ProviderError):
+            raise LLMError(f"Provider error: {e}") from e
+        else:
+            raise LLMError(f"LLM generation failed: {e}") from e
+
+    async def _handle_streaming_response(
+        self,
+        selected_provider: Any,
+        provider_request: Any,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+    ) -> AsyncIterator[str]:
+        """Handle streaming response generation with retry logic.
+
+        Args:
+            selected_provider: The selected provider
+            provider_request: The provider request
+            max_retries: Maximum number of retries
+            retry_delay: Delay between retries
+
+        Yields:
+            Content chunks from the streaming response
+        """
+        total_content = ""
+        has_valid_content = False
+
+        try:
+            async for delta in selected_provider.stream_with_retry(
+                provider_request, max_retries=max_retries, retry_delay=retry_delay
+            ):
+                if delta.content:
+                    total_content += delta.content
+                    yield delta.content
+                    has_valid_content = True
+
+            # Validate the complete response before considering it successful
+            if has_valid_content and total_content.strip():
+                # Create a mock response object for validation
+                mock_response = type(
+                    "MockResponse",
+                    (),
+                    {"content": total_content, "model": provider_request.model},
+                )()
+                if self._validate_provider_response(mock_response, provider_request):
+                    self._record_successful_generation(
+                        selected_provider.name, provider_request.model
+                    )
+                else:
+                    logger.warning(
+                        f"Provider {selected_provider.name} streaming returned invalid content"
+                    )
+                    self._record_failed_generation(
+                        selected_provider.name,
+                        ProviderError("Invalid streaming response"),
+                    )
+            else:
+                self._record_failed_generation(
+                    selected_provider.name,
+                    ProviderError("No valid content in streaming response"),
+                )
+
+        except Exception as e:
+            # Record the failure
+            self._record_failed_generation(selected_provider.name, e)
+            # Re-raise the exception
+            raise e
+
+    async def _handle_fallback_streaming(
+        self,
+        request: LLMRequest,
+        provider: str | None = None,
+        model: str | None = None,
+        policy: str | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> AsyncIterator[str]:
+        """Handle fallback streaming when primary provider fails.
+
+        Args:
+            request: The LLM request
+            provider: Optional provider override
+            model: Optional model override
+            policy: Optional policy override
+            overrides: Optional configuration overrides
+
+        Yields:
+            Content chunks from the fallback streaming response
+        """
+        # Extract model from overrides if not provided directly
+        effective_model = model
+        if effective_model is None and overrides:
+            effective_model = overrides.get("llm.model_name")
+
+        # Route to fallback provider
+        selected_provider, provider_request = await self._route_request(
+            request, provider, effective_model, policy, overrides, stream=True
+        )
+
+        # Generate streaming response with fewer retries for fallback
+        total_content = ""
+        has_valid_content = False
+
+        try:
+            async for delta in selected_provider.stream_with_retry(
+                provider_request,
+                max_retries=2,  # Fewer retries for fallback
+                retry_delay=1.0,
+            ):
+                if delta.content:
+                    total_content += delta.content
+                    yield delta.content
+                    has_valid_content = True
+
+            # Validate fallback streaming response as well
+            if has_valid_content and total_content.strip():
+                mock_response = type(
+                    "MockResponse",
+                    (),
+                    {"content": total_content, "model": provider_request.model},
+                )()
+                if self._validate_provider_response(mock_response, provider_request):
+                    self._record_successful_generation(
+                        selected_provider.name, provider_request.model
+                    )
+                else:
+                    logger.warning(
+                        f"Fallback provider {selected_provider.name} streaming returned invalid content"
+                    )
+                    self._record_failed_generation(
+                        selected_provider.name,
+                        ProviderError("Invalid fallback streaming response"),
+                    )
+            else:
+                self._record_failed_generation(
+                    selected_provider.name,
+                    ProviderError("No valid content in fallback streaming"),
+                )
+
+        except Exception as e:
+            self._record_failed_generation(selected_provider.name, e)
+            raise
+
+    async def _handle_critical_error(
+        self,
+        e: Exception,
+        request: LLMRequest,
+        provider: str | None = None,
+        model: str | None = None,
+        policy: str | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> AsyncIterator[str]:
+        """Handle critical errors with fallback logic.
+
+        Args:
+            e: The original error
+            request: The original LLM request
+            provider: Optional provider override
+            model: Optional model override
+            policy: Optional policy override
+            overrides: Optional configuration overrides
+
+        Yields:
+            Content chunks from fallback provider if available
+        """
+        logger.error(f"Error during LLM streaming generation: {e}")
+
+        # Check if this is a critical error that should trigger fallback
+        if isinstance(e, ProviderError) and self.router.is_critical_error(e):
+            # Mark the provider as unhealthy through public interface
+            if hasattr(e, "provider") and e.provider:
+                self.router.mark_provider_failure(e.provider, e)
+
+            # Extract model from overrides if not provided directly
+            effective_model = model
+            if effective_model is None and overrides:
+                effective_model = overrides.get("llm.model_name")
+
+            # Try fallback streaming
+            try:
+                async for chunk in self._handle_fallback_streaming(
+                    request, provider, effective_model, policy, overrides
+                ):
+                    yield chunk
+
+            except Exception as fallback_error:
+                logger.error(f"Fallback also failed: {fallback_error}")
+                # If fallback streaming also fails, try fallback generation and yield as single chunk
+                try:
+                    fallback_response = await self._handle_fallback_generation(
+                        request, provider, effective_model, policy, overrides
+                    )
+                    if fallback_response.content:
+                        yield fallback_response.content
+                except Exception as generation_fallback_error:
+                    logger.error(
+                        f"Generation fallback also failed: {generation_fallback_error}"
+                    )
+
+        else:
+            # If it's not a critical error, re-raise the original error
+            raise LLMError(f"LLM streaming generation failed: {e}") from e
+
+    async def stream(
+        self,
+        request: LLMRequest,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        policy: str | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> AsyncIterator[str]:
+        """Generate a streaming response using the provider system with fallback support.
+
+        Yields:
+            Content chunks from the streaming response as strings.
+        """
+
+        # Check if we're in test mode
+        if os.environ.get("LOCCA_TEST_MODE") == "true":
+            response = self._generate_mock_response(request)
+            if response.content:
+                yield response.content
+            return
+
+        # Extract model from overrides if not provided directly
+        effective_model = model
+        if effective_model is None and overrides:
+            effective_model = overrides.get("llm.model_name")
+
+        try:
+            # Route request and handle streaming response
+            selected_provider, provider_request = await self._route_request(
+                request, provider, effective_model, policy, overrides, stream=True
+            )
+
+            async for chunk in self._handle_streaming_response(
+                selected_provider, provider_request
+            ):
+                yield chunk
+
+        except Exception as e:
+            # Handle critical errors with fallback logic
+
+            async for chunk in self._handle_critical_error(
+                e, request, provider, model, policy, overrides
+            ):
+                yield chunk
+
+    def get_provider_status_list(self) -> list[dict[str, Any]]:
+        """Get cached provider status list without triggering health checks.
+
+        Returns:
+            List of provider status dictionaries with name, source, status, and models
+        """
+        current_time = time.time()
+
+        # Check if cache is still valid
+        if current_time - self._last_health_check > self._cache_ttl:
+            # Cache expired, refresh it synchronously if we're in an async context
+            try:
+                # Check if we're in an async context
+                asyncio.get_running_loop()
+                # We're in an async context, schedule the refresh
+                task = asyncio.create_task(self._refresh_provider_status_cache())
+                self._background_tasks.append(task)
+                task.add_done_callback(self._background_tasks.remove)
+            except RuntimeError:
+                # No async context, refresh synchronously
+                asyncio.run(self._refresh_provider_status_cache())
+
+        # Convert cached status to CLI format
+        status_list = []
+        for provider_name in self.provider_manager.list_providers():
+            source = (
+                self.provider_manager.get_provider_source(provider_name) or "unknown"
+            )
+
+            if provider_name in self._provider_status_cache:
+                cached_status = self._provider_status_cache[provider_name]
+                status_list.append(
+                    {
+                        "name": provider_name,
+                        "source": source,
+                        "status": "available"
+                        if cached_status.get("healthy", False)
+                        else "unavailable",
+                        "models": len(cached_status.get("models", [])),
+                        "error": cached_status.get("error"),
+                    }
+                )
+            else:
+                # Provider not in cache, assume it's config-only
+                status_list.append(
+                    {
+                        "name": provider_name,
+                        "source": source,
+                        "status": "config",
+                        "models": 0,
+                        "error": "Configured but no implementation",
+                    }
+                )
+
+        return status_list
+
+    def reload_providers(self):
+        """Reload providers from configuration."""
+        logger.info("Reloading providers through LLM manager")
+        self.provider_manager.reload(self.config_manager)
+        # Clear cache to force refresh on next access
+        self._provider_status_cache.clear()
+        self._last_health_check = 0
+
+    async def get_provider_status(self) -> dict[str, dict[str, Any]]:
+        """Get status information for all providers."""
+        status = {}
+
+        for provider_name in self.provider_manager.list_providers():
+            provider = self.provider_manager.get_provider(provider_name)
+            if provider:
+                try:
+                    is_healthy = await provider.health_check()
+                    status[provider_name] = {
+                        "healthy": is_healthy,
+                        "models": provider.get_available_models(),
+                        "in_unhealthy_set": provider_name
+                        in self.router.get_unhealthy_providers(),
+                    }
+                except Exception as e:
+                    status[provider_name] = {
+                        "healthy": False,
+                        "models": [],
+                        "error": str(e),
+                        "in_unhealthy_set": provider_name
+                        in self.router.get_unhealthy_providers(),
+                    }
+            else:
+                # Config-only provider
+                status[provider_name] = {
+                    "healthy": False,
+                    "models": [],
+                    "error": "Configured but no implementation",
+                    "in_unhealthy_set": True,
+                }
+
+        # Update cache
+        self._provider_status_cache = status
+        self._last_health_check = time.time()
+
+        return status
+
+    async def _refresh_provider_status_cache(self):
+        """Refresh the provider status cache."""
+        logger.debug("Refreshing provider status cache")
+        self._provider_status_cache = await self.get_provider_status()
+        self._last_health_check = time.time()

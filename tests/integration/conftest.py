@@ -8,9 +8,9 @@ import pytest
 from typer.testing import CliRunner
 
 from local_coding_assistant.agent.agent_loop import AgentLoop
-from local_coding_assistant.agent.llm_manager_v2 import LLMManager, LLMRequest, LLMResponse
+from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
 from local_coding_assistant.config import get_config_manager, load_config
-from local_coding_assistant.config.schemas import LLMConfig, RuntimeConfig
+from local_coding_assistant.config.schemas import RuntimeConfig
 from local_coding_assistant.core import AppContext
 from local_coding_assistant.core.bootstrap import bootstrap
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
@@ -33,7 +33,15 @@ class MockStreamingLLMManager(LLMManager):
         self.call_count = 0
         self.streaming_enabled = True
 
-    async def generate(self, request: LLMRequest) -> LLMResponse:
+    async def generate(
+        self,
+        request: LLMRequest,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        policy: str | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> LLMResponse:
         """Generate a response based on the request."""
         if self.call_count >= len(self.responses):
             # Return a default response if we've exhausted our predefined responses
@@ -43,14 +51,30 @@ class MockStreamingLLMManager(LLMManager):
 
         self.call_count += 1
 
-        # Create mock response
-        mock_response = MagicMock(spec=LLMResponse)
-        mock_response.content = response_data.get("content", "")
-        mock_response.tool_calls = response_data.get("tool_calls", [])
+        # Create proper LLMResponse object instead of MagicMock
+        tool_calls_data = response_data.get("tool_calls", [])
+        # Ensure tool_calls is either a list of dicts or None
+        if isinstance(tool_calls_data, list) and all(isinstance(tc, dict) for tc in tool_calls_data):
+            tool_calls = tool_calls_data
+        else:
+            tool_calls = None
 
-        return mock_response
+        return LLMResponse(
+            content=str(response_data.get("content", "")),
+            model_used="mock-model",
+            tokens_used=50,
+            tool_calls=tool_calls,
+        )
 
-    async def stream(self, request: LLMRequest) -> AsyncIterator[str]:
+    async def stream(
+        self,
+        request: LLMRequest,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        policy: str | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> AsyncIterator[str]:
         """Generate a streaming response."""
         if self.call_count >= len(self.responses):
             response_data = {"content": "I've completed my analysis.", "tool_calls": []}
@@ -60,7 +84,7 @@ class MockStreamingLLMManager(LLMManager):
         self.call_count += 1
 
         # Simulate streaming by yielding partial content
-        content = response_data.get("content", "")
+        content = str(response_data.get("content", ""))
         if content and isinstance(content, str):
             # Yield content in chunks
             words = content.split()
@@ -71,9 +95,19 @@ class MockStreamingLLMManager(LLMManager):
                 await asyncio.sleep(0.01)  # Simulate streaming delay
 
         # Yield tool calls if present
-        tool_calls = response_data.get("tool_calls", [])
+        tool_calls_data = response_data.get("tool_calls", [])
+        # Ensure tool_calls is either a list of dicts or None
+        if isinstance(tool_calls_data, list) and all(isinstance(tc, dict) for tc in tool_calls_data):
+            tool_calls = tool_calls_data
+        else:
+            tool_calls = None
+
         if tool_calls:
             yield f"\n\nTool calls: {json.dumps(tool_calls)}"
+
+    async def ainvoke(self, request: LLMRequest) -> LLMResponse:
+        """Async invoke (alias for generate)."""
+        return await self.generate(request)
 
 
 class MockCalculatorTool:
@@ -224,7 +258,7 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
     runtime._tool_manager = tool_manager
 
     # Store the agent loop instance for session persistence
-    agent_loop_instance = None
+    agent_loop_instance: AgentLoop | None = None
 
     # Mock the _run_agent_mode method to use our real AgentLoop
     async def mock_run_agent_mode(
@@ -240,7 +274,7 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
         nonlocal agent_loop_instance
 
         # Create new agent loop if this is the first call or if the previous one has finished
-        if agent_loop_instance is None or agent_loop_instance.final_answer is not None:
+        if agent_loop_instance is None or (agent_loop_instance is not None and agent_loop_instance.final_answer is not None):
             agent_loop_instance = AgentLoop(
                 llm_manager=MockStreamingLLMManager(mock_llm_with_tools.responses, config_manager=None, provider_manager=None),
                 tool_manager=tool_manager,
@@ -271,7 +305,7 @@ def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
     runtime._tool_manager = tool_manager
 
     # Store the agent loop instance for session persistence
-    agent_loop_instance = None
+    agent_loop_instance: AgentLoop | None = None
 
     # Mock the _run_agent_mode method to use our real AgentLoop with streaming
     async def mock_run_agent_mode(
@@ -287,7 +321,7 @@ def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
         nonlocal agent_loop_instance
 
         # Create new agent loop if this is the first call or if the previous one has finished
-        if agent_loop_instance is None or agent_loop_instance.final_answer is not None:
+        if agent_loop_instance is None or (agent_loop_instance is not None and agent_loop_instance.final_answer is not None):
             agent_loop_instance = AgentLoop(
                 llm_manager=MockStreamingLLMManager(mock_llm_with_tools.responses, config_manager=None, provider_manager=None),
                 tool_manager=tool_manager,
@@ -312,7 +346,7 @@ def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
 
 @pytest.fixture
 def complex_scenario_llm():
-    """LLM with complex multi-step reasoning scenario."""
+    """LLM with complex multistep reasoning scenario."""
     responses = [
         # Initial observation leads to planning
         {
@@ -401,19 +435,23 @@ def mock_llm_manager(mock_llm_response):
     Create a mock LLM manager that doesn't make real API calls.
     This mock supports both generate() and update_config().
     """
-    from local_coding_assistant.core.exceptions import AgentError
 
     # Create a comprehensive mock without spec constraints
     mock_manager = MagicMock()
-    mock_manager.config = LLMConfig(model_name="gpt-5-mini", provider="openai")
+
+    # Create a mock config that matches the new LLMManager expectations
+    mock_config = MagicMock()
+    mock_config.temperature = 0.7
+    mock_config.max_tokens = 1000
+    mock_config.max_retries = 3
+    mock_config.retry_delay = 1.0
+    mock_config.providers = []
+
+    mock_manager.config = mock_config
 
     async def mock_generate(request: LLMRequest) -> LLMResponse:
-        # Use the model from the config if available, otherwise use the mock default
-        model_used = (
-            mock_manager.config.model_name
-            if hasattr(mock_manager, "config") and mock_manager.config.model_name
-            else "gpt-5-mini"
-        )
+        # Use a default model since the new system handles routing
+        model_used = "gpt-5-mini"
 
         # Check if tool outputs are present and modify response accordingly
         if request.tool_outputs:
@@ -422,10 +460,10 @@ def mock_llm_manager(mock_llm_response):
             content = f"[LLMManager] Echo: Received request with model {model_used}"
 
         return LLMResponse(
-            content=content,
+            content=str(content),
             model_used=model_used,
             tokens_used=50,
-            tool_calls=None,
+            tool_calls=None,  # Mock responses don't need tool calls
         )
 
     mock_manager.generate = AsyncMock(side_effect=mock_generate)
@@ -439,41 +477,15 @@ def mock_llm_manager(mock_llm_response):
         api_key: str | None = None,
     ) -> None:
         """Mock update_config with proper validation."""
-        updates = {}
-        if model_name is not None:
-            updates["model_name"] = model_name
-        if provider is not None:
-            updates["provider"] = provider
-        if temperature is not None:
-            updates["temperature"] = temperature
-        if max_tokens is not None:
-            updates["max_tokens"] = max_tokens
-        if api_key is not None:
-            updates["api_key"] = api_key
-
-        if not updates:
-            return
-
-        # Validate the new configuration (same logic as real LLM manager)
-        try:
-            old_config_dict = mock_manager.config.model_dump()
-            new_config_dict = {**old_config_dict, **updates}
-            # This will raise ValidationError if invalid
-            LLMConfig(**new_config_dict)
-        except Exception as e:
-            raise AgentError(f"Configuration update validation failed: {e}") from e
+        # For the new system, we'll just update the mock config attributes
+        # The new LLMManager doesn't use these parameters directly
 
         # If validation passes, update the mock config
-        if model_name is not None:
-            mock_manager.config.model_name = model_name
-        if provider is not None:
-            mock_manager.config.provider = provider
         if temperature is not None:
             mock_manager.config.temperature = temperature
         if max_tokens is not None:
             mock_manager.config.max_tokens = max_tokens
-        if api_key is not None:
-            mock_manager.config.api_key = api_key
+        # Note: model_name, provider, and api_key are not used in the new config system
 
     mock_manager.update_config = MagicMock(side_effect=mock_update_config)
     return mock_manager
@@ -485,7 +497,7 @@ def ctx_with_mocked_llm(mock_llm_manager):
     Create a context with mocked LLM manager to avoid API quota issues.
     """
     load_config()
-    runtime_config = RuntimeConfig(
+    _runtime_config = RuntimeConfig(
         persistent_sessions=False,
         max_session_history=100,
         enable_logging=True,

@@ -9,7 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StreamWriter
 from pydantic import BaseModel, Field
 
-from local_coding_assistant.agent.llm_manager_v2 import LLMManager, LLMRequest
+from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.tools.tool_manager import ToolManager
 from local_coding_assistant.utils.langgraph_utility import (

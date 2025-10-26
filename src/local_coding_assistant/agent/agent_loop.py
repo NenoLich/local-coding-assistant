@@ -4,7 +4,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
-from local_coding_assistant.agent.llm_manager_v2 import LLMManager, LLMRequest
+from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
 from local_coding_assistant.core.exceptions import AgentError
 
 if TYPE_CHECKING:

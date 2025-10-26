@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from local_coding_assistant.agent.llm_manager_v2 import (
+from local_coding_assistant.agent.llm_manager import (
     LLMManager,
     LLMRequest,
     LLMResponse,
