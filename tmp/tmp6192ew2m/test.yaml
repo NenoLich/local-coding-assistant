@@ -1,4 +1,0 @@
-test:
-  api_key: test_key
-  driver: openai_chat
-  models: {}

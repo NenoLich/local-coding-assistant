@@ -377,7 +377,7 @@ class ConfigManager:
 
 
 # Global config manager instance for convenience
-_config_manager = None
+_config_manager: ConfigManager | None = None
 
 
 def get_config_manager(config_paths: list[Path] | None = None) -> ConfigManager:
