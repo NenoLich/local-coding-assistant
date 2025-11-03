@@ -2,15 +2,10 @@
 OpenRouter provider implementation
 """
 
-from collections.abc import AsyncGenerator
-
-from .base import (
+from local_coding_assistant.providers.base import (
     BaseProvider,
-    ProviderLLMRequest,
-    ProviderLLMResponse,
-    ProviderLLMResponseDelta,
 )
-from .provider_manager import register_provider
+from local_coding_assistant.providers.provider_manager import register_provider
 
 
 @register_provider("openrouter")
@@ -21,7 +16,7 @@ class OpenRouterProvider(BaseProvider):
         self,
         api_key: str | None = None,
         api_key_env: str | None = "OPENROUTER_API_KEY",
-        base_url: str = "https://openrouter.ai/api/v1/responses",
+        base_url: str = "https://openrouter.ai/api/v1",
         models: list | None = None,
         driver: str = "openai_responses",  # Use OpenAI responses driver
         **kwargs,
@@ -47,17 +42,11 @@ class OpenRouterProvider(BaseProvider):
             **kwargs,
         )
 
-    async def generate(self, request: ProviderLLMRequest) -> ProviderLLMResponse:
-        """Generate response using OpenRouter"""
-        return await self.driver_instance.generate(request)
+    def _create_driver_instance(self):
+        """Create and return a driver instance for OpenRouter.
 
-    async def stream(
-        self, request: ProviderLLMRequest
-    ) -> AsyncGenerator[ProviderLLMResponseDelta, None]:
-        """Generate response using OpenRouter with streaming"""
-        async for delta in self.driver_instance.stream(request):
-            yield delta
-
-    async def health_check(self) -> bool:
-        """Check OpenRouter health"""
-        return await self.driver_instance.health_check()
+        Returns:
+            An instance of a BaseDriver configured for OpenRouter
+        """
+        # Use the parent's _initialize_driver helper method
+        return self._initialize_driver()

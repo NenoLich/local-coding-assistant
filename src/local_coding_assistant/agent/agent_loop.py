@@ -8,12 +8,11 @@ from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
 from local_coding_assistant.core.exceptions import AgentError
 
 if TYPE_CHECKING:
-    # For type checking, use the base class
     from local_coding_assistant.tools.tool_manager import ToolManager
 
-    ToolManagerType = ToolManager
+    ToolManagerType = ToolManager | None
 else:
-    # For runtime, allow any object that behaves like ToolManager
+    # For runtime, allow any object that behaves like ToolManager or None
     ToolManagerType = object
 from local_coding_assistant.utils.logging import get_logger
 
@@ -31,7 +30,7 @@ class AgentLoop:
     def __init__(
         self,
         llm_manager: LLMManager,
-        tool_manager: ToolManagerType,
+        tool_manager: ToolManagerType = None,
         name: str = "agent_loop",
         max_iterations: int = 10,
         streaming: bool = False,
@@ -40,7 +39,8 @@ class AgentLoop:
 
         Args:
             llm_manager: The LLM manager to use for reasoning.
-            tool_manager: The tool manager providing available tools.
+            tool_manager: Optional tool manager providing available tools.
+                         If not provided, the agent will operate without tools.
             name: A name for this agent loop instance.
             max_iterations: Maximum number of iterations to run.
             streaming: Whether to use streaming LLM responses.
@@ -199,9 +199,21 @@ Please describe what actions were taken and their results.
                     if "function" in tool_call:
                         func_name = tool_call["function"]["name"]
                         try:
-                            # Parse arguments and invoke tool
+                            # Parse arguments
                             args = json.loads(tool_call["function"]["arguments"])
-                            tool_result = self.tool_manager.run_tool(func_name, args)
+
+                            # Handle tool execution
+                            if self.tool_manager is None:
+                                tool_result = f"Error: No tool manager available to execute {func_name}"
+                            else:
+                                try:
+                                    tool_result = self.tool_manager.run_tool(
+                                        func_name, args
+                                    )
+                                except Exception as e:
+                                    tool_result = (
+                                        f"Error executing tool {func_name}: {e!s}"
+                                    )
 
                             # Special handling for final_answer tool
                             if func_name == "final_answer":
@@ -301,23 +313,27 @@ Please provide:
             }
 
     def _get_available_tools(self) -> list[dict[str, Any]]:
-        """Get available tools for LLM requests - cached for performance."""
+        """Get available tools for LLM requests."""
+        if self.tool_manager is None:
+            return []
+
         available_tools = []
         for tool in self.tool_manager:
             if hasattr(tool, "name") and hasattr(tool, "description"):
                 available_tools.append(
                     {
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description,
-                        },
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": getattr(tool, "parameters", {}),
                     }
                 )
         return available_tools
 
     def _get_tools_description(self) -> str:
         """Get a formatted description of available tools."""
+        if self.tool_manager is None:
+            return "No tools available"
+
         descriptions = []
         for tool in self.tool_manager:
             if hasattr(tool, "name") and hasattr(tool, "description"):
@@ -419,7 +435,7 @@ Please provide:
         plan: dict[str, Any],
         iteration_data: dict[str, Any],
     ) -> None:
-        """Execute the reflect phase of the agent loop."""
+        """Execute the 'reflect' phase of the agent loop."""
         try:
             logger.debug("Executing reflect phase")
             reflection = await self.reflect_handler(action_result, plan)

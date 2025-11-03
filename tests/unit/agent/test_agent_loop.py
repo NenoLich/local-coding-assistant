@@ -62,7 +62,7 @@ class TestAgentLoopInitialization:
         # Check that tools are cached
         assert hasattr(agent_loop, "_cached_tools")
         assert len(agent_loop._cached_tools) == 1
-        assert agent_loop._cached_tools[0]["function"]["name"] == "test_tool"
+        assert agent_loop._cached_tools[0]["name"] == "test_tool"
 
     def test_agent_loop_streaming_initialization(self):
         """Test that AgentLoop initializes correctly with streaming flag."""

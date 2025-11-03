@@ -49,7 +49,6 @@ class TestLLMManagerStreaming:
     @pytest.mark.asyncio
     async def test_stream_success(self):
         """Test successful streaming response."""
-        from local_coding_assistant.providers.base import ProviderLLMResponseDelta
 
         # Mock provider manager and router
         mock_provider_manager = MagicMock()
@@ -89,7 +88,6 @@ class TestLLMManagerStreaming:
     @pytest.mark.asyncio
     async def test_stream_with_tools(self):
         """Test streaming with tools in request."""
-        from local_coding_assistant.providers.base import ProviderLLMResponseDelta
 
         # Mock provider manager and router
         mock_provider_manager = MagicMock()
@@ -192,7 +190,9 @@ class TestLLMManagerMethodConsistency:
             assert "request" in stream_sig.parameters
 
             # Both should return appropriate types
-            assert generate_sig.return_annotation == LLMResponse
+            # Handle both direct class reference and string forward reference
+            assert (generate_sig.return_annotation == LLMResponse or 
+                   str(generate_sig.return_annotation) == 'LLMResponse')
             assert "AsyncIterator" in str(stream_sig.return_annotation)
 
     @pytest.mark.asyncio
@@ -349,8 +349,10 @@ class TestLLMManagerBackwardCompatibility:
     @pytest.mark.asyncio
     async def test_streaming_fallback_behavior(self):
         """Test that streaming falls back to regular generation when streaming not available."""
-        from local_coding_assistant.providers.exceptions import ProviderError, ProviderConnectionError
         from local_coding_assistant.providers.base import ProviderLLMResponse
+        from local_coding_assistant.providers.exceptions import (
+            ProviderConnectionError,
+        )
 
         # Mock provider manager and router
         mock_provider_manager = MagicMock()

@@ -44,15 +44,41 @@ def test_bootstrap_runtime_manager_has_config(ctx: AppContext):
 
 
 def test_bootstrap_llm_manager_has_config(ctx: AppContext):
-    """Test that LLMManager has proper configuration."""
+    """Test that LLMManager has proper configuration access."""
     llm = ctx.get("llm")
     # LLM may be None if dependencies aren't available
     if llm is not None:
         assert isinstance(llm, LLMManager)
-        # LLMManager should have _current_llm_config attribute
-        assert hasattr(llm, "_current_llm_config")
-        if llm._current_llm_config is not None:
-            # LLMConfig should be accessible via _current_llm_config
-            assert hasattr(llm._current_llm_config, "model_name")
-            assert hasattr(llm._current_llm_config, "provider")
-            assert hasattr(llm._current_llm_config, "temperature")
+        # LLMManager should have config_manager attribute
+        assert hasattr(llm, "config_manager")
+        assert llm.config_manager is not None
+
+        # Test that config_manager has LLM configuration access
+        config_manager = llm.config_manager
+
+        # Check if global config is loaded (it should be loaded during bootstrap)
+        global_config = config_manager.global_config
+        if global_config is not None:
+            assert hasattr(global_config, "llm")
+            llm_config = global_config.llm
+
+            # Verify LLMConfig structure
+            from local_coding_assistant.config.schemas import LLMConfig
+            assert isinstance(llm_config, LLMConfig)
+
+            # Check expected LLMConfig attributes
+            assert hasattr(llm_config, "temperature")
+            assert hasattr(llm_config, "max_tokens")
+            assert hasattr(llm_config, "max_retries")
+            assert hasattr(llm_config, "retry_delay")
+            assert hasattr(llm_config, "providers")
+
+            # Verify configuration values are reasonable
+            assert 0.0 <= llm_config.temperature <= 2.0
+            assert llm_config.max_retries > 0
+            assert llm_config.retry_delay > 0
+        else:
+            # If global config is not loaded, that's also acceptable in test environments
+            # The important thing is that the config_manager exists and is properly structured
+            assert hasattr(config_manager, "load_global_config")
+            assert hasattr(config_manager, "resolve")

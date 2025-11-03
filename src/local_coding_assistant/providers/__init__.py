@@ -6,16 +6,11 @@ Supports multiple providers with automatic fallback and retry capabilities.
 """
 
 # Import provider modules to trigger decorator registration
-try:
-    from . import (
-        google_provider,  # noqa: F401
-        local_provider,  # noqa: F401
-        openrouter_provider,  # noqa: F401
-    )
-except ImportError:
-    # Fallback for when provider modules are not available
-    pass
-
+from . import (
+    google_provider,  # noqa: F401
+    local_provider,  # noqa: F401
+    openrouter_provider,  # noqa: F401
+)
 from .base import (
     BaseProvider,
     ProviderLLMRequest,
@@ -30,7 +25,12 @@ from .exceptions import (
     ProviderRateLimitError,
     ProviderTimeoutError,
 )
-from .provider_manager import ProviderManager, ProviderSource
+from .provider_manager import (
+    ProviderManager,
+    ProviderSource,
+    list_providers,
+    register_provider,
+)
 from .router import ProviderRouter
 
 __all__ = [
@@ -47,4 +47,6 @@ __all__ = [
     "ProviderRouter",
     "ProviderSource",
     "ProviderTimeoutError",
+    "list_providers",
+    "register_provider",
 ]

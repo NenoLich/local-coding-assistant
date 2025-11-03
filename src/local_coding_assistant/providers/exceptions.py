@@ -11,8 +11,9 @@ class ProviderError(LLMError):
     def __init__(self, message: str, provider: str | None = None, **kwargs):
         self.provider = provider
         self.message = message
+        # Only pass the message to the parent class, not the kwargs
         super().__init__(
-            f"[{provider or 'unknown'}] {message}" if provider else message, **kwargs
+            f"[{provider or 'unknown'}] {message}" if provider else message
         )
 
 

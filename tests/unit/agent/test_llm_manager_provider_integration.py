@@ -2,7 +2,6 @@
 Unit tests for LLMManager with provider system integration.
 """
 
-import asyncio
 import os
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -139,8 +138,8 @@ class TestLLMManagerInitialization:
             mock_config_manager = MagicMock()
             mock_get_config.return_value = mock_config_manager
 
-            # Mock the ProviderManager to ensure it has the expected methods
-            with patch("local_coding_assistant.agent.llm_manager.ProviderManager") as mock_provider_manager_class:
+            # Mock the ProviderManager import that will be used in LLMManager
+            with patch("local_coding_assistant.providers.ProviderManager") as mock_provider_manager_class:
                 mock_provider_manager = MagicMock()
                 mock_provider_manager_class.return_value = mock_provider_manager
 

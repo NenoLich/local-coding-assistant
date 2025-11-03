@@ -7,9 +7,8 @@ from typing import Any
 from local_coding_assistant.agent.llm_manager import LLMManager
 from local_coding_assistant.config import get_config_manager
 from local_coding_assistant.config.config_manager import ConfigManager
-from local_coding_assistant.config.env_loader import EnvLoader
+from local_coding_assistant.config.env_manager import EnvManager
 from local_coding_assistant.core.app_context import AppContext
-from local_coding_assistant.providers.provider_manager import provider_manager
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.tools.builtin import SumTool
 from local_coding_assistant.tools.tool_manager import ToolManager
@@ -22,10 +21,11 @@ def bootstrap(
     config_path: str | None = None, *, log_level: int | None = None
 ) -> AppContext:
     """Initialize and configure the application."""
+
     # Load .env files before anything else
-    _env_loader = EnvLoader()
+    _env_manager = EnvManager()
     try:
-        _env_loader.load_env_files()
+        _env_manager.load_env_files()
     except Exception as e:
         print(f"Warning: Failed to load .env files: {e}")
 
@@ -173,6 +173,10 @@ def _initialize_llm_manager(
     config: Any, config_is_valid: bool, config_path: str | None
 ) -> LLMManager | None:
     """Initialize the LLM manager."""
+
+    # Lazy import to avoid circular imports
+    from local_coding_assistant.providers.provider_manager import provider_manager
+
     # If config was invalid, don't initialize LLM manager even if defaults are available
     if not config_is_valid and config_path is not None:
         logger.info("Skipping LLM manager initialization due to invalid configuration")
@@ -220,7 +224,7 @@ def _initialize_runtime_manager(
     llm_manager: LLMManager | None, tool_manager: ToolManager | None, _config: Any
 ) -> RuntimeManager | None:
     """Initialize the runtime manager."""
-    if llm_manager is not None and tool_manager is not None:
+    if llm_manager is not None:
         # Use the global config manager which already has the correct config loaded
         runtime_config_manager = get_config_manager()
 
@@ -232,6 +236,4 @@ def _initialize_runtime_manager(
     else:
         if llm_manager is None:
             logger.warning("Skipping runtime manager creation due to missing LLM")
-        if tool_manager is None:
-            logger.warning("Skipping runtime manager creation due to missing tools")
         return None

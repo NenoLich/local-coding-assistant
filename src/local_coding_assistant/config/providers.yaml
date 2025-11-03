@@ -1,19 +1,25 @@
 providers:
   openrouter:
-    driver: "openai_responses"
-    base_url: "https://openrouter.ai/api/v1/responses"
+    driver: "openai_chat"
+    base_url: "https://openrouter.ai/api/v1"
     api_key_env: "OPENROUTER_API_KEY"
+    health_check_endpoint: "https://openrouter.ai/api/v1/key"
     models:
       qwen/qwen3-coder:free:
         supported_parameters: ["tool", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty"]
       qwen/qwen3-235b-a22b:free:
         supported_parameters: ["tool", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format"]
-      moonshotai/kimi-dev-72b:free:
-        supported_parameters: ["max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty"]
+      minimax/minimax-m2:free:
+        supported_parameters: ["tool", "tool_choice", "max_tokens", "temperature", "top_p"]
+      meta-llama/llama-3.3-70b-instruct:free:
+        supported_parameters: [ "tool", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty" ]
+      z-ai/glm-4.5-air:free:
+        supported_parameters: [ "tool", "tool_choice", "max_tokens", "temperature", "top_p" ]
   google_gemini:
     driver: "openai_chat"
     base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
     api_key_env: "GEMINI_API_KEY"
+    health_check_endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/models"
     models:
       gemini-2.5-flash:
         supported_parameters: ["reasoning_effort", "stream", "tools", "tool_choice", "response_format", "extra_body.thinking_config"]
@@ -21,8 +27,9 @@ providers:
     driver: "openai_chat"
     base_url: "https://models.github.ai/inference"
     api_key_env: "GITHUB_TOKEN"
+    health_check_endpoint: "https://models.github.ai/catalog/models"
     models:
       mistral-ai/Codestral-2501:
         supported_parameters: ["tool", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format"]
-      microsoft/Phi-4:
-        supported_parameters: ["tool", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format"]
+      microsoft/Phi-4-mini-instruct:
+        supported_parameters: ["tool", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty"]

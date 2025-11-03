@@ -2,17 +2,24 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from local_coding_assistant.agent.agent_loop import AgentLoop
 from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
-from local_coding_assistant.config import get_config_manager, load_config
 from local_coding_assistant.config.schemas import RuntimeConfig
 from local_coding_assistant.core import AppContext
 from local_coding_assistant.core.bootstrap import bootstrap
+from local_coding_assistant.providers import (
+    BaseProvider,
+    ProviderError,
+    ProviderLLMResponse,
+    ProviderLLMResponseDelta,
+    ProviderRouter,
+)
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.tools import ToolManager
 from local_coding_assistant.tools.builtin import SumTool
@@ -82,7 +89,6 @@ class MockStreamingLLMManager(LLMManager):
             response_data = self.responses[self.call_count]
 
         self.call_count += 1
-
         # Simulate streaming by yielding partial content
         content = str(response_data.get("content", ""))
         if content and isinstance(content, str):
@@ -449,9 +455,38 @@ def mock_llm_manager(mock_llm_response):
 
     mock_manager.config = mock_config
 
-    async def mock_generate(request: LLMRequest) -> LLMResponse:
-        # Use a default model since the new system handles routing
+    # Create a proper config manager for the new system
+    from local_coding_assistant.config.schemas import LLMConfig
+    llm_config = LLMConfig(
+        temperature=0.7,
+        max_tokens=1000,
+        max_retries=3,
+        retry_delay=1.0,
+        providers=[]
+    )
+    mock_config_manager = MagicMock()
+    # Set up session overrides to return the model when accessed
+    mock_session_overrides = MagicMock()
+    mock_session_overrides.copy.return_value = {"llm.model_name": "gpt-4.1"}
+    mock_config_manager.session_overrides = mock_session_overrides
+
+    async def mock_generate(request: LLMRequest, *, overrides=None) -> LLMResponse:
+        # Use the model from overrides if provided, otherwise use default
         model_used = "gpt-5-mini"
+
+        # Handle both dict and MagicMock cases
+        if overrides:
+            try:
+                # Try to get model from dict-like object
+                if hasattr(overrides, "get"):
+                    model_name = overrides.get("llm.model_name")
+                    if model_name:
+                        model_used = model_name
+                elif "llm.model_name" in overrides:
+                    model_used = overrides["llm.model_name"]
+            except (KeyError, TypeError, AttributeError):
+                # If we can't extract the model, use default
+                pass
 
         # Check if tool outputs are present and modify response accordingly
         if request.tool_outputs:
@@ -496,17 +531,59 @@ def ctx_with_mocked_llm(mock_llm_manager):
     """
     Create a context with mocked LLM manager to avoid API quota issues.
     """
-    load_config()
-    _runtime_config = RuntimeConfig(
+    from local_coding_assistant.config.schemas import LLMConfig
+
+    # Create proper config objects for the new system
+    llm_config = LLMConfig(
+        temperature=0.7,
+        max_tokens=1000,
+        max_retries=3,
+        retry_delay=1.0,
+        providers=[]
+    )
+    runtime_config = RuntimeConfig(
         persistent_sessions=False,
         max_session_history=100,
         enable_logging=True,
         log_level="INFO",
     )
 
-    # Initialize config manager with global configuration
-    config_manager = get_config_manager()
-    config_manager.load_global_config()
+    # Create config manager with the proper config
+    config_manager = MagicMock()
+    config_manager.global_config = MagicMock()
+    config_manager.global_config.llm = llm_config
+    config_manager.global_config.providers = {}
+    config_manager.resolve.return_value = config_manager.global_config
+
+    # Set up session overrides to return the model when accessed
+    mock_session_overrides = MagicMock()
+    mock_session_overrides.copy.return_value = {"llm.model_name": "gpt-4.1"}
+    config_manager.session_overrides = mock_session_overrides
+
+    def mock_set_session_overrides(overrides):
+        """Mock set_session_overrides with proper validation."""
+        if not overrides:
+            return
+
+        # Validate temperature
+        if "llm.temperature" in overrides:
+            temperature = overrides["llm.temperature"]
+            if temperature is not None and (temperature < 0.0 or temperature > 2.0):
+                from local_coding_assistant.core.exceptions import AgentError
+                raise AgentError("Configuration update validation failed: temperature must be between 0.0 and 2.0")
+
+        # Validate max_tokens
+        if "llm.max_tokens" in overrides:
+            max_tokens = overrides["llm.max_tokens"]
+            if max_tokens is not None and max_tokens <= 0:
+                from local_coding_assistant.core.exceptions import AgentError
+                raise AgentError("Configuration update validation failed: max_tokens must be greater than 0")
+
+        # If validation passes, just store the overrides
+        mock_session_overrides.clear()
+        mock_session_overrides.update(overrides)
+
+    config_manager.set_session_overrides = MagicMock(side_effect=mock_set_session_overrides)
 
     runtime = RuntimeManager(
         llm_manager=mock_llm_manager,
@@ -514,9 +591,322 @@ def ctx_with_mocked_llm(mock_llm_manager):
         config_manager=config_manager,
     )
     # Register the SumTool for testing
-    runtime._tool_manager.register_tool(SumTool)
+    if runtime._tool_manager is not None:
+        runtime._tool_manager.register_tool(SumTool, category="test")
     ctx = AppContext()
     ctx.register("llm", mock_llm_manager)
     ctx.register("tools", runtime._tool_manager)
     ctx.register("runtime", runtime)
     return ctx
+
+
+# Provider integration test fixtures
+
+
+@pytest.fixture
+async def mock_provider():
+    """Create a mock provider for integration testing."""
+    provider = AsyncMock(spec=BaseProvider)
+    provider.name = "test_provider"
+    provider.get_available_models.return_value = ["gpt-4", "gpt-3.5-turbo"]
+
+    # Mock successful response generation
+    provider.generate_with_retry = AsyncMock(
+        return_value=ProviderLLMResponse(
+            content="Mock provider response",
+            model="gpt-4",
+            tokens_used=50,
+            tool_calls=None,
+            finish_reason="stop",
+        )
+    )
+
+    # Mock streaming response
+    async def mock_stream_with_retry(*args, **kwargs):
+        yield ProviderLLMResponseDelta(content="Stream", finish_reason=None)
+        yield ProviderLLMResponseDelta(content="ing", finish_reason=None)
+        yield ProviderLLMResponseDelta(content=" response", finish_reason="stop")
+
+    provider.stream_with_retry = AsyncMock(side_effect=mock_stream_with_retry)
+
+    return provider
+
+
+class MockProviderManager:
+    """Mock provider manager that simulates YAML loading behavior."""
+
+    def __init__(self):
+        self._loaded_providers = {}
+        self._provider_configs = {}
+        self._setup_default_providers()
+
+    def _setup_default_providers(self):
+        """Set up default provider instances."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        # Create specific provider instances that tests can reference
+        openai_provider = AsyncMock(spec=BaseProvider)
+        openai_provider.name = "openai"
+        openai_provider.get_available_models = MagicMock(return_value=["gpt-4", "gpt-3.5-turbo"])
+        openai_provider.health_check = AsyncMock(return_value=True)
+
+        google_provider = AsyncMock(spec=BaseProvider)
+        google_provider.name = "google"
+        google_provider.get_available_models = MagicMock(return_value=["gemini-pro"])
+        google_provider.health_check = AsyncMock(return_value=False)
+
+        # Store provider instances for the default ones
+        self._loaded_providers = {
+            "openai": {"instance": openai_provider, "source": "builtin"},
+            "google": {"instance": google_provider, "source": "global"},
+            "test_provider": {"instance": None, "source": "local"},
+        }
+
+    def list_providers(self):
+        return list(self._loaded_providers.keys())
+
+    def get_provider_source(self, name):
+        if name in self._loaded_providers:
+            return self._loaded_providers[name].get("source", "unknown")
+        return "unknown"
+
+    def get_provider(self, name, **kwargs):
+        """Return the same provider instances based on name."""
+        if name in self._loaded_providers:
+            return self._loaded_providers[name]["instance"]
+
+        # Default provider for unknown names
+        from unittest.mock import AsyncMock
+        provider = AsyncMock(spec=BaseProvider)
+        provider.name = name
+        provider.get_available_models.return_value = ["gpt-4", "gpt-3.5-turbo"]
+        provider.health_check = AsyncMock(return_value=True)
+        return provider
+
+    def reload(self, config_manager=None):
+        """Mock reload method that simulates loading from YAML."""
+        # For now, just ensure basic providers are available
+        if not self._loaded_providers:
+            self._setup_default_providers()
+        return None
+
+    def load_providers_from_yaml(self, yaml_content):
+        """Helper method for tests to simulate loading providers from YAML."""
+        self._loaded_providers.clear()
+        self._provider_configs.clear()
+
+        for provider_name, config in yaml_content.get("providers", {}).items():
+            # Create a mock provider instance
+            from unittest.mock import AsyncMock, MagicMock
+            provider = AsyncMock(spec=BaseProvider)
+            provider.name = provider_name
+            provider.get_available_models = MagicMock(return_value=list(config.get("models", {}).keys()))
+            provider.health_check = AsyncMock(return_value=True)
+
+            # Determine source based on config location
+            source = "local" if "api_key" in config else "global"
+
+            self._loaded_providers[provider_name] = {
+                "instance": provider,
+                "source": source
+            }
+            self._provider_configs[provider_name] = config
+
+
+@pytest.fixture
+def mock_provider_manager():
+    """Create a mock provider manager for integration testing."""
+    return MockProviderManager()
+
+
+@pytest.fixture
+def provider_config_yaml():
+    """Sample provider configuration in YAML format."""
+    return {
+        "openai": {
+            "driver": "openai_chat",
+            "api_key_env": "OPENAI_API_KEY",
+            "models": {
+                "gpt-4": {"temperature": 0.7},
+                "gpt-3.5-turbo": {"temperature": 0.5},
+            },
+        },
+        "google": {
+            "driver": "google_gemini",
+            "api_key_env": "GOOGLE_API_KEY",
+            "models": {
+                "gemini-pro": {},
+            },
+        },
+        "local_provider": {
+            "driver": "local",
+            "models": {
+                "local-model": {"temperature": 0.8},
+            },
+        },
+    }
+
+
+@pytest.fixture
+def sample_provider_configs():
+    """Sample provider configurations for different scenarios."""
+    return {
+        "minimal": {
+            "test_provider": {
+                "driver": "openai_chat",
+                "models": {"gpt-4": {}},
+            }
+        },
+        "with_api_key": {
+            "test_provider": {
+                "driver": "openai_chat",
+                "api_key": "test-key-123",
+                "models": {"gpt-4": {}, "gpt-3.5-turbo": {}},
+            }
+        },
+        "with_base_url": {
+            "test_provider": {
+                "driver": "openai_chat",
+                "base_url": "https://custom.api.com/v1",
+                "api_key_env": "CUSTOM_API_KEY",
+                "models": {"custom-model": {"max_tokens": 2000}},
+            }
+        },
+        "invalid": {
+            "bad_provider": {
+                "models": {"gpt-4": {}},  # Missing required 'driver' field
+            }
+        },
+    }
+
+
+@pytest.fixture
+async def failing_provider():
+    """Create a provider that fails for error handling tests."""
+    provider = AsyncMock(spec=BaseProvider)
+    provider.name = "failing_provider"
+    provider.get_available_models.return_value = []
+
+    # Mock failure in generation
+    provider.generate_with_retry = AsyncMock(
+        side_effect=ProviderError("API rate limit exceeded")
+    )
+
+    # Mock failure in streaming
+    async def failing_stream(*args, **kwargs):
+        raise ProviderError("Streaming failed")
+
+    provider.stream_with_retry = AsyncMock(side_effect=failing_stream)
+
+    # Mock health check failure
+    provider.health_check = AsyncMock(return_value=False)
+
+    return provider
+
+
+@pytest.fixture
+def mock_router_with_fallback():
+    """Create a mock router with fallback provider logic."""
+    router = AsyncMock(spec=ProviderRouter)
+
+    # Track call count for fallback testing
+    call_count = 0
+
+    async def get_provider_for_request(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+
+        if call_count == 1:
+            # Return failing provider on first call
+            failing_provider = AsyncMock(spec=BaseProvider)
+            failing_provider.name = "primary_provider"
+            failing_provider.generate_with_retry = AsyncMock(
+                side_effect=ProviderError("Primary provider failed")
+            )
+            return failing_provider, "gpt-4"
+        else:
+            # Return fallback provider on second call
+            fallback_provider = AsyncMock(spec=BaseProvider)
+            fallback_provider.name = "fallback_provider"
+            fallback_provider.generate_with_retry = AsyncMock(
+                return_value=ProviderLLMResponse(
+                    content="Fallback response",
+                    model="gpt-3.5-turbo",
+                    tokens_used=75,
+                    tool_calls=None,
+                    finish_reason="stop",
+                )
+            )
+            return fallback_provider, "gpt-3.5-turbo"
+
+    router.get_provider_for_request = AsyncMock(side_effect=get_provider_for_request)
+    router._is_critical_error = MagicMock(return_value=True)
+    router.mark_provider_failure = MagicMock()
+    router.mark_provider_success = MagicMock()
+
+    return router
+
+
+@pytest.fixture
+def temp_provider_config_file():
+    """Create a temporary provider configuration file for testing."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        config_content = {
+            "test_provider": {
+                "driver": "openai_chat",
+                "api_key": "test-key",
+                "models": {"gpt-4": {}, "gpt-3.5-turbo": {}},
+            }
+        }
+        yaml.dump(config_content, f)
+        config_path = Path(f.name)
+
+    yield config_path
+
+    # Cleanup
+    config_path.unlink(missing_ok=True)
+
+
+@pytest.fixture
+def integration_llm_manager_with_providers(mock_provider_manager):
+    """Create LLM manager with provider manager for integration tests."""
+    with patch("local_coding_assistant.config.get_config_manager"):
+        with patch("local_coding_assistant.agent.llm_manager.ProviderManager") as mock_pm_class:
+            mock_pm_class.return_value = mock_provider_manager
+
+            llm_manager = LLMManager.__new__(LLMManager)
+            llm_manager.provider_manager = mock_provider_manager
+            llm_manager.config_manager = MagicMock()
+            llm_manager.router = MagicMock(spec=ProviderRouter)
+            llm_manager._provider_status_cache = {}
+            llm_manager._last_health_check = 0
+            llm_manager._cache_ttl = 30 * 60
+
+            return llm_manager
+
+
+@pytest.fixture
+def mock_streaming_provider():
+    """Create a mock provider for streaming tests."""
+    provider = AsyncMock(spec=BaseProvider)
+    provider.name = "streaming_provider"
+
+    # Create realistic streaming deltas
+    streaming_deltas = [
+        ProviderLLMResponseDelta(content="Integration", finish_reason=None),
+        ProviderLLMResponseDelta(content=" test", finish_reason=None),
+        ProviderLLMResponseDelta(content=" streaming", finish_reason=None),
+        ProviderLLMResponseDelta(content=" response", finish_reason="stop"),
+    ]
+
+    async def mock_stream_with_retry(*args, **kwargs):
+        for delta in streaming_deltas:
+            yield delta
+
+    provider.stream_with_retry = AsyncMock(side_effect=mock_stream_with_retry)
+    provider.get_available_models.return_value = ["gpt-4", "gpt-3.5-turbo"]
+
+    return provider

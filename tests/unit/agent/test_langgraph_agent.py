@@ -163,8 +163,8 @@ class TestLangGraphAgent:
         print(f"Tools returned: {tools}")
         print(f"Tool manager tools: {list(real_tool_manager)}")
         assert len(tools) == 2
-        assert tools[0]["function"]["name"] == "tool1"
-        assert tools[1]["function"]["name"] == "tool2"
+        assert tools[0]["name"] == "tool1"
+        assert tools[1]["name"] == "tool2"
 
         # Test _get_tools_description
         description = agent._get_tools_description()

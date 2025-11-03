@@ -5,20 +5,20 @@ This module provides an updated LLM manager that integrates with the new provide
 while maintaining backward compatibility with existing code.
 """
 
+from __future__ import annotations
+
 import asyncio
 import os
 import time
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from local_coding_assistant.core.exceptions import LLMError
-from local_coding_assistant.providers import (
-    ProviderError,
-    ProviderLLMRequest,
-    ProviderManager,
-    ProviderRouter,
-)
 from local_coding_assistant.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    # Type-only imports to avoid circular import at runtime
+    from local_coding_assistant.providers import ProviderLLMRequest
 
 logger = get_logger("agent.llm_manager")
 
@@ -42,20 +42,54 @@ class LLMRequest:
 
     def to_provider_request(self, model: str) -> ProviderLLMRequest:
         """Convert to provider request format."""
-        # Convert messages format
+        # Import the ProviderLLMRequest class at runtime to avoid circular imports
+        from local_coding_assistant.providers.base import ProviderLLMRequest
+
         messages = []
 
         # Add system prompt
+        self._add_system_prompt(messages)
+
+        # Add history messages from context if provided
+        self._add_history_messages(messages)
+
+        # Add context if provided
+        self._add_context_messages(messages)
+
+        # Add tool outputs if provided
+        self._add_tool_outputs_messages(messages)
+
+        # Add the main prompt
+        self._add_main_prompt(messages)
+
+        return ProviderLLMRequest(
+            messages=messages,
+            model=model,
+            temperature=0.7,  # Default temperature
+            max_tokens=None,
+            stream=False,
+            tools=self.tools if self.tools else None,
+            tool_choice="auto" if self.tools else None,
+            response_format=None,
+            tool_outputs=self.tool_outputs if self.tool_outputs else None,
+            extra_params=None,
+        )
+
+    def _add_system_prompt(self, messages: list[dict[str, Any]]) -> None:
+        """Add system prompt to messages."""
         system_content = self.system_prompt or "You are a helpful coding assistant."
         messages.append({"role": "system", "content": system_content})
-        # Add history messages from context if provided
+
+    def _add_history_messages(self, messages: list[dict[str, Any]]) -> None:
+        """Add history messages from context to messages."""
         if self.context and "history" in self.context:
             history = self.context.get("history", [])
             for msg in history:
                 if isinstance(msg, dict) and "role" in msg and "content" in msg:
                     messages.append({"role": msg["role"], "content": msg["content"]})
 
-        # Add context if provided (but avoid duplicating the current prompt)
+    def _add_context_messages(self, messages: list[dict[str, Any]]) -> None:
+        """Add context messages to messages."""
         if self.context:
             context_str = "\n".join(f"{k}: {v}" for k, v in self.context.items())
 
@@ -77,7 +111,8 @@ class LLMRequest:
             if should_add_context:
                 messages.append({"role": "user", "content": f"Context:\n{context_str}"})
 
-        # Add tool outputs if provided
+    def _add_tool_outputs_messages(self, messages: list[dict[str, Any]]) -> None:
+        """Add tool outputs messages to messages."""
         if self.tool_outputs:
             tool_outputs_str = "\n".join(
                 f"Tool {k} result: {v}" for k, v in self.tool_outputs.items()
@@ -89,21 +124,14 @@ class LLMRequest:
                 }
             )
 
-        # Add the main prompt
-        messages.append({"role": "user", "content": self.prompt})
-
-        return ProviderLLMRequest(
-            messages=messages,
-            model=model,
-            temperature=0.7,  # Default temperature
-            max_tokens=None,
-            stream=False,
-            tools=self.tools if self.tools else None,
-            tool_choice=None,
-            response_format=None,
-            tool_outputs=self.tool_outputs if self.tool_outputs else None,
-            extra_params=None,
-        )
+    def _add_main_prompt(self, messages: list[dict[str, Any]]) -> None:
+        """Add the main prompt to messages."""
+        # Check if the prompt is already the last message in the history
+        if not messages or not (
+            messages[-1].get("role") == "user"
+            and messages[-1].get("content") == self.prompt
+        ):
+            messages.append({"role": "user", "content": self.prompt})
 
 
 class LLMResponse:
@@ -125,11 +153,12 @@ class LLMResponse:
 class LLMManager:
     """Enhanced LLM manager with provider system integration."""
 
-    def __init__(
-        self, config_manager=None, provider_manager: ProviderManager | None = None
-    ):
+    def __init__(self, config_manager=None, provider_manager=None):
         """Initialize the LLM manager with a config manager."""
         from local_coding_assistant.config import get_config_manager
+
+        # Import provider classes lazily at runtime to avoid circular imports
+        from local_coding_assistant.providers import ProviderManager, ProviderRouter
 
         self.config_manager = config_manager or get_config_manager()
         self.provider_manager = provider_manager or ProviderManager()
@@ -272,9 +301,13 @@ class LLMManager:
             if not hasattr(response, "content") or not hasattr(response, "model"):
                 return False
 
-            # Check content is meaningful (not empty, proper type)
-            content = response.content
-            if not isinstance(content, str) or not content.strip():
+            # Check content is a string
+            if not isinstance(response.content, str):
+                return False
+
+            # Content can be empty if there are tool calls
+            has_tool_calls = hasattr(response, "tool_calls") and response.tool_calls
+            if not response.content.strip() and not has_tool_calls:
                 return False
 
             # Check model is specified and valid
@@ -359,6 +392,8 @@ class LLMManager:
                 logger.warning(
                     f"Provider {selected_provider.name} returned invalid response format"
                 )
+                from local_coding_assistant.providers.exceptions import ProviderError
+
                 self._record_failed_generation(
                     selected_provider.name, ProviderError("Invalid response format")
                 )
@@ -424,6 +459,8 @@ class LLMManager:
                 logger.warning(
                     f"Fallback provider {selected_provider.name} returned invalid response"
                 )
+                from local_coding_assistant.providers.exceptions import ProviderError
+
                 self._record_failed_generation(
                     selected_provider.name, ProviderError("Invalid fallback response")
                 )
@@ -462,6 +499,8 @@ class LLMManager:
             The generated response from fallback provider if available
         """
         logger.error(f"Error during LLM generation: {e}")
+
+        from local_coding_assistant.providers.exceptions import ProviderError
 
         # Check if this is a critical error that should trigger fallback
         if isinstance(e, ProviderError) and self.router.is_critical_error(e):
@@ -506,6 +545,8 @@ class LLMManager:
         Yields:
             Content chunks from the streaming response
         """
+        from local_coding_assistant.providers.exceptions import ProviderError
+
         total_content = ""
         has_valid_content = False
 
@@ -570,6 +611,8 @@ class LLMManager:
         Yields:
             Content chunks from the fallback streaming response
         """
+        from local_coding_assistant.providers.exceptions import ProviderError
+
         # Extract model from overrides if not provided directly
         effective_model = model
         if effective_model is None and overrides:
@@ -647,6 +690,8 @@ class LLMManager:
             Content chunks from fallback provider if available
         """
         logger.error(f"Error during LLM streaming generation: {e}")
+
+        from local_coding_assistant.providers.exceptions import ProviderError
 
         # Check if this is a critical error that should trigger fallback
         if isinstance(e, ProviderError) and self.router.is_critical_error(e):
@@ -802,20 +847,34 @@ class LLMManager:
             provider = self.provider_manager.get_provider(provider_name)
             if provider:
                 try:
-                    is_healthy = await provider.health_check()
-                    status[provider_name] = {
-                        "healthy": is_healthy,
-                        "models": provider.get_available_models(),
-                        "in_unhealthy_set": provider_name
-                        in self.router.get_unhealthy_providers(),
-                    }
+                    health_status = await provider.health_check()
+
+                    # Handle the case where health check is not available
+                    if health_status == "unavailable":
+                        status[provider_name] = {
+                            "healthy": False,
+                            "models": provider.get_available_models(),
+                            "in_unhealthy_set": False,  # Not unhealthy, just not checkable
+                            "status": "health_check_not_configured",
+                        }
+                    else:
+                        is_healthy = bool(health_status)
+                        status[provider_name] = {
+                            "healthy": is_healthy,
+                            "models": provider.get_available_models(),
+                            "in_unhealthy_set": provider_name
+                            in self.router.get_unhealthy_providers(),
+                            "status": "healthy" if is_healthy else "unhealthy",
+                        }
                 except Exception as e:
+                    logger.warning(f"Error checking health for {provider_name}: {e!s}")
                     status[provider_name] = {
                         "healthy": False,
-                        "models": [],
+                        "models": provider.get_available_models() if provider else [],
                         "error": str(e),
                         "in_unhealthy_set": provider_name
                         in self.router.get_unhealthy_providers(),
+                        "status": "error",
                     }
             else:
                 # Config-only provider
@@ -824,6 +883,7 @@ class LLMManager:
                     "models": [],
                     "error": "Configured but no implementation",
                     "in_unhealthy_set": True,
+                    "status": "not_implemented",
                 }
 
         # Update cache

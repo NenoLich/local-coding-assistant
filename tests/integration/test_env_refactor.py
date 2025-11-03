@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 """Test script for refactored environment variable system."""
 
+import os
 import sys
 from pathlib import Path
+from unittest.mock import patch, MagicMock
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 
-def test_env_loader():
-    """Test the new EnvLoader functionality."""
-    print("=== Testing EnvLoader ===")
+def test_env_manager():
+    """Test the EnvManager functionality."""
+    print("=== Testing EnvManager ===")
 
-    from local_coding_assistant.config.env_loader import EnvLoader
+    from local_coding_assistant.config.env_manager import EnvManager
 
     # Test 1: Basic functionality
-    env_loader = EnvLoader()
-    config = env_loader.get_config_from_env()
-    print("✓ EnvLoader created successfully")
+    env_manager = EnvManager()
+    config = env_manager.get_config_from_env()
+    print("✓ EnvManager created successfully")
     print(f"✓ Default config from env: {config}")
 
     # Test 2: Environment variable parsing
-    import os
-
     test_env = {
         "LOCCA_LLM__MODEL_NAME": "gpt-4",
         "LOCCA_LLM__TEMPERATURE": "0.8",
@@ -35,7 +35,7 @@ def test_env_loader():
         os.environ[key] = test_env[key]
 
     try:
-        config = env_loader.get_config_from_env()
+        config = env_manager.get_config_from_env()
         print(f"✓ Environment parsing works: {config}")
 
         # Verify the parsed values
@@ -44,10 +44,29 @@ def test_env_loader():
         assert config["runtime"]["persistent_sessions"]
         print("✓ Type conversion works correctly")
 
+        # Test prefix handling
+        assert env_manager.with_prefix("TEST_KEY") == "LOCCA_TEST_KEY"
+        assert env_manager.without_prefix("LOCCA_TEST_KEY") == "TEST_KEY"
+        print("✓ Prefix handling works correctly")
+
+        # Test environment variable management
+        env_manager.set_env("API_KEY", "test123")
+        assert os.environ["LOCCA_API_KEY"] == "test123"
+        assert env_manager.get_env("API_KEY") == "test123"
+        
+        env_manager.unset_env("API_KEY")
+        assert "LOCCA_API_KEY" not in os.environ
+        print("✓ Environment variable management works")
+
+        # Test get_all_env_vars
+        all_vars = env_manager.get_all_env_vars()
+        assert all(k.startswith("LOCCA_") for k in all_vars)
+        print("✓ get_all_env_vars works correctly")
+
     finally:
         # Restore environment
         for key in test_env:
-            if old_env[key] is None:
+            if old_env.get(key) is None:
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = old_env[key]
@@ -85,7 +104,7 @@ def main():
     print("Testing refactored environment variable system...\n")
 
     success = True
-    success &= test_env_loader()
+    success &= test_env_manager()
     success &= test_bootstrap_integration()
 
     if success:

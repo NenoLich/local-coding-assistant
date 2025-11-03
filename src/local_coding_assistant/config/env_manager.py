@@ -1,4 +1,4 @@
-"""Environment variable loading utilities for Local Coding Assistant."""
+"""Environment variable management for Local Coding Assistant."""
 
 import os
 from pathlib import Path
@@ -6,14 +6,14 @@ from typing import Any
 
 from local_coding_assistant.utils.logging import get_logger
 
-logger = get_logger("config.env_loader")
+logger = get_logger("config.env_manager")
 
 
-class EnvLoader:
-    """Loads and parses environment variables for configuration."""
+class EnvManager:
+    """Manages loading and parsing environment variables for configuration."""
 
     def __init__(self, env_prefix: str = "LOCCA_", env_paths: list[Path] | None = None):
-        """Initialize the environment loader.
+        """Initialize the environment manager.
 
         Args:
             env_prefix: Prefix for environment variables to load (default: "LOCCA_")
@@ -21,6 +21,16 @@ class EnvLoader:
         """
         self.env_prefix = env_prefix
         self.env_paths = env_paths or self._get_default_env_paths()
+
+    def with_prefix(self, key: str) -> str:
+        """Add the environment prefix to a key if not already present."""
+        return key if key.startswith(self.env_prefix) else f"{self.env_prefix}{key}"
+
+    def without_prefix(self, key: str) -> str:
+        """Remove the environment prefix from a key if present."""
+        if key.startswith(self.env_prefix):
+            return key[len(self.env_prefix) :]
+        return key
 
     def _get_default_env_paths(self) -> list[Path]:
         """Get default .env file paths to check."""
@@ -44,7 +54,7 @@ class EnvLoader:
             logger.debug("python-dotenv not installed, skipping .env file loading")
             return
 
-        loaded_any = False
+        loaded_any = True
         for env_path in self.env_paths:
             if env_path.exists():
                 try:
@@ -62,6 +72,15 @@ class EnvLoader:
 
         if not loaded_any:
             logger.debug("No .env files found to load")
+
+    def get_all_env_vars(self) -> dict[str, str]:
+        """Get all environment variables with the configured prefix.
+
+        Returns:
+            Dictionary of all environment variables that start with the prefix,
+            with their original case preserved.
+        """
+        return {k: v for k, v in os.environ.items() if k.startswith(self.env_prefix)}
 
     def get_config_from_env(self) -> dict[str, Any]:
         """Extract configuration from environment variables.
@@ -152,3 +171,98 @@ class EnvLoader:
 
         # Return as string (including empty strings and None)
         return value if value != "null" else None
+
+    def get_env_path(self, filename: str = ".env.local") -> Path:
+        """Get the path to an environment file, creating parent directories if needed.
+
+        Args:
+            filename: Name of the environment file (e.g., ".env.local")
+
+        Returns:
+            Path to the environment file
+        """
+        # First check if file exists in any of the default locations
+        for path in self.env_paths:
+            if path.name == filename and path.exists():
+                return path
+
+        # If not found, use the first path that matches the filename pattern
+        for path in self.env_paths:
+            if path.name.endswith(filename.lstrip(".")):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                return path
+
+        # Fallback to current working directory
+        path = Path.cwd() / filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def save_to_env_file(
+        self,
+        key: str,
+        value: str,
+        env_path: Path | None = None,
+        quote_mode: str = "never",
+    ) -> None:
+        """Save a key-value pair to an environment file.
+
+        Args:
+            key: Environment variable name
+            value: Value to set
+            env_path: Optional path to .env file (uses default if None)
+            quote_mode: How to handle quoting values ("always", "never", "auto")
+        """
+        from dotenv import set_key
+
+        if env_path is None:
+            env_path = self.get_env_path()
+
+        env_path.parent.mkdir(parents=True, exist_ok=True)
+        set_key(env_path, key, value, quote_mode=quote_mode)
+
+    def remove_from_env_file(
+        self, key: str, env_path: Path | None = None, quote_mode: str = "never"
+    ) -> None:
+        """Remove a key from an environment file.
+
+        Args:
+            key: Environment variable name to remove
+            env_path: Optional path to .env file (uses default if None)
+            quote_mode: Quote mode for dotenv (must match how values were saved)
+        """
+        from dotenv import unset_key
+
+        if env_path is None:
+            env_path = self.get_env_path()
+
+        if env_path.exists():
+            unset_key(env_path, key, quote_mode=quote_mode)
+
+    def set_env(self, key: str, value: str) -> None:
+        """Set an environment variable in the current process.
+
+        Args:
+            key: Environment variable name (without prefix)
+            value: Value to set
+        """
+        os.environ[self.with_prefix(key)] = str(value)
+
+    def unset_env(self, key: str) -> None:
+        """Unset an environment variable in the current process.
+
+        Args:
+            key: Environment variable name to unset (without prefix)
+        """
+        os.environ.pop(self.with_prefix(key), None)
+
+    def get_env(self, key: str, default: Any = None) -> str | None:
+        """Get an environment variable from the current process.
+
+        Args:
+            key: Environment variable name (without prefix)
+            default: Default value if not found
+
+        Returns:
+            The environment variable value or default if not found
+        """
+        return os.environ.get(self.with_prefix(key), default)

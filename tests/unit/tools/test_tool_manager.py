@@ -138,7 +138,8 @@ class TestToolRegistration:
                 raise NotImplementedError("run method not implemented")
 
         with pytest.raises(
-            ToolRegistryError, match="missing required 'run' method implementation"
+            ToolRegistryError, 
+            match=r"Tool 'incomplete' has not implemented the required 'run' method"
         ):
             manager.register_tool(IncompleteTool())
 
@@ -247,17 +248,22 @@ class TestToolExecution:
         manager = ToolManager()
         manager.register_tool(MockTool())
 
-        # Mock time to ensure consistent timing
-        with patch("time.time") as mock_time:
-            mock_time.side_effect = [
-                0.0,
-                0.001,
-                0.001,
-            ]  # 1ms execution time, extra value for logging
-
-            result = manager.run_tool("mock_tool", {"value": "test"})
-
-            assert result == {"result": "processed_test"}
+        # Patch the time module at the module level used by ToolManager
+        with patch("local_coding_assistant.tools.tool_manager.time") as mock_time:
+            # Set up the time mock to return increasing values
+            mock_time.time.side_effect = [0.0, 0.001]  # Start and end times
+            
+            # Also patch the logger to prevent it from actually logging
+            with patch("local_coding_assistant.tools.tool_manager.logger.info") as mock_logger:
+                result = manager.run_tool("mock_tool", {"value": "test"})
+                
+                # Verify the result
+                assert result == {"result": "processed_test"}
+                
+                # Verify the logger was called with the expected message
+                mock_logger.assert_called_once()
+                log_message = mock_logger.call_args[0][0]
+                assert "Tool 'mock_tool' executed successfully in 1.00 ms" in log_message
 
 
 class TestToolInformation:
@@ -441,10 +447,13 @@ class TestErrorHandling:
         manager = ToolManager()
 
         with patch("local_coding_assistant.tools.tool_manager.logger") as mock_logger:
-            with pytest.raises(ToolRegistryError):
+            with pytest.raises(ToolRegistryError, match="Unknown tool: nonexistent_tool"):
                 manager.run_tool("nonexistent_tool", {})
 
-            mock_logger.error.assert_called()
+            # Check that debug log was called with the tool execution attempt
+            mock_logger.debug.assert_called_once()
+            debug_message = mock_logger.debug.call_args[0][0]
+            assert "Executing tool 'nonexistent_tool'" in debug_message
 
     def test_success_logging(self):
         """Test that successful operations are logged."""

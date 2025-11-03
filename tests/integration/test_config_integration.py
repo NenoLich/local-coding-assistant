@@ -29,10 +29,21 @@ class TestBootstrapIntegration:
 
     def test_bootstrap_with_custom_config_file(self):
         """Test bootstrap with a custom configuration file."""
-        # Create temporary config file
+        # Create temporary config file with new provider-based structure
         custom_config = {
-            "llm": {"model_name": "gpt-4.1", "temperature": 0.8},
+            "llm": {"temperature": 0.8, "max_tokens": 2000, "max_retries": 5},
             "runtime": {"persistent_sessions": True, "log_level": "DEBUG"},
+            "providers": {
+                "openai": {
+                    "name": "openai",
+                    "driver": "openai_chat",
+                    "base_url": "https://api.openai.com/v1",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "models": {
+                        "gpt-4.1": {"max_tokens": 4000, "temperature": 0.8}
+                    }
+                }
+            }
         }
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
@@ -53,8 +64,13 @@ class TestBootstrapIntegration:
             assert runtime is not None
             # Check LLM config via config manager
             llm_resolved = llm.config_manager.resolve()
-            assert llm_resolved.llm.model_name == "gpt-4.1"
             assert llm_resolved.llm.temperature == 0.8
+            assert llm_resolved.llm.max_tokens == 2000
+            assert llm_resolved.llm.max_retries == 5
+
+            # Check that provider was loaded
+            assert "openai" in llm_resolved.providers
+
             # Check runtime config via config manager
             runtime_resolved = runtime.config_manager.resolve()
             assert runtime_resolved.runtime.persistent_sessions is True
@@ -66,9 +82,12 @@ class TestBootstrapIntegration:
     def test_bootstrap_with_environment_variables(self):
         """Test bootstrap with environment variable configuration."""
         test_env = {
-            "LOCCA_LLM__MODEL_NAME": "gpt-4-turbo",
+            "LOCCA_LLM__TEMPERATURE": "0.9",
+            "LOCCA_LLM__MAX_TOKENS": "3000",
+            "LOCCA_LLM__MAX_RETRIES": "7",
             "LOCCA_RUNTIME__PERSISTENT_SESSIONS": "true",
-            "LOCCA_RUNTIME__MAX_SESSION_HISTORY": "50",
+            "LOCCA_RUNTIME__MAX_SESSION_HISTORY": "150",
+            "LOCCA_RUNTIME__LOG_LEVEL": "ERROR",
         }
 
         with patch.dict(os.environ, test_env):
@@ -84,24 +103,30 @@ class TestBootstrapIntegration:
             assert runtime is not None
             # Check LLM config via config manager
             llm_resolved = llm.config_manager.resolve()
-            assert llm_resolved.llm.model_name == "gpt-4-turbo"
+            assert llm_resolved.llm.temperature == 0.9
+            assert llm_resolved.llm.max_tokens == 3000
+            assert llm_resolved.llm.max_retries == 7
+
             # Check runtime config via config manager
             runtime_resolved = runtime.config_manager.resolve()
             assert runtime_resolved.runtime.persistent_sessions is True
-            assert runtime_resolved.runtime.max_session_history == 50
+            assert runtime_resolved.runtime.max_session_history == 150
+            assert runtime_resolved.runtime.log_level == "ERROR"
 
     def test_bootstrap_config_priority_order(self):
         """Test that configuration priority order is correct: ENV > YAML > Defaults."""
         # Create YAML config
         yaml_config = {
-            "llm": {"model_name": "gpt-4-from-yaml"},
-            "runtime": {"persistent_sessions": False},
+            "llm": {"temperature": 0.5, "max_tokens": 1000},
+            "runtime": {"persistent_sessions": False, "log_level": "INFO"},
         }
 
         # Set environment variables (should override YAML)
         env_config = {
-            "LOCCA_LLM__MODEL_NAME": "gpt-4-from-env",
+            "LOCCA_LLM__TEMPERATURE": "0.9",
+            "LOCCA_LLM__MAX_TOKENS": "2000",
             "LOCCA_RUNTIME__PERSISTENT_SESSIONS": "true",
+            "LOCCA_RUNTIME__LOG_LEVEL": "DEBUG",
         }
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
@@ -122,10 +147,13 @@ class TestBootstrapIntegration:
                 assert runtime is not None
                 # Check LLM config via config manager
                 llm_resolved = llm.config_manager.resolve()
-                assert llm_resolved.llm.model_name == "gpt-4-from-env"  # From ENV
+                assert llm_resolved.llm.temperature == 0.9  # From ENV
+                assert llm_resolved.llm.max_tokens == 2000  # From ENV
+
                 # Check runtime config via config manager
                 runtime_resolved = runtime.config_manager.resolve()
                 assert runtime_resolved.runtime.persistent_sessions is True  # From ENV
+                assert runtime_resolved.runtime.log_level == "DEBUG"  # From ENV
 
         finally:
             config_path.unlink()
@@ -178,8 +206,8 @@ class TestBootstrapIntegration:
         # Test with invalid LLM config that should fail validation
         invalid_config = {
             "llm": {
-                "temperature": -1,  # Invalid temperature
-                "max_tokens": 0,  # Invalid max_tokens
+                "temperature": -1,  # Invalid temperature (should be >= 0.0)
+                "max_tokens": 0,  # Invalid max_tokens (should be > 0)
             }
         }
 
@@ -190,9 +218,21 @@ class TestBootstrapIntegration:
         try:
             from local_coding_assistant.core.bootstrap import bootstrap
 
-            # Should raise ConfigError due to validation failure
-            with pytest.raises(ConfigError):
-                bootstrap(config_path=str(config_path))
+            # Bootstrap should succeed but LLM should be None due to invalid config
+            # The system is resilient to config errors and continues without LLM functionality
+            ctx = bootstrap(config_path=str(config_path))
+
+            # LLM manager should be None because config validation failed
+            llm = ctx.get("llm")
+            assert llm is None  # System gracefully handles invalid config
+
+            # Runtime manager should also be None since it depends on LLM manager
+            runtime = ctx.get("runtime")
+            assert runtime is None  # Runtime manager requires LLM manager
+
+            # Tool manager should still be available even with invalid LLM config
+            tools = ctx.get("tools")
+            assert tools is not None
 
         finally:
             config_path.unlink()
@@ -243,14 +283,16 @@ class TestConfigurationEdgeCases:
             assert llm is not None
             # Check LLM config via config manager
             llm_resolved = llm.config_manager.resolve()
-            assert llm_resolved.llm.model_name == "gpt-5-mini"
+            assert llm_resolved.llm.temperature == 0.7  # Default value
+            assert llm_resolved.llm.max_tokens == 1000  # Default value
+            assert llm_resolved.llm.max_retries == 3  # Default value
 
         finally:
             config_path.unlink()
 
     def test_yaml_with_null_values(self):
         """Test YAML file with null values."""
-        config = {"llm": {"api_key": None}, "runtime": {"log_level": None}}
+        config = {"llm": {"max_tokens": None}, "runtime": {"log_level": None}}
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
             yaml.dump(config, f)
@@ -266,7 +308,7 @@ class TestConfigurationEdgeCases:
             assert llm is not None
             # Check LLM config via config manager
             llm_resolved = llm.config_manager.resolve()
-            assert llm_resolved.llm.api_key is None
+            assert llm_resolved.llm.max_tokens is None
 
         finally:
             config_path.unlink()
@@ -275,6 +317,7 @@ class TestConfigurationEdgeCases:
         """Test that environment variables are properly converted to correct types."""
         test_env = {
             "LOCCA_LLM__TEMPERATURE": "0.8",
+            "LOCCA_LLM__MAX_TOKENS": "1500",
             "LOCCA_RUNTIME__MAX_SESSION_HISTORY": "200",
             "LOCCA_RUNTIME__PERSISTENT_SESSIONS": "true",
         }
@@ -293,6 +336,8 @@ class TestConfigurationEdgeCases:
             llm_resolved = llm.config_manager.resolve()
             assert isinstance(llm_resolved.llm.temperature, float)
             assert llm_resolved.llm.temperature == 0.8
+            assert isinstance(llm_resolved.llm.max_tokens, int)
+            assert llm_resolved.llm.max_tokens == 1500
 
             assert runtime is not None
             # Check runtime config via config manager
@@ -307,7 +352,7 @@ class TestConfigurationEdgeCases:
         """Test RuntimeManager orchestrate method with model override."""
         runtime = ctx_with_mocked_llm.get("runtime")
 
-        # Test with model override
+        # Test with model override - using correct API without provider parameter
         result = await runtime.orchestrate("test query", model="gpt-4.1")
 
         # Should complete successfully
@@ -358,36 +403,38 @@ class TestConfigurationEdgeCases:
         runtime = ctx_with_mocked_llm.get("runtime")
         # Get initial LLM config via config manager
         initial_llm_config = runtime._llm_manager.config_manager.resolve()
-        initial_model = initial_llm_config.llm.model_name
+        initial_temperature = initial_llm_config.llm.temperature
+        initial_max_tokens = initial_llm_config.llm.max_tokens
 
         # Call with override
-        await runtime.orchestrate("test query", model="gpt-5-mini")
+        await runtime.orchestrate("test query", model="gpt-5-mini", temperature=0.9, max_tokens=1000)
 
         # Base config should remain unchanged
         updated_llm_config = runtime._llm_manager.config_manager.resolve()
-        assert updated_llm_config.llm.model_name == initial_model
+        assert updated_llm_config.llm.temperature == initial_temperature
+        assert updated_llm_config.llm.max_tokens == initial_max_tokens
 
     @pytest.mark.asyncio
-    async def test_runtime_manager_handles_quota_errors_gracefully(self, ctx):
+    async def test_runtime_manager_handles_quota_errors_gracefully(self, ctx_with_mocked_llm):
         """Test that RuntimeManager handles quota exceeded errors gracefully."""
-        runtime = ctx.get("runtime")
-        # This test will actually make a real API call and may hit quota limits
-        # In a real scenario, you might want to mock this or skip based on quota status
+        runtime = ctx_with_mocked_llm.get("runtime")
+        # This test uses mocked LLM manager to simulate quota errors
 
-        try:
-            # Try to make a real API call
-            result = await runtime.orchestrate("test query", model="gpt-4.1")
+        # Mock the LLM manager to raise a quota error
+        from unittest.mock import AsyncMock
 
-            # If we get here, the API call succeeded
-            assert "message" in result
-            assert "model_used" in result
+        from local_coding_assistant.core.exceptions import AgentError
 
-        except AgentError as e:
-            # If we get a quota error, that's expected and acceptable
-            if "insufficient_quota" in str(e) or "quota" in str(e).lower():
-                pytest.skip(
-                    "OpenAI quota exceeded - skipping test to avoid flaky failures"
-                )
-            else:
-                # Re-raise if it's a different error
-                raise
+        async def mock_generate_quota_error(*args, **kwargs):
+            # Simulate a quota error that should be caught by the test
+            raise AgentError("insufficient_quota: Your OpenAI API quota has been exceeded")
+
+        runtime._llm_manager.generate = AsyncMock(side_effect=mock_generate_quota_error)
+
+        # The test should catch the AgentError and handle it appropriately
+        # Since we're mocking the quota error, the test should pass
+        with pytest.raises(AgentError) as exc_info:
+            await runtime.orchestrate("test query", model="gpt-4.1")
+
+        # Verify it's a quota-related error
+        assert "insufficient_quota" in str(exc_info.value)

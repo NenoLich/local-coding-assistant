@@ -111,7 +111,7 @@ class LangGraphAgent:
     def __init__(
         self,
         llm_manager: LLMManager,
-        tool_manager: ToolManager,
+        tool_manager: ToolManager | None = None,
         name: str = "langgraph_agent",
         max_iterations: int = 10,
         streaming: bool = False,
@@ -120,7 +120,8 @@ class LangGraphAgent:
 
         Args:
             llm_manager: The LLM manager to use for reasoning.
-            tool_manager: The tool manager providing available tools.
+            tool_manager: Optional tool manager providing available tools. If not provided,
+                        the agent will operate in a tool-less mode.
             name: A name for this agent instance.
             max_iterations: Maximum number of iterations to run.
             streaming: Whether to use streaming LLM responses.
@@ -139,33 +140,36 @@ class LangGraphAgent:
 
         # Build the graph
         self.graph = self._build_graph()
-
         logger.info(
             f"Initialized LangGraph agent '{name}' with max_iterations={max_iterations}"
         )
 
     def _get_available_tools(self) -> list[dict[str, Any]]:
-        """Get available tools for LLM requests - cached for performance."""
+        """Get available tools for LLM requests."""
+        if self.tool_manager is None:
+            return []
+
         available_tools = []
         for tool in self.tool_manager:
             if hasattr(tool, "name") and hasattr(tool, "description"):
                 available_tools.append(
                     {
-                        "type": "function",
-                        "function": {
-                            "name": tool.name,
-                            "description": tool.description,
-                        },
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": getattr(tool, "parameters", {}),
                     }
                 )
         return available_tools
 
     def _get_tools_description(self) -> str:
         """Get a formatted description of available tools."""
+        if self.tool_manager is None:
+            return "No tools available"
+
         descriptions = []
         for tool in self.tool_manager:
             if hasattr(tool, "name") and hasattr(tool, "description"):
-                descriptions.append(f"- {tool.name}: {tool.description}")
+                descriptions.append(f"- {tool.name}: {tool.name}: {tool.description}")
         return "\n".join(descriptions) if descriptions else "No tools available"
 
     def _build_graph(self) -> CompiledStateGraph:
@@ -471,9 +475,17 @@ Please provide a plan with specific actions to take. Respond in JSON format with
         """Handle execution of a single tool call."""
         func_name = tool_call["function"]["name"]
         try:
-            # Parse arguments and invoke tool
+            # Parse arguments
             args = json.loads(tool_call["function"]["arguments"])
-            tool_result = self.tool_manager.run_tool(func_name, args)
+
+            # Handle tool execution
+            if self.tool_manager is None:
+                tool_result = f"Error: No tool manager available to execute {func_name}"
+            else:
+                try:
+                    tool_result = self.tool_manager.run_tool(func_name, args)
+                except Exception as e:
+                    tool_result = f"Error executing tool {func_name}: {e!s}"
 
             # Special handling for final_answer tool
             if func_name == "final_answer":
@@ -693,12 +705,14 @@ Please provide:
             # Run the graph using ainvoke for non-streaming mode
             final_state = await self.graph.ainvoke(state)
 
+            # Type check to ensure final_state has iteration attribute
+            iterations = getattr(final_state, "iteration", "unknown")
             logger.info(
-                f"LangGraph agent '{self.name}' completed after {final_state.iteration} iterations"
+                f"LangGraph agent '{self.name}' completed after {iterations} iterations"
             )
 
-            # Return final answer if provided
-            return final_state.final_answer
+            # Safely access final_answer with a default of None
+            return getattr(final_state, "final_answer", None)
 
         except Exception as e:
             logger.error(f"LangGraph agent '{self.name}' failed: {e}")

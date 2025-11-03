@@ -3,9 +3,11 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
-from local_coding_assistant.config.schemas import LLMConfig, ProviderConfig, AppConfig
+from local_coding_assistant.config.schemas import AppConfig, LLMConfig, ProviderConfig
 from local_coding_assistant.providers.base import ProviderLLMResponseDelta
-from local_coding_assistant.providers.exceptions import ProviderError, ProviderConnectionError
+from local_coding_assistant.providers.exceptions import (
+    ProviderConnectionError,
+)
 
 
 class TestLLMConfig:

@@ -1,0 +1,6 @@
+providers:
+  openai:
+    api_key_env: OPENAI_API_KEY
+    driver: openai_chat
+    models:
+      gpt-4: {}

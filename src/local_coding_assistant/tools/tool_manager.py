@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import inspect
+import time
 from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
@@ -63,6 +66,14 @@ class ToolInfo(BaseModel):
     )
 
 
+@dataclass
+class ToolValidationResult:
+    """Named tuple for the validation result."""
+
+    has_input_validation: bool
+    has_output_validation: bool
+
+
 class ToolManager(Iterable[Any]):
     """Enhanced tool manager with comprehensive logging, error handling, and validation.
 
@@ -83,6 +94,150 @@ class ToolManager(Iterable[Any]):
 
         logger.info("ToolManager initialized")
 
+    def _instantiate_tool(self, tool: Any) -> tuple[Any, str]:
+        """Instantiate tool if it's a class and get its class name.
+
+        Args:
+            tool: Tool class or instance to instantiate.
+
+        Returns:
+            Tuple of (tool_instance, class_name)
+
+        Raises:
+            ToolRegistryError: If instantiation fails.
+        """
+        if isinstance(tool, type):
+            try:
+                return tool(), tool.__name__
+            except Exception as e:
+                raise ToolRegistryError(
+                    f"Failed to instantiate tool class {tool.__name__}: {e}"
+                ) from e
+        return tool, tool.__class__.__name__
+
+    def _get_tool_name(self, tool_instance: Any, class_name: str) -> str:
+        """Extract and validate the tool name.
+
+        Args:
+            tool_instance: The tool instance.
+            class_name: The tool's class name.
+
+        Returns:
+            The tool name.
+
+        Raises:
+            ToolRegistryError: If the name is invalid.
+        """
+        tool_name = (
+            getattr(tool_instance, "name", None)
+            or getattr(tool_instance, "__name__", None)
+            or class_name
+        )
+
+        if not isinstance(tool_name, str):
+            raise ToolRegistryError(
+                f"Tool name must be a string, got {type(tool_name)}"
+            )
+
+        return tool_name
+
+    def _check_naming_conflicts(self, tool_name: str) -> None:
+        """Check for duplicate tool names.
+
+        Args:
+            tool_name: Name of the tool to check.
+
+        Raises:
+            ToolRegistryError: If a naming conflict is found.
+        """
+        if tool_name in self._by_name:
+            existing_tool = self._by_name[tool_name]
+            raise ToolRegistryError(
+                f"Tool '{tool_name}' already registered as {existing_tool.__class__.__name__}"
+            )
+
+    def _validate_tool_contract(
+        self, tool_instance: Any, tool_name: str
+    ) -> ToolValidationResult:
+        """Validate that the tool follows the expected contract.
+
+        Args:
+            tool_instance: The tool instance to validate.
+            tool_name: Name of the tool for error messages.
+
+        Returns:
+            ToolValidationResult: Named tuple with validation results.
+
+        Raises:
+            ToolRegistryError: If the tool doesn't meet the contract requirements.
+        """
+        # Early exit for non-Tool callables
+        if not isinstance(tool_instance, Tool):
+            if not callable(tool_instance):
+                raise ToolRegistryError(f"Tool '{tool_name}' is not callable")
+            return ToolValidationResult(False, False)
+
+        # Check for required 'run' method
+        if not hasattr(tool_instance, "run") or not callable(tool_instance.run):
+            raise ToolRegistryError(f"Tool '{tool_name}' missing required 'run' method")
+
+        # Check if 'run' is implemented (not abstract)
+        try:
+            if "raise NotImplementedError" in inspect.getsource(tool_instance.run):
+                raise ToolRegistryError(
+                    f"Tool '{tool_name}' has not implemented the required 'run' method"
+                )
+        except (OSError, TypeError) as e:
+            logger.warning(
+                "Could not inspect source for tool '%s'. Skipping implementation check. Error: %s",
+                tool_name,
+                e,
+            )
+
+        # Check for Input/Output validation
+        input_validation = hasattr(tool_instance, "Input") and isinstance(
+            tool_instance.Input, type
+        )
+        output_validation = hasattr(tool_instance, "Output") and isinstance(
+            tool_instance.Output, type
+        )
+
+        return ToolValidationResult(input_validation, output_validation)
+
+    def _create_tool_info(
+        self,
+        tool_instance: Any,
+        tool_name: str,
+        class_name: str,
+        category: str | None,
+        input_validation: bool,
+        output_validation: bool,
+    ) -> None:
+        """Create and store tool information.
+
+        Args:
+            tool_instance: The tool instance.
+            tool_name: Name of the tool.
+            class_name: Class name of the tool.
+            category: Optional category for the tool.
+            input_validation: Whether the tool has input validation.
+            output_validation: Whether the tool has output validation.
+        """
+        tool_description = getattr(tool_instance, "description", None)
+
+        tool_info = ToolInfo(
+            name=tool_name,
+            class_name=class_name,
+            description=tool_description,
+            category=category,
+            has_input_validation=input_validation,
+            has_output_validation=output_validation,
+        )
+        self._tool_info[tool_name] = tool_info
+        logger.info(
+            f"Registered tool '{tool_name}' ({class_name}) in category '{category or 'default'}'"
+        )
+
     def register_tool(self, tool: Any, category: str | None = None) -> None:
         """Register a tool with enhanced validation and logging.
 
@@ -94,108 +249,30 @@ class ToolManager(Iterable[Any]):
             ToolRegistryError: If registration fails due to validation or naming conflicts.
         """
         try:
-            # Handle both tool instances and classes
-            if isinstance(tool, type):
-                # It's a class, try to instantiate it
-                try:
-                    tool_instance = tool()
-                    tool_class_name = tool.__name__
-                except Exception as e:
-                    raise ToolRegistryError(
-                        f"Failed to instantiate tool class {tool.__name__}: {e}"
-                    ) from e
-            else:
-                # It's already an instance
-                tool_instance = tool
-                tool_class_name = tool.__class__.__name__
+            # Instantiate tool if it's a class
+            tool_instance, class_name = self._instantiate_tool(tool)
 
-            # Extract tool information
-            tool_name = getattr(tool_instance, "name", None)
-            if tool_name is None:
-                # Try alternative name sources
-                tool_name = getattr(tool_instance, "__name__", None) or tool_class_name
-
-            if not isinstance(tool_name, str):
-                raise ToolRegistryError(
-                    f"Tool name must be a string, got {type(tool_name)}"
-                )
-
-            tool_description = getattr(tool_instance, "description", None)
+            # Get and validate tool name
+            tool_name = self._get_tool_name(tool_instance, class_name)
 
             # Check for naming conflicts
-            if tool_name in self._by_name:
-                existing_tool = self._by_name[tool_name]
-                raise ToolRegistryError(
-                    f"Tool '{tool_name}' already registered as {existing_tool.__class__.__name__}"
-                )
+            self._check_naming_conflicts(tool_name)
 
-            # Validate tool structure if it follows Tool contract
-            input_validation = False
-            output_validation = False
-
-            if isinstance(tool_instance, Tool):
-                if hasattr(tool_instance, "Input") and tool_instance.Input is not None:
-                    input_validation = True
-                if (
-                    hasattr(tool_instance, "Output")
-                    and tool_instance.Output is not None
-                ):
-                    output_validation = True
-
-                # Additional validation for Tool contract compliance
-                if not hasattr(tool_instance, "run"):
-                    raise ToolRegistryError(
-                        f"Tool '{tool_name}' missing required 'run' method"
-                    )
-
-                # Check if run method is properly implemented (not just raising NotImplementedError)
-                try:
-                    # Try to call run with a dummy payload to see if it's properly implemented
-                    if (
-                        hasattr(tool_instance, "Input")
-                        and tool_instance.Input is not None
-                    ):
-                        # Create a dummy input to test the run method
-                        dummy_input = tool_instance.Input()
-                        tool_instance.run(dummy_input)
-                        # If run returns without error, it's properly implemented
-                    else:
-                        # No input validation, just try calling run with empty dict
-                        tool_instance.run({})
-                except NotImplementedError as e:
-                    raise ToolRegistryError(
-                        f"Tool '{tool_name}' missing required 'run' method implementation"
-                    ) from e
-                except Exception:
-                    # Other exceptions are OK - the method exists and is callable
-                    pass
-
-            # Validate that the tool is callable (for both Tool and non-Tool objects)
-            if isinstance(tool_instance, Tool):
-                if not hasattr(tool_instance, "run") or not callable(tool_instance.run):
-                    raise ToolRegistryError(
-                        f"Tool '{tool_name}' missing required 'run' method"
-                    )
-            elif not callable(tool_instance):
-                raise ToolRegistryError(f"Tool '{tool_name}' is not callable")
+            # Validate tool contract and get validation info
+            validation_result = self._validate_tool_contract(tool_instance, tool_name)
 
             # Register the tool
             self._tools.append(tool_instance)
             self._by_name[tool_name] = tool_instance
 
-            # Store tool information
-            tool_info = ToolInfo(
-                name=tool_name,
-                class_name=tool_class_name,
-                description=tool_description,
+            # Create and store tool information
+            self._create_tool_info(
+                tool_instance=tool_instance,
+                tool_name=tool_name,
+                class_name=class_name,
                 category=category,
-                has_input_validation=input_validation,
-                has_output_validation=output_validation,
-            )
-            self._tool_info[tool_name] = tool_info
-
-            logger.info(
-                f"Registered tool '{tool_name}' ({tool_class_name}) in category '{category or 'default'}'"
+                input_validation=validation_result.has_input_validation,
+                output_validation=validation_result.has_output_validation,
             )
 
         except ToolRegistryError as e:
@@ -218,91 +295,101 @@ class ToolManager(Iterable[Any]):
         Raises:
             ToolRegistryError: If tool execution fails.
         """
-        import time
-
         start_time = time.time()
         self._execution_stats[tool_name] = self._execution_stats.get(tool_name, 0) + 1
 
         try:
             logger.debug(f"Executing tool '{tool_name}' with payload: {payload}")
-            tool = self.get(tool_name)
-            if tool is None:
-                raise ToolRegistryError(f"Unknown tool: {tool_name}")
-
-            # If tool adheres to Tool contract, validate input
-            if (
-                isinstance(tool, Tool)
-                and hasattr(tool, "Input")
-                and tool.Input is not None
-            ):
-                try:
-                    input_model = tool.Input(**payload)
-                    logger.debug(f"Input validation passed for tool '{tool_name}'")
-                except ValidationError as e:
-                    error_msg = f"Invalid input for tool '{tool_name}': {e}"
-                    logger.error(error_msg)
-                    raise ToolRegistryError(error_msg) from e
-            else:
-                input_model = payload
-
-            if isinstance(tool, Tool):
-                result = tool.run(input_model)
-            elif callable(tool):
-                result = tool(input_model)
-            else:
-                raise ToolRegistryError(f"Tool '{tool_name}' is not callable")
-
-            # If tool has output validation, validate the result
-            if (
-                isinstance(tool, Tool)
-                and hasattr(tool, "Output")
-                and tool.Output is not None
-            ):
-                try:
-                    # Check if result is already the expected Output type
-                    if isinstance(result, tool.Output):
-                        # Result is already a Pydantic model, validate it and convert to dict
-                        try:
-                            validated_result = result.model_dump()
-                        except ValidationError as e:
-                            # The model contains invalid data, this shouldn't happen but handle it
-                            raise ValidationError.from_exception_data(
-                                title="Output",
-                                line_errors=[
-                                    {
-                                        "type": "model_validation_error",
-                                        "loc": ("result",),
-                                        "input": result,
-                                    }
-                                ],
-                            ) from e
-                    else:
-                        # Result is a dict, create Output model from it
-                        output_model = tool.Output(**result)
-                        validated_result = output_model.model_dump()
-                    logger.debug(f"Output validation passed for tool '{tool_name}'")
-                except ValidationError as e:
-                    error_msg = f"Invalid output from tool '{tool_name}': {e}"
-                    logger.error(error_msg)
-                    raise ToolRegistryError(error_msg) from e
-            else:
-                validated_result = result
+            tool = self._get_tool(tool_name)
+            input_model = self._prepare_input(tool, tool_name, payload)
+            result = self._execute_tool(tool, tool_name, input_model)
+            validated_result = self._validate_output(tool, tool_name, result)
 
             execution_time = (time.time() - start_time) * 1000
             logger.info(
                 f"Tool '{tool_name}' executed successfully in {execution_time:.2f} ms"
             )
-
             return validated_result
 
-        except ToolRegistryError as e:
-            logger.error(f"Tool execution failed: {e}")
+        except ToolRegistryError:
             raise
         except Exception as e:
             execution_time = (time.time() - start_time) * 1000
-            error_msg = f"Tool '{tool_name}' execution failed after {execution_time:.2f} ms: {e}"
-            logger.error(error_msg)
+            error_msg = f"Unexpected error executing tool '{tool_name}' after {execution_time:.2f} ms: {e}"
+            logger.exception(error_msg)
             raise ToolRegistryError(error_msg) from e
+
+    def _get_tool(self, tool_name: str) -> Any:
+        """Get tool by name with validation."""
+        tool = self.get(tool_name)
+        if tool is None:
+            raise ToolRegistryError(f"Unknown tool: {tool_name}")
+        return tool
+
+    def _prepare_input(self, tool: Any, tool_name: str, payload: Any) -> Any:
+        """Prepare and validate input for the tool."""
+        if not (
+            isinstance(tool, Tool) and hasattr(tool, "Input") and tool.Input is not None
+        ):
+            return payload
+
+        try:
+            if isinstance(payload, tool.Input):
+                return payload
+            if isinstance(payload, dict):
+                return tool.Input.model_validate(payload)
+            if hasattr(payload, "model_dump"):
+                return tool.Input.model_validate(payload.model_dump())
+            if hasattr(payload, "dict"):
+                return tool.Input.model_validate(payload.dict())
+            return tool.Input.model_validate_json(payload)
+        except (ValidationError, ValueError, AttributeError) as e:
+            raise ToolRegistryError(f"Invalid input for tool '{tool_name}': {e}") from e
+
+    def _execute_tool(self, tool: Any, tool_name: str, input_model: Any) -> Any:
+        """Execute the tool with the prepared input."""
+        try:
+            if isinstance(tool, Tool):
+                return tool.run(input_model)
+            if callable(tool):
+                return tool(input_model)
+            raise ToolRegistryError(f"Tool '{tool_name}' is not callable")
+        except Exception as e:
+            raise ToolRegistryError(f"Error executing tool '{tool_name}': {e}") from e
+
+    def _validate_output(self, tool: Any, tool_name: str, result: Any) -> Any:
+        """Validate and process the tool's output."""
+        if not (
+            isinstance(tool, Tool)
+            and hasattr(tool, "Output")
+            and tool.Output is not None
+        ):
+            return result
+
+        try:
+            if isinstance(result, tool.Output):
+                return result.model_dump()
+
+            # Handle callable results
+            if callable(result):
+                result = result()
+
+            # Convert result to output model
+            if isinstance(result, dict):
+                output_model = tool.Output.model_validate(result)
+            elif hasattr(result, "model_dump"):
+                output_model = tool.Output.model_validate(result.model_dump())
+            elif hasattr(result, "dict"):
+                output_model = tool.Output.model_validate(result.dict())
+            else:
+                output_model = tool.Output.model_validate(dict(result))
+
+            return output_model.model_dump()
+
+        except (ValidationError, ValueError, TypeError) as e:
+            raise ToolRegistryError(
+                f"Invalid output from tool '{tool_name}': {e}"
+            ) from e
 
     def get_tool_info(self, tool_name: str) -> ToolInfo | None:
         """Get detailed information about a registered tool.

@@ -6,6 +6,7 @@ and the bootstrap system, following the same patterns as other CLI commands.
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -22,15 +23,47 @@ log = get_logger("cli.provider")
 
 def _extract_value(param_value: Any, default: Any = None) -> Any:
     """Extract the actual value, handling typer objects."""
-    if isinstance(param_value, typer.models.OptionInfo):
+    if hasattr(param_value, "default"):
         return param_value.default
     return param_value if param_value is not None else default
 
 
-def _get_config_path(config_file: str | None = None) -> Path:
-    """Get the configuration file path."""
+def _get_config_path(config_file: str | None = None, dev: bool = False) -> Path:
+    """Get the configuration file path.
+
+    Args:
+        config_file: Custom config file path if provided
+        dev: If True, use development path in the project directory
+
+    Returns:
+        Path to the configuration file
+    """
     if config_file:
         return Path(config_file)
+
+    if dev or os.getenv("LOCCA_DEV_MODE"):
+        # Try to find project root by looking for pyproject.toml
+        current_path = Path(__file__).resolve()
+        for parent in [current_path, *current_path.parents]:
+            if (parent / "pyproject.toml").exists():
+                return (
+                    parent
+                    / "src"
+                    / "local_coding_assistant"
+                    / "config"
+                    / "providers.local.yaml"
+                )
+
+        # Fallback to the old method if pyproject.toml not found
+        return (
+            current_path.parents[4]
+            / "src"
+            / "local_coding_assistant"
+            / "config"
+            / "providers.local.yaml"
+        )
+
+    # For production, use the user's home directory
     return Path.home() / ".local-coding-assistant" / "config" / "providers.local.yaml"
 
 
@@ -43,31 +76,239 @@ def _load_config(config_path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
-def _save_config(config_path: Path, config: dict) -> None:
-    """Save provider configuration to file."""
+def _ensure_config_directory(config_path: Path) -> None:
+    """Ensure the configuration directory exists."""
     config_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _create_empty_config(config_path: Path) -> None:
+    """Create an empty configuration file with default structure."""
     with open(config_path, "w") as f:
-        yaml.dump(config, f, default_flow_style=False)
+        yaml.dump({"providers": {}}, f, default_flow_style=False)
+
+
+def _convert_to_new_format(config: dict) -> dict:
+    """Convert old flat config format to new nested format if needed."""
+    if not any(key == "providers" for key in config.keys()):
+        return {"providers": config}
+    return config
+
+
+def _update_existing_provider(
+    existing_config: dict, provider_name: str, new_config: dict
+) -> tuple[dict, str]:
+    """Update an existing provider's configuration."""
+    if not isinstance(existing_config, dict):
+        existing_config = {}
+
+    # Ensure providers key exists
+    if "providers" not in existing_config:
+        existing_config["providers"] = {}
+
+    # Check if we're updating from a nested config or adding a new one
+    if "providers" in new_config and provider_name in new_config["providers"]:
+        # Update existing provider config
+        if provider_name in existing_config["providers"]:
+            existing_config["providers"][provider_name].update(
+                new_config["providers"][provider_name]
+            )
+        else:
+            existing_config["providers"][provider_name] = new_config["providers"][
+                provider_name
+            ]
+        action = "Updated"
+    else:
+        # Add new provider config
+        existing_config["providers"][provider_name] = new_config
+        action = "Added"
+
+    return existing_config, action
+
+
+def _save_config(
+    config_path: Path,
+    config: dict | None = None,
+    provider_name: str | None = None,
+) -> None:
+    """Save provider configuration to file.
+
+    This function handles both the new nested structure (with 'providers' key)
+    and maintains backward compatibility with the old flat structure.
+
+    Args:
+        config_path: Path to the config file
+        config: Config dictionary to save. Can be in either format:
+            - New format: {'providers': {'provider1': {...}, 'provider2': {...}}}
+            - Old format: {'provider1': {...}, 'provider2': {...}}
+        provider_name: Optional name of the provider being saved (for logging)
+    """
+    try:
+        _ensure_config_directory(config_path)
+
+        # Handle empty config case
+        if config is None:
+            _create_empty_config(config_path)
+            return
+
+        # Ensure consistent config format
+        config = _convert_to_new_format(config)
+        action = None
+
+        # Handle provider-specific updates
+        if provider_name:
+            try:
+                existing_config = _load_config(config_path)
+                config, action = _update_existing_provider(
+                    existing_config, provider_name, config
+                )
+            except Exception as e:
+                typer.echo(f"⚠️  Warning: Could not load existing config: {e}")
+                action = "Added"
+
+        # Save the final configuration
+        try:
+            with open(config_path, "w") as f:
+                yaml.dump(config, f, default_flow_style=False)
+        except yaml.YAMLError:
+            # Re-raise YAML serialization errors directly
+            raise
+        except Exception as e:
+            # For other I/O or permission errors, wrap in a more specific error
+            raise OSError(f"Failed to write to config file: {e}") from e
+
+        # Provide user feedback if a provider was modified
+        if provider_name and action:
+            typer.echo(f"✅ {action} provider '{provider_name}' in {config_path}")
+
+    except yaml.YAMLError:
+        # Re-raise YAML serialization errors directly
+        raise
+    except Exception as e:
+        error_msg = f"❌ Failed to save configuration to {config_path}: {e!s}"
+        typer.echo(error_msg, err=True)
+        raise typer.Exit(code=1) from e
+
+
+def _create_models_config(models: list[str] | None) -> dict:
+    """Create configuration for models with default supported parameters.
+
+    Args:
+        models: List of model names. If None or empty, returns an empty dict.
+    """
+    if not models:
+        return {}
+
+    default_params = [
+        "tool",
+        "tool_choice",
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "stop",
+        "frequency_penalty",
+        "presence_penalty",
+        "seed",
+        "top_k",
+    ]
+
+    return {
+        model_name: {"supported_parameters": default_params.copy()}
+        for model_name in models
+    }
+
+
+def _create_provider_config(
+    driver: str,
+    base_url: str,
+    models_config: dict,
+    api_key: str | None = None,
+    api_key_env: str | None = None,
+    health_check_endpoint: str | None = None,
+) -> dict:
+    """Create a provider configuration dictionary."""
+    config = {
+        "driver": driver,
+        "base_url": base_url,
+        "models": models_config,
+    }
+
+    if api_key_env:
+        config["api_key_env"] = api_key_env
+    if api_key:
+        config["api_key"] = api_key
+    if health_check_endpoint:
+        config["health_check_endpoint"] = health_check_endpoint
+
+    return config
+
+
+def _verify_provider_health(llm_manager, provider_name: str) -> None:
+    """Verify that the provider was loaded correctly and is healthy."""
+    try:
+        provider_status_list = llm_manager.get_provider_status_list()
+        available_providers = [p["name"] for p in provider_status_list]
+
+        if provider_name not in available_providers:
+            typer.echo(
+                f"Error: Provider '{provider_name}' is not available after loading. "
+                f"Available providers: {', '.join(available_providers)}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        # Check provider status
+        provider_status = next(
+            (p for p in provider_status_list if p.get("name") == provider_name), None
+        )
+
+        if provider_status:
+            status_msg = provider_status.get("status", "unknown")
+            if status_msg == "health_check_not_configured":
+                typer.echo(
+                    f"Provider '{provider_name}' was added successfully. "
+                    "Note: Health check is not configured for this provider.",
+                    err=True,
+                )
+            elif status_msg != "available":
+                error_msg = provider_status.get("error", "")
+                health_status = f"Status: {status_msg}"
+                if error_msg:
+                    health_status = f"{health_status} - {error_msg}"
+                typer.echo(
+                    f"⚠️  Warning: Provider '{provider_name}' is available but not healthy. {health_status}",
+                    err=True,
+                )
+    except Exception as e:
+        typer.echo(f"Error checking provider status: {e!s}", err=True)
+        raise typer.Exit(code=1) from e
 
 
 @app.command()
 @safe_entrypoint("cli.provider.add")
 def add(
     name: str = typer.Argument(..., help="Provider name"),
-    *models: str,
+    models: list[str] | None = typer.Argument(  # noqa B008
+        None, help="Model names (space-separated)"
+    ),
     api_key: str | None = typer.Option(
         None, "--api-key", help="API key for the provider"
     ),
     api_key_env: str | None = typer.Option(
         None, "--api-key-env", help="Environment variable containing the API key"
     ),
-    base_url: str | None = typer.Option(
-        None, "--base-url", help="Base URL for the provider API"
+    base_url: str = typer.Option(
+        ..., "--base-url", help="Base URL for the provider API (required)"
     ),
+    dev: bool = typer.Option(False, "--dev", help="Use development configuration path"),
     driver: str = typer.Option(
         "openai_chat",
         "--driver",
         help="Driver type (openai_chat, openai_responses, local)",
+    ),
+    health_check_endpoint: str | None = typer.Option(
+        None,
+        "--health-check-endpoint",
+        help="Health check endpoint URL. Can be a full URL or a path that will be appended to base_url",
     ),
     config_file: str | None = typer.Option(
         None, "--config-file", help="Configuration file to update"
@@ -79,58 +320,83 @@ def add(
     ),
 ) -> None:
     """Add a new provider to the configuration.
-
     This command adds a provider to the local configuration file and triggers
     a reload through the bootstrap system to make it available immediately.
     """
-    # Extract actual parameter values - handle typer objects and None
+    # Extract and validate parameters
     actual_api_key_env = _extract_value(api_key_env)
     actual_base_url = _extract_value(base_url)
     actual_driver = _extract_value(driver, "openai_chat")
     actual_log_level = _extract_value(log_level, "INFO")
     actual_config_file = _extract_value(config_file)
     actual_api_key = _extract_value(api_key)
+    actual_health_check_endpoint = _extract_value(health_check_endpoint)
 
+    # Show configuration info
     if actual_base_url:
         typer.echo(f"Base URL: {actual_base_url}")
     typer.echo(f"Driver: {actual_driver}")
 
-    # Build provider configuration
-    provider_config = {
-        "driver": actual_driver,
-        "models": {model_name: {} for model_name in models},
-    }
+    # Create models configuration (can be empty)
+    models_config = _create_models_config(models)
 
-    if actual_base_url:
-        provider_config["base_url"] = actual_base_url
+    # Create provider configuration
+    provider_config = _create_provider_config(
+        driver=actual_driver,
+        base_url=actual_base_url,
+        models_config=models_config,
+        api_key=actual_api_key,
+        api_key_env=actual_api_key_env,
+        health_check_endpoint=actual_health_check_endpoint,
+    )
 
-    if actual_api_key_env:
-        provider_config["api_key_env"] = actual_api_key_env
-    elif actual_api_key:
-        provider_config["api_key"] = actual_api_key
+    # Show warning if no models were provided
+    if not models:
+        typer.echo(
+            "⚠️  Warning: No models provided. You can add models later by editing the configuration file.",
+            err=True,
+        )
 
-    # Update configuration file
-    config_path = _get_config_path(actual_config_file)
-    config = _load_config(config_path)
-    config[name] = provider_config
-    _save_config(config_path, config)
+    # Warn if no API key method is provided
+    if not actual_api_key_env and not actual_api_key:
+        typer.echo(
+            "Warning: No API key provided. You'll need to set it in the configuration file later.",
+            err=True,
+        )
 
-    typer.echo(f"Added provider '{name}' to {config_path}")
+    # Save the configuration
+    config_path = _get_config_path(actual_config_file, dev)
+    _save_config(
+        config_path=config_path,
+        provider_name=name,
+        config={"providers": {name: provider_config}},
+    )
 
-    # Map provided level string to logging.* constant (default INFO)
+    # Initialize the provider and verify it's working
     level = getattr(logging, actual_log_level.upper(), logging.INFO)
+    try:
+        ctx = bootstrap(log_level=level)
+        llm_manager = ctx["llm"]
+        if llm_manager is None:
+            typer.echo(
+                "Error: LLM manager not available (initialization failed)", err=True
+            )
+            raise typer.Exit(code=1)
 
-    # Bootstrap with the new configuration
-    ctx = bootstrap(log_level=level)
-    llm_manager = ctx["llm"]
-
-    if llm_manager is None:
-        typer.echo("Error: LLM manager not available (provider initialization failed)")
-        raise typer.Exit(code=1)
-
-    # Trigger reload through the bootstrap system
-    llm_manager.reload_providers()
-    typer.echo(f"Provider '{name}' is now available")
+        _verify_provider_health(llm_manager, name)
+        if models:
+            typer.echo(
+                f"✅ Successfully added and verified provider '{name}'. "
+                f"Available models: {', '.join(models)}"
+            )
+        else:
+            typer.echo(
+                f"✅ Successfully added and verified provider '{name}'. "
+                "No models configured yet."
+            )
+    except Exception as e:
+        typer.echo(f"❌ Error initializing provider: {e!s}", err=True)
+        raise typer.Exit(code=1) from e
 
 
 @app.command(name="list")
@@ -231,11 +497,20 @@ def remove(
     config_path = _get_config_path(actual_config_file)
     config = _load_config(config_path)
 
-    if name not in config:
+    # Get the providers dictionary, defaulting to empty dict if not present
+    providers = config.get("providers", {})
+
+    if name not in providers:
         typer.echo(f"Provider '{name}' not found in configuration")
         raise typer.Exit(code=1)
 
-    del config[name]
+    # Remove the provider
+    del providers[name]
+
+    # Update the config with the modified providers
+    config["providers"] = providers
+
+    # Save the updated configuration
     _save_config(config_path, config)
 
     typer.echo(f"Removed provider '{name}' from {config_path}")
@@ -277,49 +552,186 @@ def validate(
     _validate_configuration(config_path)
 
 
+def _validate_model_config(model_name: str, model_config: dict) -> tuple[bool, bool]:
+    """Validate a single model's configuration.
+
+    Args:
+        model_name: Name of the model being validated
+        model_config: Configuration dictionary for the model
+
+    Returns:
+        Tuple of (has_errors, has_warnings)
+    """
+    has_errors = False
+    has_warnings = False
+
+    if not isinstance(model_config, dict):
+        typer.echo(f"❌ Error: Model '{model_name}' configuration must be a dictionary")
+        return True, False
+
+    # Check for supported_parameters in model config
+    if "supported_parameters" not in model_config:
+        typer.echo(
+            f"⚠️  Warning: Model '{model_name}' is missing 'supported_parameters'"
+        )
+        has_warnings = True
+    elif not isinstance(model_config["supported_parameters"], list):
+        typer.echo(
+            f"❌ Error: 'supported_parameters' for model '{model_name}' must be a list"
+        )
+        has_errors = True
+
+    return has_errors, has_warnings
+
+
+def _validate_provider_models(models: dict) -> tuple[bool, bool]:
+    """Validate all models for a provider.
+
+    Args:
+        models: Dictionary of model configurations
+
+    Returns:
+        Tuple of (has_errors, has_warnings)
+    """
+    has_errors = False
+    has_warnings = False
+
+    if not models:
+        typer.echo("⚠️  Warning: No models configured for this provider")
+        return False, True
+
+    typer.echo(f"✅ Found {len(models)} model(s)")
+    for model_name, model_config in models.items():
+        model_errors, model_warnings = _validate_model_config(model_name, model_config)
+        has_errors |= model_errors
+        has_warnings |= model_warnings
+
+    return has_errors, has_warnings
+
+
+def _validate_provider_config(
+    provider_name: str, provider_config: dict
+) -> tuple[bool, bool]:
+    """Validate a single provider's configuration.
+
+    Args:
+        provider_name: Name of the provider being validated
+        provider_config: Configuration dictionary for the provider
+
+    Returns:
+        Tuple of (has_errors, has_warnings)
+    """
+    has_errors = False
+    has_warnings = False
+
+    typer.echo(f"\nValidating provider: {provider_name}")
+
+    # Check if provider config is a dictionary
+    if not isinstance(provider_config, dict):
+        typer.echo(
+            f"❌ Error: Provider '{provider_name}' configuration must be a dictionary"
+        )
+        return True, False
+
+    # Check required fields
+    required_fields = ["driver", "base_url"]
+    missing_fields = [
+        field
+        for field in required_fields
+        if field not in provider_config or not provider_config[field]
+    ]
+
+    if missing_fields:
+        typer.echo(f"❌ Error: Missing required fields: {missing_fields}")
+        has_errors = True
+
+    # Check for at least one of api_key or api_key_env
+    if not any(key in provider_config for key in ["api_key", "api_key_env"]):
+        typer.echo(
+            "⚠️  Warning: Neither 'api_key' nor 'api_key_env' is set. "
+            "At least one is recommended for API authentication."
+        )
+        has_warnings = True
+
+    # Validate models
+    models = provider_config.get("models", {})
+    model_errors, model_warnings = _validate_provider_models(models)
+    has_errors |= model_errors
+    has_warnings |= model_warnings
+
+    # Validate driver type if provided
+    if "driver" in provider_config:
+        valid_drivers = ["openai_chat", "openai_responses", "local"]
+        if provider_config["driver"] not in valid_drivers:
+            typer.echo(
+                f"⚠️  Warning: Unknown driver type: {provider_config['driver']}. "
+                f"Valid drivers are: {', '.join(valid_drivers)}"
+            )
+            has_warnings = True
+
+    return has_errors, has_warnings
+
+
+def _print_validation_summary(has_errors: bool, has_warnings: bool) -> None:
+    """Print the validation summary based on the validation results."""
+    typer.echo("\nValidation completed:")
+    if has_errors:
+        typer.echo("❌ Validation failed with errors")
+        raise typer.Exit(code=1)
+    elif has_warnings:
+        typer.echo("⚠️  Validation completed with warnings")
+    else:
+        typer.echo("✅ Configuration is valid")
+
+
 def _validate_configuration(config_path: Path) -> None:
-    """Validate the provider configuration file."""
+    """Validate the provider configuration file.
+
+    The configuration should be a dictionary where each key is a provider name
+    and each value is a dictionary with the following structure:
+
+    provider_name:
+      driver: str  # Required: The driver to use (e.g., 'openai_chat', 'openai_responses')
+      base_url: str  # Required: Base URL for the provider's API
+      api_key: str  # Optional: Direct API key
+      api_key_env: str  # Optional: Environment variable containing the API key
+      health_check_endpoint: str  # Optional: Endpoint for health checks
+      models:  # Required: Dictionary of available models
+        model_name:
+          supported_parameters: list[str]  # List of supported parameters for the model
+    """
     try:
         config = _load_config(config_path)
+        providers = config.get("providers", {})
 
         if not config:
             typer.echo("Configuration is empty")
             return
 
-        typer.echo(f"Found {len(config)} provider(s):")
-        for provider_name, provider_config in config.items():
-            if not isinstance(provider_config, dict):
-                typer.echo(
-                    f"❌ Error: Provider '{provider_name}' configuration must be a dictionary"
-                )
-                continue
+        if not isinstance(providers, dict):
+            typer.echo("❌ Error: Configuration must be a dictionary")
+            raise typer.Exit(code=1)
 
-            # Check required fields
-            required_fields = ["driver"]
-            missing_fields = [
-                field for field in required_fields if field not in provider_config
-            ]
-            if missing_fields:
-                typer.echo(
-                    f"⚠️  Warning: Provider '{provider_name}' missing fields: {missing_fields}"
-                )
+        typer.echo(f"Found {len(providers)} provider(s):")
 
-            # Check models
-            models = provider_config.get("models", {})
-            if not models:
-                typer.echo(
-                    f"⚠️  Warning: Provider '{provider_name}' has no models configured"
-                )
-            else:
-                typer.echo(f"✅ Provider '{provider_name}' has {len(models)} model(s)")
+        # Track validation results
+        has_errors = False
+        has_warnings = False
 
-        typer.echo("Configuration validation completed")
+        for provider_name, provider_config in providers.items():
+            provider_errors, provider_warnings = _validate_provider_config(
+                provider_name, provider_config
+            )
+            has_errors |= provider_errors
+            has_warnings |= provider_warnings
+
+        _print_validation_summary(has_errors, has_warnings)
 
     except yaml.YAMLError as e:
         typer.echo(f"❌ YAML parsing error: {e}")
         raise typer.Exit(code=1) from e
     except Exception as e:
-        typer.echo(f"❌ Validation error: {e}")
+        typer.echo(f"❌ Unexpected error during validation: {e}")
         raise typer.Exit(code=1) from e
 
 

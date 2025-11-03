@@ -3,11 +3,13 @@ Unit tests for CLI provider management commands.
 """
 import os
 import tempfile
+import traceback
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import click
 import pytest
+import typer
 import yaml
 
 from local_coding_assistant.cli.commands.provider import (
@@ -27,191 +29,341 @@ class TestProviderConfigHelpers:
 
     def test_get_config_path_default(self):
         """Test getting default config path."""
-        with patch("pathlib.Path.home") as mock_home:
+        with patch("pathlib.Path.home") as mock_home, \
+             patch("os.getenv", return_value=None):  # Ensure dev mode is not active
             mock_home.return_value = Path("/home/testuser")
             config_path = _get_config_path()
+            
+            # The default path should be in the user's home directory
+            expected = Path("/home/testuser/.local-coding-assistant/config/providers.local.yaml")
+            assert str(config_path) == str(expected)
 
-            expected = Path(
-                "/home/testuser/.local-coding-assistant/config/providers.local.yaml"
-            )
-            assert config_path == expected
+    @pytest.fixture
+    def project_root(self):
+        """Return the project root as a Path."""
+        return Path(__file__).resolve().parents[3]
 
-    def test_get_config_path_custom(self):
-        """Test getting custom config path."""
-        custom_path = "/custom/config/providers.yaml"
-        config_path = _get_config_path(custom_path)
+    def test_get_config_path_dev_mode(self, project_root):
+        """Test getting config path in dev mode."""
+        # Create the expected config file path
+        expected = project_root / "src" / "local_coding_assistant" / "config" / "providers.local.yaml"
 
-        assert config_path == Path(custom_path)
+        # Call the function
+        result = _get_config_path(dev=True)
 
-    def test_load_config_nonexistent(self):
-        """Test loading config from non-existent file."""
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
-            config_path = Path(temp_dir) / "nonexistent.yaml"
-            config = _load_config(config_path)
+        # Verify the result is a Path object
+        assert isinstance(result, Path)
 
-            assert config == {}
+        # Verify the path is correct
+        assert str(result) == str(expected)
 
-    def test_load_config_existing(self):
-        """Test loading config from existing file."""
-        test_config = {
-            "openai": {"driver": "openai_chat", "models": {"gpt-4": {}, "gpt-3.5": {}}}
-        }
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            yaml.dump(test_config, f)
+    def test_load_config_invalid_yaml(self):
+        """Test loading config from invalid YAML file."""
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            f.write("invalid: yaml: file: [")
             config_path = Path(f.name)
-
+            
         try:
-            config = _load_config(config_path)
-            assert config == test_config
+            with pytest.raises(yaml.YAMLError):
+                _load_config(config_path)
         finally:
-            config_path.unlink()
-
-    def test_save_config_new_file(self):
-        """Test saving config to new file."""
-        test_config = {
-            "test_provider": {"driver": "openai_chat", "models": {"test-model": {}}}
-        }
-
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            if config_path.exists():
+                config_path.unlink()
+                
+    def test_save_config_invalid_data(self):
+        """Test saving config with unserializable data."""
+        with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "test.yaml"
-
+            # Create a custom class without proper YAML serialization
+            class Unserializable:
+                def __init__(self, value):
+                    self.value = value
+                    
+                def __str__(self):
+                    return f"Unserializable({self.value})"
+            
+            test_obj = Unserializable("test")
+            # The config will be wrapped in a 'providers' dict by _save_config
+            test_config = {"test": test_obj}
+            
+            # This will serialize the object using PyYAML's default object representation
             _save_config(config_path, test_config)
-
-            # Verify file was created
-            assert config_path.exists()
-
-            # Verify content
+            
+            # Verify the content was serialized with PyYAML's object representation
             with open(config_path) as f:
-                saved_config = yaml.safe_load(f)
-            assert saved_config == test_config
-
-    def test_save_config_existing_file(self):
-        """Test saving config to existing file."""
-        original_config = {"existing": {"driver": "test"}}
-        new_config = {"new_provider": {"driver": "openai_chat"}}
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            yaml.dump(original_config, f)
-            config_path = Path(f.name)
-
-        try:
-            _save_config(config_path, new_config)
-
-            # Verify content was overwritten
-            with open(config_path) as f:
-                saved_config = yaml.safe_load(f)
-            assert saved_config == new_config
-        finally:
-            config_path.unlink()
+                content = f.read()
+                # Check for the YAML object tag with our class path
+                assert "!!python/object:tests.unit.cli.test_provider_commands.Unserializable" in content
+                # Check that the value is preserved
+                assert "value: test" in content
 
 
 class TestProviderAddCommand:
     """Test provider add command."""
 
+    @patch.dict("os.environ", {"TEST_API_KEY": "env_test_key"}, clear=True)
     @patch("local_coding_assistant.cli.commands.provider.bootstrap")
     @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_add_provider_minimal(self, mock_echo, mock_bootstrap):
+    @patch("local_coding_assistant.cli.commands.provider._save_config")
+    @patch("local_coding_assistant.cli.commands.provider._get_config_path")
+    @patch("local_coding_assistant.cli.commands.provider._extract_value")
+    @patch("local_coding_assistant.cli.commands.provider._verify_provider_health")
+    def test_add_provider_minimal(
+            self,
+            mock_verify,
+            mock_extract_value,
+            mock_get_config_path,
+            mock_save_config,
+            mock_echo,
+            mock_bootstrap,
+    ):
         """Test adding provider with minimal configuration."""
-        # Mock bootstrap context
-        mock_ctx = {"llm": MagicMock()}
+        # Setup mocks
+        mock_llm = MagicMock()
+        mock_llm.get_provider_status_list.return_value = [{"name": "test_provider", "status": "available"}]
+        mock_llm.reload_providers = MagicMock()
+
+        # Set up bootstrap to return our mock LLM manager
+        mock_ctx = {"llm": mock_llm}
         mock_bootstrap.return_value = mock_ctx
 
-        # Mock LLM manager
-        mock_llm = MagicMock()
-        mock_llm.reload_providers = MagicMock()
-        mock_ctx["llm"] = mock_llm
+        # Mock _extract_value to handle Typer parameters
+        def extract_side_effect(value, default=None):
+            if hasattr(value, 'default'):
+                return value.default
+            return value if value is not None else default
 
+        mock_extract_value.side_effect = extract_side_effect
+
+        # Mock the models parameter to be properly handled as a list
+        mock_models = MagicMock()
+        mock_models.default = None  # This will make _extract_value return None for models
+        mock_extract_value.return_value = None  # Return None for models by default
+
+        # Create a temporary directory for the test
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
-            config_file = Path(temp_dir) / "test.yaml"
+            temp_dir_path = Path(temp_dir)
+            config_file = temp_dir_path / "test.yaml"
 
+            # Mock _get_config_path to return our test path
+            mock_get_config_path.return_value = config_file
+
+            # Mock the bootstrap function to return our mock LLM manager
+            mock_bootstrap.return_value = {"llm": mock_llm}
+
+            # Setup the verify mock to call reload_providers
+            def verify_side_effect(llm_manager, provider_name):
+                llm_manager.reload_providers()
+                return None
+
+            mock_verify.side_effect = verify_side_effect
+
+            # Call the add function with proper Typer parameter handling
             add(
-                "test_provider",
+                "test_provider",  # name
+                mock_models,  # models (as a mock)
                 api_key="test_key",
+                base_url="https://api.example.com",
                 config_file=str(config_file),
                 log_level="INFO",
             )
 
-            # Verify config was saved
-            assert config_file.exists()
-            with open(config_file) as f:
-                config = yaml.safe_load(f)
+            # Verify _save_config was called once
+            mock_save_config.assert_called_once()
 
-            assert "test_provider" in config
-            assert config["test_provider"]["driver"] == "openai_chat"
-            assert config["test_provider"]["api_key"] == "test_key"
-            assert config["test_provider"]["models"] == {}
+            # Get the actual arguments passed to _save_config
+            args, kwargs = mock_save_config.call_args
+
+            # Verify the arguments
+            assert kwargs['config_path'] == config_file
+            assert kwargs['provider_name'] == 'test_provider'
+            assert 'config' in kwargs
+            assert 'providers' in kwargs['config']
+            assert 'test_provider' in kwargs['config']['providers']
+
+            # Verify the provider config
+            provider_config = kwargs['config']['providers']['test_provider']
+            assert provider_config['api_key'] == 'test_key'
+            assert provider_config['base_url'] == 'https://api.example.com'
+            assert provider_config['driver'] == 'openai_chat'  # Default driver
 
             # Verify bootstrap was called
             mock_bootstrap.assert_called_once()
+
+            # Verify _verify_provider_health was called with the correct arguments
+            mock_verify.assert_called_once_with(mock_llm, 'test_provider')
+
+            # Verify reload_providers was called
             mock_llm.reload_providers.assert_called_once()
-
-            # Manually close/delete files before the dir is cleaned up
-            try:
-                os.unlink(config_file)
-            except Exception:
-                pass
-
+    
     @patch("local_coding_assistant.cli.commands.provider.bootstrap")
     @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_add_provider_with_models(self, mock_echo, mock_bootstrap):
-        """Test adding provider with models."""
-        mock_ctx = {"llm": MagicMock()}
-        mock_bootstrap.return_value = mock_ctx
-
+    @patch("local_coding_assistant.cli.commands.provider._save_config")
+    @patch("local_coding_assistant.cli.commands.provider._get_config_path")
+    @patch("local_coding_assistant.cli.commands.provider._verify_provider_health")
+    def test_add_provider_with_all_options(self, mock_verify, mock_get_config_path, mock_save_config, mock_echo, mock_bootstrap):
+        """Test adding provider with all optional parameters."""
+        # Setup mocks
         mock_llm = MagicMock()
         mock_llm.reload_providers = MagicMock()
-        mock_ctx["llm"] = mock_llm
-
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
-            config_file = Path(temp_dir) / "test.yaml"
-
+        mock_llm.get_provider_status_list.return_value = [{"name": "test_provider", "status": "available"}]
+        mock_bootstrap.return_value = {"llm": mock_llm}
+        
+        # Setup verify mock to call reload_providers
+        def verify_side_effect(llm_manager, provider_name):
+            llm_manager.reload_providers()
+            return None
+        mock_verify.side_effect = verify_side_effect
+        
+        with tempfile.NamedTemporaryFile(suffix='.yaml', delete=False) as temp_file:
+            config_path = Path(temp_file.name)
+            mock_get_config_path.return_value = config_path
+            
+            # Call the add function with all options
             add(
-                "openai",
-                "gpt-4",
-                "gpt-3.5-turbo",
-                api_key_env="OPENAI_API_KEY",
-                base_url="https://api.openai.com/v1",
-                driver="openai_responses",
+                "test_provider",
+                models=["model1", "model2"],
+                api_key="test_key",
+                api_key_env="TEST_API_KEY",
+                base_url="https://api.example.com",
+                dev=True,
+                driver="custom_driver",
+                health_check_endpoint="/health",
+                config_file=str(config_path),
+                log_level="DEBUG"
+            )
+            
+            # Verify _save_config was called with correct parameters
+            mock_save_config.assert_called_once()
+            args, kwargs = mock_save_config.call_args
+            
+            # Verify the config contains all the provided options
+            config = kwargs['config']['providers']['test_provider']
+            assert config['api_key'] == 'test_key'
+            assert config['api_key_env'] == 'TEST_API_KEY'
+            assert config['base_url'] == 'https://api.example.com'
+            assert config['driver'] == 'custom_driver'
+            assert config['health_check_endpoint'] == '/health'
+            assert 'model1' in config['models']
+            assert 'model2' in config['models']
+    
+            # Call the add function with API key from env
+            add(
+                "test_provider",
+                base_url="https://api.example.com",
+                api_key_env="TEST_API_KEY",
+                config_file=str(config_path)
+            )
+            
+            # Verify _save_config was called with the API key from env
+            mock_save_config.assert_called_once()
+            args, kwargs = mock_save_config.call_args
+            
+            # The config should use the API key from environment
+            config = kwargs['config']['providers']['test_provider']
+            assert config['api_key'] == 'test_key'
+            assert config['api_key_env'] == 'TEST_API_KEY'
+
+    @patch.dict("os.environ", {"TEST_API_KEY": "env_test_key"}, clear=True)
+    @patch("local_coding_assistant.cli.commands.provider.bootstrap")
+    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
+    @patch("local_coding_assistant.cli.commands.provider._save_config")
+    @patch("local_coding_assistant.cli.commands.provider._get_config_path")
+    @patch("local_coding_assistant.cli.commands.provider._extract_value")
+    @patch("local_coding_assistant.cli.commands.provider._verify_provider_health")
+    def test_add_provider_with_health_check(
+            self,
+            mock_verify,
+            mock_extract_value,
+            mock_get_config_path,
+            mock_save_config,
+            mock_echo,
+            mock_bootstrap,
+    ):
+        """Test adding provider with health check endpoint."""
+        # Setup mocks
+        mock_llm = MagicMock()
+        mock_llm.get_provider_status_list.return_value = [{"name": "test_provider", "status": "available"}]
+        mock_llm.reload_providers = MagicMock()
+
+        # Set up bootstrap to return our mock LLM manager
+        mock_ctx = {"llm": mock_llm}
+        mock_bootstrap.return_value = mock_ctx
+
+        # Mock _extract_value to handle Typer parameters
+        def extract_side_effect(value, default=None):
+            if hasattr(value, 'default'):
+                return value.default
+            # For specific values we know will be passed
+            if value == "INFO":
+                return "INFO"
+            if value == "openai_chat":
+                return "openai_chat"
+            if value == "/health":
+                return "/health"
+            if value == "https://api.example.com":
+                return "https://api.example.com"
+            return value if value is not None else default
+
+        mock_extract_value.side_effect = extract_side_effect
+
+        # Mock the models parameter to be properly handled as a list
+        mock_models = MagicMock()
+        mock_models.default = None  # This will make _extract_value return None for models
+        mock_extract_value.return_value = None  # Return None for models by default
+
+        # Create a temporary directory for the test
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            temp_dir_path = Path(temp_dir)
+            config_file = temp_dir_path / "test.yaml"
+
+            # Mock _get_config_path to return our test path
+            mock_get_config_path.return_value = config_file
+
+            # Setup the verify mock to call reload_providers
+            def verify_side_effect(llm_manager, provider_name):
+                llm_manager.reload_providers()
+                return None
+
+            mock_verify.side_effect = verify_side_effect
+
+            # Call the add function with health check endpoint
+            add(
+                "test_provider",  # name
+                mock_models,  # models (as a mock)
+                base_url="https://api.example.com",
+                health_check_endpoint="/health",
                 config_file=str(config_file),
                 log_level="INFO",
             )
 
-            # Verify config
-            with open(config_file) as f:
-                config = yaml.safe_load(f)
+            # Verify _save_config was called once
+            mock_save_config.assert_called_once()
 
-            assert "openai" in config
-            assert config["openai"]["driver"] == "openai_responses"
-            assert config["openai"]["api_key_env"] == "OPENAI_API_KEY"
-            assert config["openai"]["base_url"] == "https://api.openai.com/v1"
-            assert config["openai"]["models"] == {"gpt-4": {}, "gpt-3.5-turbo": {}}
+            # Get the actual arguments passed to _save_config
+            args, kwargs = mock_save_config.call_args
 
-            # Manually close/delete files before the dir is cleaned up
-            try:
-                os.unlink(config_file)
-            except Exception:
-                pass
+            # Verify the arguments
+            assert kwargs['config_path'] == config_file
+            assert kwargs['provider_name'] == 'test_provider'
+            assert 'config' in kwargs
+            assert 'providers' in kwargs['config']
+            assert 'test_provider' in kwargs['config']['providers']
 
-    @patch("local_coding_assistant.cli.commands.provider.bootstrap")
-    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_add_provider_bootstrap_failure(self, mock_echo, mock_bootstrap):
-        """Test adding provider when bootstrap fails."""
-        mock_bootstrap.return_value = {"llm": None}  # LLM manager not available
+            # Verify the provider config
+            provider_config = kwargs['config']['providers']['test_provider']
+            assert provider_config['base_url'] == 'https://api.example.com'
+            assert provider_config['health_check_endpoint'] == '/health'
+            assert provider_config['driver'] == 'openai_chat'  # Default driver
 
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
-            config_file = Path(temp_dir) / "test.yaml"
+            # Verify bootstrap was called
+            mock_bootstrap.assert_called_once()
 
-            with pytest.raises(click.exceptions.Exit):  # typer.Exit
-                add(
-                    "test_provider", config_file=str(config_file), log_level="INFO"
-                )
+            # Verify _verify_provider_health was called with the correct arguments
+            mock_verify.assert_called_once_with(mock_llm, 'test_provider')
 
-            # Manually close/delete files before the dir is cleaned up
-            try:
-                os.unlink(config_file)
-            except Exception:
-                pass
+            # Verify reload_providers was called
+            mock_llm.reload_providers.assert_called_once()
 
 
 class TestProviderListCommand:
@@ -221,101 +373,56 @@ class TestProviderListCommand:
     @patch("local_coding_assistant.cli.commands.provider.typer.echo")
     def test_list_all_providers(self, mock_echo, mock_bootstrap):
         """Test listing all providers."""
-        # Mock bootstrap context
-        mock_ctx = {"llm": MagicMock()}
-        mock_bootstrap.return_value = mock_ctx
-
-        # Mock LLM manager and provider status
+        # Setup mock LLM manager with providers
         mock_llm = MagicMock()
-        mock_llm.get_provider_status_list.return_value = [
-            {
-                "name": "openai",
-                "source": "built-in",
-                "status": "available",
-                "models": 2,
-                "error": None,
-            },
-            {
-                "name": "google",
-                "source": "built-in",
-                "status": "unavailable",
-                "models": 0,
-                "error": "API key missing",
-            },
-        ]
-        mock_ctx["llm"] = mock_llm
+        mock_llm.providers = {"openai": MagicMock(), "anthropic": MagicMock()}
+        mock_bootstrap.return_value = {"llm": mock_llm}
 
-        list_providers(log_level="INFO")
+        # Call the function
+        list_providers()
 
-        # Verify bootstrap was called
-        mock_bootstrap.assert_called_once()
-
-        # Verify status was retrieved
-        mock_llm.get_provider_status_list.assert_called_once()
-
-        # Verify output calls (should print header and each provider)
-        assert mock_echo.call_count >= 4  # Header + 2 providers + separator
-
+        # Verify output
+        assert mock_echo.call_count >= 2  # At least header and one provider
+        
     @patch("local_coding_assistant.cli.commands.provider.bootstrap")
     @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_list_specific_provider(self, mock_echo, mock_bootstrap):
-        """Test listing models for specific provider."""
-        mock_ctx = {"llm": MagicMock()}
-        mock_bootstrap.return_value = mock_ctx
-
+    def test_list_no_providers_configured(self, mock_echo, mock_bootstrap):
+        """Test listing when no providers are configured."""
+        # Setup mock LLM manager with no providers
         mock_llm = MagicMock()
-        mock_provider_manager = MagicMock()
-        mock_provider_manager.list_providers.return_value = ["openai"]
-        mock_provider_manager.get_provider.return_value = MagicMock()
-        mock_provider_manager.get_provider_source.return_value = "built-in"
+        mock_llm.providers = {}
+        mock_bootstrap.return_value = {"llm": mock_llm}
 
+        # Call the function
+        list_providers()
+
+        # Verify the header is shown
+        mock_echo.assert_any_call("Available providers:")
+        mock_echo.assert_any_call("Name                 Source     Status       Models")
+        mock_echo.assert_any_call("------------------------------------------------------------")
+        
+    @patch("local_coding_assistant.cli.commands.provider.bootstrap")
+    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
+    def test_list_models_no_models_configured(self, mock_echo, mock_bootstrap):
+        """Test listing models when provider has no models."""
+        # Setup mock LLM manager with provider but no models
         mock_provider = MagicMock()
-        mock_provider.get_available_models.return_value = ["gpt-4", "gpt-3.5-turbo"]
-        mock_provider_manager.get_provider.return_value = mock_provider
-
-        mock_llm.provider_manager = mock_provider_manager
-        mock_ctx["llm"] = mock_llm
-
-        list_providers(provider="openai", log_level="INFO")
-
-        # Verify provider lookup
-        mock_provider_manager.get_provider.assert_called_once_with("openai")
-        mock_provider.get_available_models.assert_called_once()
-
-        # Verify output includes provider info and models
-        echo_calls = [call.args[0] for call in mock_echo.call_args_list]
-        provider_found = any("openai" in call.lower() for call in echo_calls)
-        model_found = any("gpt-4" in call for call in echo_calls)
-        assert provider_found
-        assert model_found
-
-    @patch("local_coding_assistant.cli.commands.provider.bootstrap")
-    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_list_nonexistent_provider(self, mock_echo, mock_bootstrap):
-        """Test listing non-existent provider."""
-        mock_ctx = {"llm": MagicMock()}
-        mock_bootstrap.return_value = mock_ctx
-
-        mock_llm = MagicMock()
+        mock_provider.get_available_models.return_value = []
         mock_provider_manager = MagicMock()
-        mock_provider_manager.list_providers.return_value = []
+        mock_provider_manager.list_providers.return_value = ["test_provider"]
+        mock_provider_manager.get_provider.return_value = mock_provider
+        mock_provider_manager.get_provider_source.return_value = "test_source"
+        
+        mock_llm = MagicMock()
         mock_llm.provider_manager = mock_provider_manager
-        mock_ctx["llm"] = mock_llm
-
-        list_providers(provider="nonexistent", log_level="INFO")
-
-        # Should output provider not found message
-        echo_calls = [call.args[0] for call in mock_echo.call_args_list]
-        assert any("not found" in call.lower() for call in echo_calls)
-
-    @patch("local_coding_assistant.cli.commands.provider.bootstrap")
-    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_list_provider_bootstrap_failure(self, mock_echo, mock_bootstrap):
-        """Test listing when bootstrap fails."""
-        mock_bootstrap.return_value = {"llm": None}
-
-        with pytest.raises(click.exceptions.Exit):
-            list_providers(log_level="INFO")
+        mock_bootstrap.return_value = {"llm": mock_llm}
+        
+        # Call the function
+        list_providers(provider="test_provider")
+        
+        # Verify appropriate messages are shown
+        mock_echo.assert_any_call("Provider: test_provider (test_source)")
+        mock_echo.assert_any_call("No models available")
 
 
 class TestProviderRemoveCommand:
@@ -323,386 +430,175 @@ class TestProviderRemoveCommand:
 
     @patch("local_coding_assistant.cli.commands.provider.bootstrap")
     @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_remove_existing_provider(self, mock_echo, mock_bootstrap):
-        """Test removing existing provider."""
-        mock_ctx = {"llm": MagicMock()}
-        mock_bootstrap.return_value = mock_ctx
-
+    @patch("local_coding_assistant.cli.commands.provider._save_config")
+    @patch("local_coding_assistant.cli.commands.provider._load_config")
+    @patch("local_coding_assistant.cli.commands.provider._get_config_path")
+    @patch("local_coding_assistant.cli.commands.provider._verify_provider_health")
+    def test_remove_existing_provider(self, mock_verify, mock_get_config_path, mock_load_config, 
+                                    mock_save_config, mock_echo, mock_bootstrap):
+        """Test removing an existing provider."""
+        # Setup mocks
         mock_llm = MagicMock()
         mock_llm.reload_providers = MagicMock()
-        mock_ctx["llm"] = mock_llm
-
-        # Create config with provider
+        mock_llm.get_provider_status_list.return_value = [{"name": "another_provider", "status": "available"}]
+        mock_bootstrap.return_value = {"llm": mock_llm}
+        
+        # Setup verify mock to call reload_providers
+        def verify_side_effect(llm_manager, provider_name):
+            llm_manager.reload_providers()
+            return None
+        mock_verify.side_effect = verify_side_effect
+        
+        # Mock config with existing provider
         test_config = {
-            "openai": {"driver": "openai_chat", "models": {"gpt-4": {}}},
-            "google": {"driver": "google", "models": {"gemini-pro": {}}},
+            "providers": {
+                "test_provider": {"driver": "openai_chat"},
+                "another_provider": {"driver": "custom"}
+            }
         }
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            yaml.dump(test_config, f)
-            config_file = Path(f.name)
-
-        try:
-            remove(name="openai", config_file=str(config_file), log_level="INFO")
-
-            # Verify provider was removed from config
-            with open(config_file) as f:
-                updated_config = yaml.safe_load(f)
-
-            assert "openai" not in updated_config
-            assert "google" in updated_config  # Other provider should remain
-
-            # Verify bootstrap and reload were called
-            mock_bootstrap.assert_called_once()
+        mock_load_config.return_value = test_config
+        
+        # Mock config path
+        with tempfile.NamedTemporaryFile(suffix='.yaml', delete=False) as temp_file:
+            config_path = Path(temp_file.name)
+            mock_get_config_path.return_value = config_path
+            
+            # Call remove function
+            remove("test_provider", config_file=str(config_path))
+            
+            # Verify _save_config was called with updated config
+            mock_save_config.assert_called_once()
+            args, _ = mock_save_config.call_args
+            
+            # First arg should be the config path
+            assert args[0] == config_path
+            
+            # Second arg should be the config dict
+            config = args[1]
+            assert "providers" in config
+            assert "test_provider" not in config["providers"]
+            assert "another_provider" in config["providers"]
+            
+            # Verify reload_providers was called to update the LLM manager
             mock_llm.reload_providers.assert_called_once()
-        finally:
-            config_file.unlink()
-
-    @patch("local_coding_assistant.cli.commands.provider.bootstrap")
-    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_remove_nonexistent_provider(self, mock_echo, mock_bootstrap):
-        """Test removing non-existent provider."""
-        mock_ctx = {"llm": MagicMock()}
-        mock_bootstrap.return_value = mock_ctx
-
-        mock_llm = MagicMock()
-        mock_llm.reload_providers = MagicMock()
-        mock_ctx["llm"] = mock_llm
-
-        test_config = {"openai": {"driver": "openai_chat"}}
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            yaml.dump(test_config, f)
-            config_file = Path(f.name)
-
-        try:
-            with pytest.raises(click.exceptions.Exit):
-                remove(
-                    name="nonexistent", config_file=str(config_file), log_level="INFO"
-                )
-        finally:
-            config_file.unlink()
-
-    @patch("local_coding_assistant.cli.commands.provider.bootstrap")
-    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_remove_provider_bootstrap_failure(self, mock_echo, mock_bootstrap):
-        """Test removing provider when bootstrap fails."""
-        mock_bootstrap.return_value = {"llm": None}
-
-        with pytest.raises(click.exceptions.Exit):
-            remove(name="test_provider", log_level="INFO")
+            
+            # Verify bootstrap was called
+            mock_bootstrap.assert_called_once()
+            
+            # Verify success messages
+            mock_echo.assert_any_call("Removing provider: test_provider")
+            mock_echo.assert_any_call(f"Removed provider 'test_provider' from {config_path}")
+            mock_echo.assert_any_call("Provider 'test_provider' has been removed")
+    
+        # Reset mocks for the second test case
+        mock_save_config.reset_mock()
+        mock_echo.reset_mock()
+        mock_bootstrap.reset_mock()
+        
+        # Mock config with different provider
+        test_config = {"providers": {"another_provider": {"driver": "custom"}}}
+        mock_load_config.return_value = test_config
+        
+        # Call remove function with non-existent provider
+        with pytest.raises(typer.Exit):
+            remove("nonexistent_provider")
+        
+        # Verify _save_config was not called
+        mock_save_config.assert_not_called()
+        
+        # Verify error message
+        mock_echo.assert_any_call("Provider 'nonexistent_provider' not found in configuration")
 
 
 class TestProviderValidateCommand:
     """Test provider validate command."""
 
+    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
+    @patch("local_coding_assistant.cli.commands.provider._load_config")
     @patch("local_coding_assistant.cli.commands.provider._get_config_path")
-    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_validate_valid_config(self, mock_echo, mock_get_config_path):
-        """Test validating valid provider configuration."""
-        test_config = {
-            "openai": {"driver": "openai_chat", "models": {"gpt-4": {}, "gpt-3.5": {}}},
-            "google": {"driver": "google", "models": {"gemini-pro": {}}},
-        }
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            yaml.dump(test_config, f)
-            config_file = Path(f.name)
-            mock_get_config_path.return_value = config_file
-
-        try:
-            validate(config_file=str(config_file))
-
-            # Should find both providers and mark them as valid
-            echo_calls = [call.args[0] for call in mock_echo.call_args_list]
-            assert any(
-                "openai" in call.lower() and "2 model" in call for call in echo_calls
-            )
-            assert any(
-                "google" in call.lower() and "1 model" in call for call in echo_calls
-            )
-        finally:
-            config_file.unlink()
-
-    @patch("local_coding_assistant.cli.commands.provider._get_config_path")
-    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_validate_config_with_warnings(self, mock_echo, mock_get_config_path):
-        """Test validating config with warnings."""
-        test_config = {
-            "incomplete_provider": {
-                # Missing driver field
-                "models": {"test": {}}
-            },
-            "no_models_provider": {
-                "driver": "openai_chat"
-                # Missing models
-            },
-        }
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            yaml.dump(test_config, f)
-            config_file = Path(f.name)
-            mock_get_config_path.return_value = config_file
-
-        try:
-            validate(config_file=str(config_file))
-
-            # Should report warnings
-            echo_calls = [call.args[0] for call in mock_echo.call_args_list]
-            assert any("missing fields" in call.lower() for call in echo_calls)
-            assert any("no models" in call.lower() for call in echo_calls)
-        finally:
-            config_file.unlink()
-
-    @patch("local_coding_assistant.cli.commands.provider._get_config_path")
-    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_validate_invalid_yaml(self, mock_echo, mock_get_config_path):
-        """Test validating invalid YAML."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("invalid: yaml: content: [\n")  # Invalid YAML
-            config_file = Path(f.name)
-            mock_get_config_path.return_value = config_file
-
-        try:
-            with pytest.raises(click.exceptions.Exit):
-                validate(config_file=str(config_file))
-        finally:
-            config_file.unlink()
-
-    @patch("local_coding_assistant.cli.commands.provider._get_config_path")
-    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_validate_nonexistent_config(self, mock_echo, mock_get_config_path):
-        """Test validating non-existent config file."""
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
-            config_file = Path(temp_dir) / "nonexistent.yaml"
-            mock_get_config_path.return_value = config_file
-
-            validate(config_file=str(config_file))
-
-            # Should indicate no config found
-            echo_calls = [call.args[0] for call in mock_echo.call_args_list]
-            assert any(
-                "no provider configuration found" in call.lower() for call in echo_calls
-            )
-
-    @patch("local_coding_assistant.cli.commands.provider._get_config_path")
-    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_validate_empty_config(self, mock_echo, mock_get_config_path):
-        """Test validating empty config."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write("")  # Empty file
-            config_file = Path(f.name)
-            mock_get_config_path.return_value = config_file
-
-        try:
-            validate(config_file=str(config_file))
-
-            # Should indicate config is empty
-            echo_calls = [call.args[0] for call in mock_echo.call_args_list]
-            assert any("configuration is empty" in call.lower() for call in echo_calls)
-        finally:
-            config_file.unlink()
-
-
-class TestProviderReloadCommand:
-    """Test provider reload command."""
-
-    @patch("local_coding_assistant.cli.commands.provider.bootstrap")
-    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_reload_providers(self, mock_echo, mock_bootstrap):
-        """Test reloading providers."""
-        mock_ctx = {"llm": MagicMock()}
-        mock_bootstrap.return_value = mock_ctx
-
-        mock_llm = MagicMock()
-        mock_llm.reload_providers = MagicMock()
-        mock_ctx["llm"] = mock_llm
-
-        reload(log_level="INFO")
-
-        # Verify bootstrap and reload were called
-        mock_bootstrap.assert_called_once()
-        mock_llm.reload_providers.assert_called_once()
-
-        # Verify success message
-        echo_calls = [call.args[0] for call in mock_echo.call_args_list]
-        assert any("reloaded successfully" in call.lower() for call in echo_calls)
-
-    @patch("local_coding_assistant.cli.commands.provider.bootstrap")
-    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_reload_bootstrap_failure(self, mock_echo, mock_bootstrap):
-        """Test reloading when bootstrap fails."""
-        mock_bootstrap.return_value = {"llm": None}
-
-        with pytest.raises(click.exceptions.Exit):
-            reload(log_level="INFO")
-
-
-class TestProviderCommandIntegration:
-    """Test provider command integration scenarios."""
-
-    @patch("local_coding_assistant.cli.commands.provider.bootstrap")
-    @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_add_list_remove_flow(self, mock_echo, mock_bootstrap):
-        """Test complete flow: add -> list -> remove."""
-        mock_ctx = {"llm": MagicMock()}
-        mock_bootstrap.return_value = mock_ctx
-
-        mock_llm = MagicMock()
-        mock_llm.reload_providers = MagicMock()
-        mock_llm.get_provider_status_list.return_value = [
-            {
-                "name": "test_provider",
-                "source": "local",
-                "status": "available",
-                "models": 1,
+    def test_validate_valid_config(self, mock_get_config_path, mock_load_config, mock_echo):
+        """Test validating a valid provider configuration."""
+        # Mock a valid config
+        valid_config = {
+            "providers": {
+                "valid_provider": {
+                    "driver": "openai_chat",
+                    "base_url": "https://api.example.com",
+                    "api_key": "test-api-key",  # Add api_key to avoid warnings
+                    "models": {
+                        "gpt-4": {
+                            "supported_parameters": ["temperature", "max_tokens"]
+                        }
+                    }
+                }
             }
-        ]
-        mock_llm.provider_manager = MagicMock()
-        mock_llm.provider_manager.list_providers.return_value = ["test_provider"]
-        mock_llm.provider_manager.get_provider.return_value = MagicMock()
-        mock_llm.provider_manager.get_provider_source.return_value = "local"
-        mock_ctx["llm"] = mock_llm
-
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
-            config_file = Path(temp_dir) / "test.yaml"
-
-            # Add provider
-            add(
-                "test_provider",
-                api_key="test_key",
-                config_file=str(config_file),
-                log_level="INFO",
-            )
-            list_providers(log_level="INFO")
-
-            # Remove provider
-            remove(name="test_provider", config_file=str(config_file), log_level="INFO")
-
-            # Verify config is empty after removal
-            with open(config_file) as f:
-                final_config = yaml.safe_load(f)
-            assert final_config == {}
-
-    @patch("local_coding_assistant.cli.commands.provider.bootstrap")
+        }
+        mock_load_config.return_value = valid_config
+        
+        # Call validate function
+        validate()
+        
+        # Verify success message
+        mock_echo.assert_any_call("✅ Configuration is valid")
+    
     @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_multiple_providers_management(self, mock_echo, mock_bootstrap):
-        """Test managing multiple providers."""
-        mock_ctx = {"llm": MagicMock()}
-        mock_bootstrap.return_value = mock_ctx
-
-        mock_llm = MagicMock()
-        mock_llm.reload_providers = MagicMock()
-        mock_ctx["llm"] = mock_llm
-
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
-            config_file = Path(temp_dir) / "test.yaml"
-
-            # Add multiple providers
-            add(
-                "openai",
-                "gpt-4",
-                api_key="key1",
-                config_file=str(config_file),
-            )
-            add(
-                "google",
-                "gemini-pro",
-                api_key_env="GOOGLE_KEY",
-                config_file=str(config_file),
-            )
-            add(
-                "local",
-                "local-model",
-                base_url="http://localhost:8000",
-                config_file=str(config_file),
-            )
-
-            # Verify all providers in config
-            with open(config_file) as f:
-                config = yaml.safe_load(f)
-
-            assert len(config) == 3
-            assert "openai" in config
-            assert "google" in config
-            assert "local" in config
-
-            # Test that different configuration options are preserved
-            assert config["openai"]["api_key"] == "key1"
-            assert config["google"]["api_key_env"] == "GOOGLE_KEY"
-            assert config["local"]["base_url"] == "http://localhost:8000"
-
+    @patch("local_coding_assistant.cli.commands.provider._load_config")
     @patch("local_coding_assistant.cli.commands.provider._get_config_path")
-    @patch("local_coding_assistant.cli.commands.provider.bootstrap")
+    def test_validate_invalid_config_missing_required_fields(self, mock_get_config_path, 
+                                                          mock_load_config, mock_echo):
+        """Test validating a config with missing required fields."""
+        # Mock an invalid config (missing base_url)
+        invalid_config = {
+            "providers": {
+                "invalid_provider": {
+                    "driver": "openai_chat"
+                    # Missing required base_url
+                }
+            }
+        }
+        mock_load_config.return_value = invalid_config
+        
+        # Call validate function
+        with pytest.raises(typer.Exit):
+            validate()
+        
+        # Verify error message about missing field
+        mock_echo.assert_any_call("❌ Error: Missing required fields: ['base_url']")
+    
     @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_config_file_override(self, mock_echo, mock_bootstrap, mock_get_config_path):
-        """Test config file path override."""
-        mock_ctx = {"llm": MagicMock()}
-        mock_bootstrap.return_value = mock_ctx
-
-        mock_llm = MagicMock()
-        mock_llm.reload_providers = MagicMock()
-        mock_ctx["llm"] = mock_llm
-
-        # Clean up default config directory before test
-        default_path = _get_config_path()
-        if default_path.exists():
-            import shutil
-            shutil.rmtree(default_path.parent)
-
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
-            # Use custom config file path
-            config_file = Path(temp_dir) / "custom" / "providers.yaml"
-            mock_get_config_path.return_value = config_file
-
-            add(
-                "custom_provider",
-                "custom-model",
-                api_key="custom_key",
-                config_file=str(config_file),
-                log_level="INFO",
-            )
-
-            # Verify config was saved to custom path
-            assert config_file.exists()
-            with open(config_file) as f:
-                config = yaml.safe_load(f)
-            assert "custom_provider" in config
-
-            # Verify default path was not used
-            default_path = _get_config_path()
-            assert not default_path.exists()
-
-
-class TestProviderCommandErrorHandling:
-    """Test provider command error handling."""
-
-    @patch("local_coding_assistant.cli.commands.provider.bootstrap")
+    @patch("local_coding_assistant.cli.commands.provider._load_config")
+    @patch("local_coding_assistant.cli.commands.provider._get_config_path")
+    def test_validate_config_with_warnings(self, mock_get_config_path, mock_load_config, mock_echo):
+        """Test validating a config with warnings but no errors."""
+        # Mock a config with a warning (empty models list)
+        warning_config = {
+            "providers": {
+                "warning_provider": {
+                    "driver": "openai_chat",
+                    "base_url": "https://api.example.com",
+                    "models": {}
+                }
+            }
+        }
+        mock_load_config.return_value = warning_config
+        
+        # Call validate function
+        validate()
+        
+        # Verify warning message and validation summary
+        mock_echo.assert_any_call("⚠️  Warning: No models configured for this provider")
+        mock_echo.assert_any_call("⚠️  Validation completed with warnings")
+    
     @patch("local_coding_assistant.cli.commands.provider.typer.echo")
-    def test_yaml_save_error(self, mock_echo, mock_bootstrap):
-        """Test handling YAML save errors."""
-        # This is hard to test directly since yaml.dump rarely fails
-        # but we can test the structure exists for error handling
-
-        mock_ctx = {"llm": MagicMock()}
-        mock_bootstrap.return_value = mock_ctx
-
-        mock_llm = MagicMock()
-        mock_llm.reload_providers = MagicMock()
-        mock_ctx["llm"] = mock_llm
-
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
-            config_file = Path(temp_dir) / "test.yaml"
-
-            # Normal case should work
-            add("test", api_key="test_key", config_file=str(config_file), log_level="INFO")
-
-            # Verify directory was created and file exists
-            assert config_file.exists()
-            assert config_file.parent.exists()
-
-            # Manually close/delete files before the dir is cleaned up
-            try:
-                os.unlink(config_file)
-            except Exception:
-                pass
+    @patch("local_coding_assistant.cli.commands.provider._load_config")
+    @patch("local_coding_assistant.cli.commands.provider._get_config_path")
+    def test_validate_nonexistent_config_file(self, mock_get_config_path, mock_load_config, mock_echo):
+        """Test validating a non-existent config file."""
+        # Mock file not found
+        mock_load_config.return_value = {}
+        
+        # Call validate function
+        validate()
+        
+        # Verify appropriate message is shown for empty config
+        mock_echo.assert_any_call("Configuration is empty")

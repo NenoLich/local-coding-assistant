@@ -21,7 +21,11 @@ class AgentError(LocalAssistantError):
 
 
 class LLMError(AgentError):
-    """Raised for issues specific to LLM communication or generation."""
+    """Raised for issues specific to LLM communication or generation.
+
+    This class combines the core LLM error handling with provider-specific
+    error handling.
+    """
 
     subsystem = "llm"
 

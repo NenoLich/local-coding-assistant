@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from local_coding_assistant.config.env_loader import EnvLoader
+from local_coding_assistant.config.env_manager import EnvManager
 from local_coding_assistant.config.schemas import AppConfig
 from local_coding_assistant.utils.logging import get_logger
 
@@ -30,18 +30,17 @@ class ConfigManager:
     def __init__(
         self,
         config_paths: list[Path] | None = None,
-        env_loader: EnvLoader | None = None,
+        env_manager: EnvManager | None = None,
     ):
         """Initialize the config manager.
 
         Args:
             config_paths: Optional list of paths to YAML config files to load
-            env_loader: Optional EnvLoader instance (creates default if not provided)
+            env_manager: Optional EnvManager instance (creates default if not provided)
         """
         self.config_paths = config_paths or []
-        self.env_loader = env_loader or EnvLoader()
+        self.env_manager = env_manager or EnvManager()
         self._defaults_path = Path(__file__).parent / "defaults.yaml"
-
         # 3-layer configuration storage
         self._global_config: AppConfig | None = None
         self._session_overrides: dict[str, Any] = {}
@@ -77,7 +76,7 @@ class ConfigManager:
                 )
 
         # Merge environment variables (highest priority in global layer)
-        env_data = self.env_loader.get_config_from_env()
+        env_data = self.env_manager.get_config_from_env()
         if env_data:
             config_data = self._deep_merge(config_data, env_data)
             logger.debug(f"Merged {len(env_data)} environment variables")

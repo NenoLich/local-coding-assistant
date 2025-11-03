@@ -13,6 +13,8 @@ wheels/
 .resources/
 .journal/
 .temp/
+.continue/
+.windsurf/
 
 # IDE specific
 .idea/
@@ -21,8 +23,8 @@ vscode/
 *.swo
 
 # Local development
-.env
 .env.local
+src/local_coding_assistant/config/providers.local.yaml
 
 # Logs
 *.log

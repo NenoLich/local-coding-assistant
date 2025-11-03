@@ -233,7 +233,7 @@ class TestEndToEndReasoningChain:
         # Mock handlers to simulate streaming scenario
         streaming_chunks = []
 
-        async def mock_observe():
+        def mock_observe():
             return {
                 "content": "Test observation for streaming",
                 "metadata": {"session_id": "streaming_test"},
@@ -352,7 +352,7 @@ class TestAgentLoopIntegration:
         )
 
         # Simple mock handlers for this test
-        async def mock_observe():
+        def mock_observe():
             return {
                 "content": "Complex problem requiring multi-step reasoning",
                 "metadata": {"session_id": "complex_test"},
@@ -430,7 +430,7 @@ class TestAgentLoopIntegration:
             max_iterations=3,
         )
 
-        async def mock_observe():
+        def mock_observe():
             return {
                 "content": "Test observation",
                 "metadata": {"session_id": "error_test"},

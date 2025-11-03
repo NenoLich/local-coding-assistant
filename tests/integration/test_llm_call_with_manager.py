@@ -3,36 +3,45 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from local_coding_assistant.agent.llm_manager import (
-    LLMConfig,
     LLMManager,
     LLMRequest,
     LLMResponse,
 )
+from local_coding_assistant.providers import ProviderLLMResponse
 
 
 def make_test_llm_manager():
     """Create a test LLM manager setup for integration testing."""
-    config = LLMConfig(
-        model_name="gpt-3.5-turbo", provider="openai", temperature=0.5, max_tokens=100
+    # Create a mock provider manager for testing
+    mock_provider_manager = MagicMock()
+    mock_provider_manager.list_providers.return_value = ["test_provider"]
+
+    # Create a mock provider
+    mock_provider = AsyncMock()
+    mock_provider.name = "test_provider"
+    mock_provider.generate_with_retry = AsyncMock(
+        return_value=ProviderLLMResponse(
+            content="Test response from provider",
+            model="test-model",
+            tokens_used=50,
+            tool_calls=None,
+            finish_reason="stop",
+        )
     )
 
-    with patch.object(LLMManager, "_setup_openai_client"):
-        # Mock successful OpenAI response
-        mock_response = MagicMock()
-        mock_response.model = "gpt-3.5-turbo"
-        mock_response.usage.total_tokens = 25
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "Test response"
-        mock_response.choices[0].message.tool_calls = None
+    mock_provider_manager.get_provider.return_value = mock_provider
 
-        mock_client = AsyncMock()
-        mock_client.chat.completions.create.return_value = mock_response
+    # Create LLM manager with mocked provider system
+    with patch("local_coding_assistant.config.get_config_manager"):
+        with patch("local_coding_assistant.agent.llm_manager.ProviderManager") as mock_pm_class:
+            mock_pm_class.return_value = mock_provider_manager
 
-        llm = LLMManager.__new__(LLMManager)
-        llm.config = config
-        llm.client = mock_client
+            llm = LLMManager.__new__(LLMManager)
+            llm.provider_manager = mock_provider_manager
+            llm.config_manager = MagicMock()
+            llm.router = MagicMock()
 
-        return llm
+            return llm
 
 
 class TestLLMManagerIntegration:
@@ -41,29 +50,30 @@ class TestLLMManagerIntegration:
     @pytest.mark.asyncio
     async def test_full_request_response_cycle(self):
         """Test complete request-response cycle."""
-        config = LLMConfig(
-            model_name="gpt-5-mini", provider="openai", temperature=0.5, max_tokens=100
+        # Create mock provider for testing
+        mock_provider = AsyncMock()
+        mock_provider.name = "test_provider"
+        mock_provider.generate_with_retry = AsyncMock(
+            return_value=ProviderLLMResponse(
+                content="Integration test response",
+                model="test-model",
+                tokens_used=50,
+                tool_calls=None,
+                finish_reason="stop",
+            )
         )
 
-        with patch.object(LLMManager, "_setup_openai_client"):
-            # Mock successful OpenAI response for NEW Responses API
-            mock_response = MagicMock()
-            mock_response.configure_mock(
-                model="gpt-5-mini",
-                usage=MagicMock(output_tokens=25),
-                output=[MagicMock()],
-            )
-            # Configure the output structure for new Responses API
-            mock_response.output[0].configure_mock(
-                content=[MagicMock(text="Integration test response")]
-            )
+        # Create mock router
+        mock_router = AsyncMock()
+        mock_router.get_provider_for_request = AsyncMock(
+            return_value=(mock_provider, "test-model")
+        )
 
-            mock_client = AsyncMock()
-            mock_client.responses.create.return_value = mock_response
-
+        with patch("local_coding_assistant.config.get_config_manager"):
             llm = LLMManager.__new__(LLMManager)
-            llm.config = config
-            llm.client = mock_client
+            llm.router = mock_router
+            llm.provider_manager = MagicMock()
+            llm.config_manager = MagicMock()
 
             request = LLMRequest(
                 prompt="Integration test prompt",
@@ -76,18 +86,12 @@ class TestLLMManagerIntegration:
             # Verify response structure
             assert isinstance(response, LLMResponse)
             assert response.content == "Integration test response"
-            assert response.model_used == "gpt-5-mini"
-            assert response.tokens_used == 25
+            assert response.model_used == "test-model"
+            assert response.tokens_used == 50
 
-            # Verify OpenAI API was called correctly
-            call_args = mock_client.responses.create.call_args
-            messages = call_args[1]["input"]
-            assert len(messages) == 3  # system + context + prompt
-            assert messages[0]["role"] == "system"
-            assert messages[1]["role"] == "user"
-            assert messages[2]["role"] == "user"
-            assert call_args[1]["temperature"] == 0.5
-            assert call_args[1]["model"] == "gpt-5-mini"
+            # Verify provider was called correctly
+            mock_provider.generate_with_retry.assert_called_once()
+            mock_router.get_provider_for_request.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_llm_tool_calls_are_executed(self):

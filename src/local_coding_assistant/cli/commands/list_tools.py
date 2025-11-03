@@ -2,6 +2,7 @@
 
 import json
 import logging
+from typing import Literal
 
 import typer
 
@@ -27,12 +28,21 @@ def list_available(
         "All", "--cat", help="Filter tools by category (unused)"
     ),
     json_out: bool = typer.Option(False, "--json", help="Output as JSON"),
-    log_level: str = typer.Option(
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = typer.Option(
         "INFO", "--log-level", help="Logging level (e.g., DEBUG, INFO, WARNING)"
     ),
 ) -> None:
     """List all available tools."""
-    level = getattr(logging, log_level.upper(), logging.INFO)
+    # Convert log_level to string and validate it's one of the allowed values
+    log_level_str = log_level.default if hasattr(log_level, "default") else log_level
+    log_level_str = str(log_level_str).upper()
+
+    # Ensure the log level is one of the allowed values
+    allowed_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    if log_level_str not in allowed_levels:
+        log_level_str = "INFO"  # Default to INFO if invalid
+
+    level = getattr(logging, log_level_str, logging.INFO)
     ctx = bootstrap(log_level=level)
 
     tools = ctx.get("tools")

@@ -2,8 +2,8 @@
 Local provider implementation for offline/local models
 """
 
-from .base import BaseProvider, ProviderLLMRequest, ProviderLLMResponse
-from .provider_manager import register_provider
+from local_coding_assistant.providers.base import BaseProvider
+from local_coding_assistant.providers.provider_manager import register_provider
 
 
 @register_provider("local")
@@ -30,8 +30,13 @@ class LocalProvider(BaseProvider):
         # and don't require authentication
         api_key = api_key or "dummy_key_for_local"
 
+        if kwargs["name"]:
+            name = kwargs.pop("name")
+        else:
+            name = "local"
+
         super().__init__(
-            name="local",
+            name=name,
             api_key=api_key,
             api_key_env=api_key_env,
             base_url=base_url,
@@ -40,9 +45,14 @@ class LocalProvider(BaseProvider):
             **kwargs,
         )
 
-    async def generate(self, request: ProviderLLMRequest) -> ProviderLLMResponse:
-        """Generate response using local model"""
-        return await self.driver_instance.generate(request)
+    def _create_driver_instance(self):
+        """Create and return a driver instance for local models.
+
+        Returns:
+            An instance of a BaseDriver configured for local models
+        """
+        # Use the parent's _initialize_driver helper method
+        return self._initialize_driver()
 
     async def health_check(self) -> bool:
         """Check local model health"""

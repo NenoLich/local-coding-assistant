@@ -2,19 +2,12 @@
 Google Gemini provider implementation
 """
 
-from collections.abc import AsyncGenerator
-
-from .base import (
-    BaseProvider,
-    ProviderLLMRequest,
-    ProviderLLMResponse,
-    ProviderLLMResponseDelta,
-)
-from .provider_manager import register_provider
+import local_coding_assistant.providers.base as base
+from local_coding_assistant.providers.provider_manager import register_provider
 
 
 @register_provider("google_gemini")
-class GoogleGeminiProvider(BaseProvider):
+class GoogleGeminiProvider(base.BaseProvider):
     """Provider for Google Gemini API"""
 
     def __init__(
@@ -39,17 +32,11 @@ class GoogleGeminiProvider(BaseProvider):
             **kwargs,
         )
 
-    async def health_check(self) -> bool:
-        """Check Google Gemini health"""
-        return await self.driver_instance.health_check()
+    def _create_driver_instance(self) -> base.BaseDriver:
+        """Create and return a driver instance for Google Gemini.
 
-    async def generate(self, request: ProviderLLMRequest) -> ProviderLLMResponse:
-        """Generate response using Google Gemini"""
-        return await self.driver_instance.generate(request)
-
-    async def stream(
-        self, request: ProviderLLMRequest
-    ) -> AsyncGenerator[ProviderLLMResponseDelta, None]:
-        """Generate response using Google Gemini with streaming"""
-        async for delta in self.driver_instance.stream(request):
-            yield delta
+        Returns:
+            An instance of a BaseDriver configured for Google Gemini
+        """
+        # Use the parent's _initialize_driver helper method
+        return self._initialize_driver()
