@@ -17,7 +17,7 @@ def capture_logs():
     """Capture and redirect logs to a StringIO buffer to prevent 'I/O operation on closed file' errors."""
     # Create a string buffer to capture log output
     log_capture = StringIO()
-    
+
     # Create a handler
     handler = logging.StreamHandler(log_capture)
     handler.setLevel(logging.INFO)
@@ -35,9 +35,10 @@ def capture_logs():
     # Clean up
     root_logger.removeHandler(handler)
     handler.close()
-    
+
     # Restore original handlers
     root_logger.handlers = original_handlers
+
 
 # Mock tools for testing
 MOCK_TOOLS = {
@@ -53,6 +54,7 @@ MOCK_TOOLS["test_tool_2"].__class__ = MagicMock(__name__="AnotherTool")
 MOCK_TOOLS["test_tool_1"].name = "test_tool_1"
 MOCK_TOOLS["test_tool_2"].name = "test_tool_2"
 
+
 class MockAppContext(dict):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -64,6 +66,7 @@ class MockAppContext(dict):
 
     def get(self, key: str, default: Any = None) -> Any:
         return getattr(self, key, default)
+
 
 class TestListToolsCommands:
     """Test list-tools command functionality."""
@@ -86,8 +89,7 @@ class TestListToolsCommands:
 
         # Mock the bootstrap import
         monkeypatch.setattr(
-            'local_coding_assistant.cli.commands.list_tools.bootstrap',
-            mock_bootstrap
+            "local_coding_assistant.cli.commands.list_tools.bootstrap", mock_bootstrap
         )
 
         # Mock the safe_entrypoint decorator
@@ -96,18 +98,19 @@ class TestListToolsCommands:
                 # Add the _safe_entrypoint attribute for testing
                 func._safe_entrypoint = context
                 return func
+
             return decorator
 
         monkeypatch.setattr(
-            'local_coding_assistant.cli.commands.list_tools.safe_entrypoint',
-            mock_safe_entrypoint
+            "local_coding_assistant.cli.commands.list_tools.safe_entrypoint",
+            mock_safe_entrypoint,
         )
 
         # Mock the get_logger function
         mock_logger = MagicMock()
         monkeypatch.setattr(
-            'local_coding_assistant.cli.commands.list_tools.get_logger',
-            lambda x: mock_logger
+            "local_coding_assistant.cli.commands.list_tools.get_logger",
+            lambda x: mock_logger,
         )
 
         # Create a mock for typer.echo that captures output
@@ -123,11 +126,18 @@ class TestListToolsCommands:
 
         # Import the module after patching
         import importlib
-        if 'local_coding_assistant.cli.commands.list_tools' in sys.modules:
-            importlib.reload(sys.modules['local_coding_assistant.cli.commands.list_tools'])
+
+        if "local_coding_assistant.cli.commands.list_tools" in sys.modules:
+            importlib.reload(
+                sys.modules["local_coding_assistant.cli.commands.list_tools"]
+            )
 
         # Import the module functions
-        from local_coding_assistant.cli.commands.list_tools import list_available, app, _serialize_tool
+        from local_coding_assistant.cli.commands.list_tools import (
+            _serialize_tool,
+            app,
+            list_available,
+        )
 
         # Store the functions for testing
         self._serialize_tool = _serialize_tool
@@ -160,6 +170,7 @@ class TestListToolsCommands:
     def test_serialize_tool_with_name_attr(self):
         """Test _serialize_tool with tool that has a name attribute."""
         from local_coding_assistant.cli.commands.list_tools import _serialize_tool
+
         tool = MagicMock()
         tool.name = "test_tool"
         tool.__class__ = MagicMock(__name__="TestTool")
@@ -171,11 +182,12 @@ class TestListToolsCommands:
     def test_serialize_tool_without_name_attr(self):
         """Test _serialize_tool with tool that doesn't have a name attribute."""
         from local_coding_assistant.cli.commands.list_tools import _serialize_tool
+
         tool = MagicMock()
         tool.__class__ = MagicMock(__name__="TestTool")
         # Remove the name attribute if it exists
-        if hasattr(tool, 'name'):
-            delattr(tool, 'name')
+        if hasattr(tool, "name"):
+            delattr(tool, "name")
         result = _serialize_tool(tool)
         assert result == {"name": "TestTool", "type": "TestTool"}
         assert result["name"] == "TestTool"
@@ -237,12 +249,12 @@ class TestListToolsCommands:
         from local_coding_assistant.cli.commands import list_tools
 
         # Patch the bootstrap function
-        monkeypatch.setattr(list_tools, 'bootstrap', mock_bootstrap)
+        monkeypatch.setattr(list_tools, "bootstrap", mock_bootstrap)
 
         # Call the function and capture the output
-        from io import StringIO
         import sys
         from contextlib import redirect_stdout
+        from io import StringIO
 
         # Redirect stdout to capture the output
         with StringIO() as buf, redirect_stdout(buf):
@@ -267,11 +279,11 @@ class TestListToolsCommands:
         from local_coding_assistant.cli.commands import list_tools
 
         # Patch the bootstrap function
-        monkeypatch.setattr(list_tools, 'bootstrap', mock_bootstrap)
+        monkeypatch.setattr(list_tools, "bootstrap", mock_bootstrap)
 
         # Call the function and capture the output
-        from io import StringIO
         from contextlib import redirect_stdout
+        from io import StringIO
 
         with StringIO() as buf, redirect_stdout(buf):
             list_tools.list_available()
@@ -298,12 +310,7 @@ class TestListToolsCommands:
         tool2 = Tool2()
 
         # Create a mock context with some tools
-        mock_ctx = {
-            "tools": {
-                "tool1": tool1,
-                "tool2": tool2
-            }
-        }
+        mock_ctx = {"tools": {"tool1": tool1, "tool2": tool2}}
 
         # Create a mock bootstrap function
         def mock_bootstrap(log_level=logging.INFO):
@@ -313,11 +320,11 @@ class TestListToolsCommands:
         from local_coding_assistant.cli.commands import list_tools
 
         # Patch the bootstrap function
-        monkeypatch.setattr(list_tools, 'bootstrap', mock_bootstrap)
+        monkeypatch.setattr(list_tools, "bootstrap", mock_bootstrap)
 
         # Call the function with category parameter and capture output
-        from io import StringIO
         from contextlib import redirect_stdout
+        from io import StringIO
 
         with StringIO() as buf, redirect_stdout(buf):
             list_tools.list_available(category="test")
@@ -325,6 +332,7 @@ class TestListToolsCommands:
 
         # Parse the output
         import json
+
         data = json.loads(output)
 
         # The category parameter should be accepted but not affect the output

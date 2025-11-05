@@ -26,36 +26,51 @@ class TestProviderLLMRequest:
 
     def test_request_creation(self):
         """Test creating a ProviderLLMRequest."""
+        from local_coding_assistant.providers.base import OptionalParameters
+        
         messages = [{"role": "user", "content": "Test message"}]
+        params = OptionalParameters(
+            max_tokens=1000,
+            stream=False,
+            tools=[{"type": "function", "function": {"name": "test"}}]
+        )
+        
         request = ProviderLLMRequest(
             messages=messages,
             model="gpt-4",
             temperature=0.7,
-            max_tokens=1000,
-            stream=False,
-            tools=[{"type": "function", "function": {"name": "test"}}],
+            tool_outputs={"test": "output"},
+            parameters=params
         )
 
         assert request.messages == messages
         assert request.model == "gpt-4"
         assert request.temperature == 0.7
-        assert request.max_tokens == 1000
-        assert request.stream is False
-        assert request.tools is not None
-        assert len(request.tools) == 1
+        assert request.tool_outputs == {"test": "output"}
+        assert request.parameters.max_tokens == 1000
+        assert request.parameters.stream is False
+        assert request.parameters.tools is not None
+        assert len(request.parameters.tools) == 1
 
     def test_request_defaults(self):
         """Test ProviderLLMRequest default values."""
+        from local_coding_assistant.providers.base import OptionalParameters
+        
         messages = [{"role": "user", "content": "Test"}]
-        request = ProviderLLMRequest(messages=messages, model="gpt-3.5")
+        request = ProviderLLMRequest(
+            messages=messages, 
+            model="gpt-3.5",
+            parameters=OptionalParameters()
+        )
 
         assert request.temperature == 0.7
-        assert request.max_tokens is None
-        assert request.stream is False
-        assert request.tools is None
-        assert request.tool_choice is None
-        assert request.response_format is None
-        assert request.extra_params is None
+        assert request.tool_outputs is None
+        assert request.parameters is not None
+        assert request.parameters.max_tokens is None
+        assert request.parameters.stream is False
+        assert request.parameters.tools == []
+        assert request.parameters.tool_choice is None
+        assert request.parameters.response_format is None
 
 
 class TestProviderLLMResponse:
@@ -128,11 +143,12 @@ class TestBaseProvider:
             base_url="https://api.test.com",
             models=["gpt-4", "gpt-3.5"],
             api_key="test_key",
-            api_key_env="TEST_API_KEY"
+            api_key_env="TEST_API_KEY",
         )
 
         assert provider.name == "test_provider"
-        assert provider.models == ["gpt-4", "gpt-3.5"]
+        assert any(model.name == "gpt-4" for model in provider.models)
+        assert any(model.name == "gpt-3.5" for model in provider.models)
         assert provider.api_key == "test_key"
         assert provider.api_key_env == "TEST_API_KEY"
         assert provider.base_url == "https://api.test.com"
@@ -157,7 +173,12 @@ class TestBaseProvider:
             async def health_check(self):
                 return True
 
-        provider = TestProvider(name="test", base_url="https://api.test.com", models=["gpt-4", "gpt-3.5"], api_key="test_key")
+        provider = TestProvider(
+            name="test",
+            base_url="https://api.test.com",
+            models=["gpt-4", "gpt-3.5"],
+            api_key="test_key",
+        )
         assert provider.supports_model("gpt-4") is True
         assert provider.supports_model("gpt-3") is False
 
@@ -179,7 +200,12 @@ class TestBaseProvider:
             async def health_check(self):
                 return True
 
-        provider = TestProvider(name="test", base_url="https://api.test.com", models=["gpt-4", "gpt-3.5"], api_key="test_key")
+        provider = TestProvider(
+            name="test",
+            base_url="https://api.test.com",
+            models=["gpt-4", "gpt-3.5"],
+            api_key="test_key",
+        )
         assert provider.get_available_models() == ["gpt-4", "gpt-3.5"]
 
     def test_stream_method_without_driver(self):
@@ -202,17 +228,26 @@ class TestBaseProvider:
             async def health_check(self):
                 return True
 
-        provider = TestProvider(name="test", base_url="https://api.test.com", models=["gpt-4"], api_key="test_key")
+        provider = TestProvider(
+            name="test",
+            base_url="https://api.test.com",
+            models=["gpt-4"],
+            api_key="test_key",
+        )
 
         # Set driver_instance to None to test fallback mechanism
         provider.driver_instance = None
 
         # Test that stream falls back to single delta when no driver is available
+        from local_coding_assistant.providers.base import OptionalParameters
+        
         async def test_stream():
             deltas = []
             async for delta in provider.stream(
                 ProviderLLMRequest(
-                    messages=[{"role": "user", "content": "test"}], model="gpt-4"
+                    messages=[{"role": "user", "content": "test"}],
+                    model="gpt-4",
+                    parameters=OptionalParameters(stream=True)
                 )
             ):
                 deltas.append(delta)
@@ -245,7 +280,12 @@ class TestBaseProvider:
             async def health_check(self):
                 return True
 
-        provider = TestProvider(name="test", base_url="https://api.test.com", models=["gpt-4"], api_key="test_key")
+        provider = TestProvider(
+            name="test",
+            base_url="https://api.test.com",
+            models=["gpt-4"],
+            api_key="test_key",
+        )
 
         async def test_retry():
             chunks = []
@@ -279,7 +319,12 @@ class TestBaseProvider:
             async def health_check(self):
                 return True
 
-        provider = TestProvider(name="test", base_url="https://api.test.com", models=["gpt-4"], api_key="test_key")
+        provider = TestProvider(
+            name="test",
+            base_url="https://api.test.com",
+            models=["gpt-4"],
+            api_key="test_key",
+        )
 
         # Mock stream method that fails twice then succeeds
         call_count = 0
@@ -336,7 +381,7 @@ class TestProviderManager:
                     base_url="https://api.test.com",
                     models=["gpt-4"],
                     api_key="test_key",
-                    **kwargs
+                    **kwargs,
                 )
 
             def _create_driver_instance(self):
@@ -358,13 +403,13 @@ class TestProviderManager:
         manager._instances = {
             "google_gemini": MagicMock(),
             "local": MagicMock(),
-            "openrouter": MagicMock()
+            "openrouter": MagicMock(),
         }
-        
+
         # Register our test provider
         manager._providers["mock"] = MockProvider
         manager._provider_sources["mock"] = "test_source"
-        
+
         # Create and store an instance of our test provider
         mock_provider = MockProvider()
         manager._instances["mock"] = mock_provider
@@ -372,9 +417,14 @@ class TestProviderManager:
         # Verify registration
         assert "mock" in manager._providers
         assert manager._provider_sources["mock"] == "test_source"
-        
+
         # The list should include all providers, including our mock
-        assert sorted(manager.list_providers()) == ["google_gemini", "local", "mock", "openrouter"]
+        assert sorted(manager.list_providers()) == [
+            "google_gemini",
+            "local",
+            "mock",
+            "openrouter",
+        ]
 
     def test_get_provider(self):
         """Test getting a registered provider."""
@@ -383,11 +433,11 @@ class TestProviderManager:
         class MockProvider(BaseProvider):
             def __init__(self, provider_name=None, **kwargs):
                 super().__init__(
-                    name="mock", 
-                    base_url="https://api.test.com", 
-                    models=["gpt-4"], 
-                    api_key="test_key", 
-                    **kwargs
+                    name="mock",
+                    base_url="https://api.test.com",
+                    models=["gpt-4"],
+                    api_key="test_key",
+                    **kwargs,
                 )
 
             def _create_driver_instance(self):
@@ -408,7 +458,7 @@ class TestProviderManager:
         # Register provider manually for testing
         manager._providers["mock"] = MockProvider
         manager._provider_sources["mock"] = "test"
-        
+
         # Create and store an instance of our test provider
         mock_provider = MockProvider()
         manager._instances["mock"] = mock_provider
@@ -433,7 +483,7 @@ class TestProviderManager:
                     base_url="https://api.test.com",
                     models=["gpt-4"],
                     api_key="test_key",
-                    **kwargs
+                    **kwargs,
                 )
 
             def _create_driver_instance(self):
@@ -452,26 +502,37 @@ class TestProviderManager:
                 return True
 
         # Initialize with default providers
-        manager._instances = {"google_gemini": MockProvider("google_gemini"), "local": MockProvider("local"),
-                              "openrouter": MockProvider("openrouter")}
+        manager._instances = {
+            "google_gemini": MockProvider("google_gemini"),
+            "local": MockProvider("local"),
+            "openrouter": MockProvider("openrouter"),
+        }
 
         # Register and create instances for test providers
         manager._providers["provider1"] = MockProvider
         manager._provider_sources["provider1"] = "source1"
         manager._instances["provider1"] = MockProvider("provider1")
-        
+
         manager._providers["provider2"] = MockProvider
         manager._provider_sources["provider2"] = "source2"
         manager._instances["provider2"] = MockProvider("provider2")
 
         # Get the list of providers
         providers = manager.list_providers()
-        
+
         # Verify the list includes all expected providers
-        assert set(providers) == {"google_gemini", "local", "openrouter", "provider1", "provider2"}
-        
+        assert set(providers) == {
+            "google_gemini",
+            "local",
+            "openrouter",
+            "provider1",
+            "provider2",
+        }
+
         # Verify the list is sorted
-        assert providers == sorted(["google_gemini", "local", "openrouter", "provider1", "provider2"])
+        assert providers == sorted(
+            ["google_gemini", "local", "openrouter", "provider1", "provider2"]
+        )
 
     def test_get_provider_source(self):
         """Test getting provider source."""
@@ -479,7 +540,9 @@ class TestProviderManager:
 
         class MockProvider(BaseProvider):
             def __init__(self):
-                super().__init__(name="mock", base_url="https://api.test.com", models=["gpt-4"])
+                super().__init__(
+                    name="mock", base_url="https://api.test.com", models=["gpt-4"]
+                )
 
             def _create_driver_instance(self):
                 # Create a mock driver instance for testing
@@ -516,7 +579,7 @@ class TestProviderManager:
                     base_url="https://api.test.com",
                     models=["gpt-4"],
                     api_key="test_key",
-                    **kwargs
+                    **kwargs,
                 )
 
             def _create_driver_instance(self):
@@ -561,7 +624,7 @@ class TestGoogleGeminiProvider:
         )
 
         assert provider.name == "google_gemini"
-        assert "gemini-pro" in provider.models
+        assert any(model.name == "gemini-pro" for model in provider.models)
         assert provider.api_key == "test_key"
 
     def test_initialization_with_env_key(self):
@@ -584,7 +647,7 @@ class TestGoogleGeminiProvider:
 
         is_healthy = await provider.health_check()
         # Can be either True or 'unavailable' based on health check implementation
-        assert is_healthy is True or is_healthy == 'unavailable'
+        assert is_healthy is True or is_healthy == "unavailable"
         if is_healthy is True:
             mock_driver.health_check.assert_called_once()
 
@@ -599,10 +662,10 @@ class TestGoogleGeminiProvider:
         provider.driver_instance = mock_driver
 
         is_healthy = await provider.health_check()
-        
+
         # Check that the return value is either False or 'unavailable'
-        assert is_healthy is False or is_healthy == 'unavailable'
-        
+        assert is_healthy is False or is_healthy == "unavailable"
+
         # If the provider returned a boolean, the driver's health check should have been called
         if isinstance(is_healthy, bool):
             mock_driver.health_check.assert_called_once()
@@ -617,8 +680,12 @@ class TestGoogleGeminiProvider:
         provider.driver_instance = mock_driver
 
         # Test that stream delegates to driver
+        from local_coding_assistant.providers.base import OptionalParameters
+        
         _request = ProviderLLMRequest(
-            messages=[{"role": "user", "content": "test"}], model="gemini-pro"
+            messages=[{"role": "user", "content": "test"}],
+            model="gemini-pro",
+            parameters=OptionalParameters(stream=True)
         )
 
         # The stream method should delegate to the driver
@@ -640,7 +707,7 @@ class TestOpenRouterProvider:
         )
 
         assert provider.name == "openrouter"
-        assert "auto" in provider.models
+        assert any(model.name == "auto" for model in provider.models)
         assert provider.api_key == "test_key"
 
     @pytest.mark.asyncio
@@ -655,7 +722,7 @@ class TestOpenRouterProvider:
 
         is_healthy = await provider.health_check()
         # Can be either True or 'unavailable' based on health check implementation
-        assert is_healthy is True or is_healthy == 'unavailable'
+        assert is_healthy is True or is_healthy == "unavailable"
         if is_healthy is True:
             mock_driver.health_check.assert_called_once()
 
@@ -669,8 +736,12 @@ class TestOpenRouterProvider:
         provider.driver_instance = mock_driver
 
         # Verify method exists and delegates to driver
+        from local_coding_assistant.providers.base import OptionalParameters
+        
         _request = ProviderLLMRequest(
-            messages=[{"role": "user", "content": "test"}], model="gpt-4"
+            messages=[{"role": "user", "content": "test"}],
+            model="gpt-4",
+            parameters=OptionalParameters()
         )
 
         import inspect
@@ -755,14 +826,14 @@ class TestProviderIntegration:
                 driver = AsyncMock()
                 driver.health_check.return_value = True
                 return driver
-                
+
             def __init__(self, provider_name=None, **kwargs):
                 super().__init__(
-                    name="test", 
-                    base_url="https://api.test.com", 
-                    models=["model1"], 
-                    api_key="test_key", 
-                    **kwargs
+                    name="test",
+                    base_url="https://api.test.com",
+                    models=["model1"],
+                    api_key="test_key",
+                    **kwargs,
                 )
 
             async def generate(self, _request):
@@ -777,7 +848,7 @@ class TestProviderIntegration:
         # Register provider manually for testing
         manager._providers["test"] = TestProvider
         manager._provider_sources["test"] = "integration_test"
-        
+
         # Create and store an instance of our test provider
         test_provider = TestProvider()
         manager._instances["test"] = test_provider
@@ -800,11 +871,11 @@ class TestProviderIntegration:
         class StreamingProvider(BaseProvider):
             def __init__(self, provider_name=None, **kwargs):
                 super().__init__(
-                    name="streaming", 
-                    base_url="https://api.test.com", 
-                    models=["stream-model"], 
-                    api_key="test_key", 
-                    **kwargs
+                    name="streaming",
+                    base_url="https://api.test.com",
+                    models=["stream-model"],
+                    api_key="test_key",
+                    **kwargs,
                 )
 
             def _create_driver_instance(self):
@@ -826,7 +897,7 @@ class TestProviderIntegration:
         # Register provider manually for testing
         manager._providers["streaming"] = StreamingProvider
         manager._provider_sources["streaming"] = "test"
-        
+
         # Create and store an instance of our test provider
         streaming_provider = StreamingProvider()
         manager._instances["streaming"] = streaming_provider
@@ -838,9 +909,13 @@ class TestProviderIntegration:
 
         # Test streaming
         deltas = []
+        from local_coding_assistant.providers.base import OptionalParameters
+        
         async for delta in provider.stream(
             ProviderLLMRequest(
-                messages=[{"role": "user", "content": "test"}], model="stream-model"
+                messages=[{"role": "user", "content": "test"}],
+                model="stream-model",
+                parameters=OptionalParameters(stream=True)
             )
         ):
             deltas.append(delta)
@@ -858,11 +933,11 @@ class TestProviderIntegration:
         class ErrorProvider(BaseProvider):
             def __init__(self, provider_name=None, **kwargs):
                 super().__init__(
-                    name="error", 
-                    base_url="https://api.test.com", 
-                    models=["error-model"], 
-                    api_key="test_key", 
-                    **kwargs
+                    name="error",
+                    base_url="https://api.test.com",
+                    models=["error-model"],
+                    api_key="test_key",
+                    **kwargs,
                 )
 
             def _create_driver_instance(self):
@@ -885,7 +960,7 @@ class TestProviderIntegration:
         # Register provider manually for testing
         manager._providers["error"] = ErrorProvider
         manager._provider_sources["error"] = "test"
-        
+
         # Create and store an instance of our test provider
         error_provider = ErrorProvider()
         manager._instances["error"] = error_provider
@@ -897,18 +972,26 @@ class TestProviderIntegration:
 
         # Test error in generate
         with pytest.raises(ProviderError, match="Test error"):
+            from local_coding_assistant.providers.base import OptionalParameters
+            
             await provider.generate(
                 ProviderLLMRequest(
-                    messages=[{"role": "user", "content": "test"}], model="error-model"
+                    messages=[{"role": "user", "content": "test"}],
+                    model="error-model",
+                    parameters=OptionalParameters()
                 )
             )
 
         # Test error in stream - expect error after consuming one delta
         with pytest.raises(ProviderError, match="Stream error"):
             deltas = []
+            from local_coding_assistant.providers.base import OptionalParameters
+            
             async for delta in provider.stream(
                 ProviderLLMRequest(
-                    messages=[{"role": "user", "content": "test"}], model="error-model"
+                    messages=[{"role": "user", "content": "test"}],
+                    model="error-model",
+                    parameters=OptionalParameters(stream=True)
                 )
             ):
                 deltas.append(delta)

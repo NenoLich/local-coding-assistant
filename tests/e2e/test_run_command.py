@@ -34,11 +34,15 @@ class TestRunCommand:
         assert "Response:" in result.stdout
         assert "[LLMManager] Echo: test query" in result.stdout
 
-    def test_run_query_with_model(self, cli_runner, mock_env_vars, mock_bootstrap_success):
+    def test_run_query_with_model(
+        self, cli_runner, mock_env_vars, mock_bootstrap_success
+    ):
         """Test run query with specific model."""
         mock_bootstrap, mock_ctx = mock_bootstrap_success
 
-        result = cli_runner.invoke(app, ["run", "query", "Hello world", "--model", "gpt-4"])
+        result = cli_runner.invoke(
+            app, ["run", "query", "Hello world", "--model", "gpt-4"]
+        )
 
         assert result.exit_code == 0
         assert "Running query: Hello world" in result.stdout
@@ -46,31 +50,40 @@ class TestRunCommand:
         assert "Response:" in result.stdout
         assert "[LLMManager] Echo: test query" in result.stdout
 
-    def test_run_query_with_log_level(self, cli_runner, mock_env_vars, mock_bootstrap_success):
+    def test_run_query_with_log_level(
+        self, cli_runner, mock_env_vars, mock_bootstrap_success
+    ):
         """Test run query with custom log level."""
         mock_bootstrap, mock_ctx = mock_bootstrap_success
 
-        result = cli_runner.invoke(app, ["run", "query", "Hello world", "--log-level", "DEBUG"])
+        result = cli_runner.invoke(
+            app, ["run", "query", "Hello world", "--log-level", "DEBUG"]
+        )
 
         assert result.exit_code == 0
         assert "Running query: Hello world" in result.stdout
         assert "Response:" in result.stdout
         assert "[LLMManager] Echo: test query" in result.stdout
 
-    def test_run_query_combined_options(self, cli_runner, mock_env_vars, mock_bootstrap_success):
+    def test_run_query_combined_options(
+        self, cli_runner, mock_env_vars, mock_bootstrap_success
+    ):
         """Test run query with all options combined."""
         mock_bootstrap, mock_ctx = mock_bootstrap_success
 
-        result = cli_runner.invoke(app, [
-            "run",
-            "query",
-            "Hello world",
-            "--verbose",
-            "--model",
-            "gpt-4",
-            "--log-level",
-            "DEBUG"
-        ])
+        result = cli_runner.invoke(
+            app,
+            [
+                "run",
+                "query",
+                "Hello world",
+                "--verbose",
+                "--model",
+                "gpt-4",
+                "--log-level",
+                "DEBUG",
+            ],
+        )
 
         assert result.exit_code == 0
         assert "Running query: Hello world" in result.stdout
@@ -82,7 +95,9 @@ class TestRunCommand:
     def test_run_query_error_handling(self, cli_runner, mock_env_vars):
         """Test run query error handling."""
         # Mock bootstrap failure
-        with patch("local_coding_assistant.cli.commands.run.bootstrap") as mock_bootstrap:
+        with patch(
+            "local_coding_assistant.cli.commands.run.bootstrap"
+        ) as mock_bootstrap:
             mock_bootstrap.return_value = {"runtime": None}
 
             result = cli_runner.invoke(app, ["run", "query", "Hello world"])
@@ -90,7 +105,9 @@ class TestRunCommand:
             assert result.exit_code == 1
             assert "Error: Runtime manager not available" in result.stdout
 
-    def test_run_query_long_text(self, cli_runner, mock_env_vars, mock_bootstrap_success):
+    def test_run_query_long_text(
+        self, cli_runner, mock_env_vars, mock_bootstrap_success
+    ):
         """Test run query with long text input."""
         mock_bootstrap, mock_ctx = mock_bootstrap_success
 
@@ -103,11 +120,15 @@ class TestRunCommand:
         assert "Response:" in result.stdout
         assert "[LLMManager] Echo: test query" in result.stdout
 
-    def test_run_query_special_characters(self, cli_runner, mock_env_vars, mock_bootstrap_success):
+    def test_run_query_special_characters(
+        self, cli_runner, mock_env_vars, mock_bootstrap_success
+    ):
         """Test run query with special characters."""
         mock_bootstrap, mock_ctx = mock_bootstrap_success
 
-        special_query = 'Query with "quotes" and \'apostrophes\' and special chars: @#$%^&*()'
+        special_query = (
+            "Query with \"quotes\" and 'apostrophes' and special chars: @#$%^&*()"
+        )
 
         result = cli_runner.invoke(app, ["run", "query", special_query])
 

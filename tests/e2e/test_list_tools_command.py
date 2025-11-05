@@ -12,8 +12,12 @@ class TestListToolsCommand:
     def test_list_tools_basic(self, cli_runner):
         """Test basic list-tools functionality."""
         # Mock bootstrap directly in the test
-        with patch("local_coding_assistant.core.bootstrap") as mock_bootstrap, \
-             patch("local_coding_assistant.cli.commands.list_tools.bootstrap") as mock_bootstrap2:
+        with (
+            patch("local_coding_assistant.core.bootstrap") as mock_bootstrap,
+            patch(
+                "local_coding_assistant.cli.commands.list_tools.bootstrap"
+            ) as mock_bootstrap2,
+        ):
             # Create mock tools registry with proper attribute access
             mock_tools = []
 
@@ -46,8 +50,12 @@ class TestListToolsCommand:
     def test_list_tools_json_output(self, cli_runner):
         """Test list-tools with JSON output."""
         # Mock bootstrap directly in the test
-        with patch("local_coding_assistant.core.bootstrap") as mock_bootstrap, \
-             patch("local_coding_assistant.cli.commands.list_tools.bootstrap") as mock_bootstrap2:
+        with (
+            patch("local_coding_assistant.core.bootstrap") as mock_bootstrap,
+            patch(
+                "local_coding_assistant.cli.commands.list_tools.bootstrap"
+            ) as mock_bootstrap2,
+        ):
             # Create mock tools registry with proper attribute access
             mock_tools = []
 
@@ -85,8 +93,12 @@ class TestListToolsCommand:
     def test_list_tools_with_category_filter(self, cli_runner):
         """Test list-tools with category filter (not implemented yet)."""
         # Mock bootstrap directly in the test
-        with patch("local_coding_assistant.core.bootstrap") as mock_bootstrap, \
-             patch("local_coding_assistant.cli.commands.list_tools.bootstrap") as mock_bootstrap2:
+        with (
+            patch("local_coding_assistant.core.bootstrap") as mock_bootstrap,
+            patch(
+                "local_coding_assistant.cli.commands.list_tools.bootstrap"
+            ) as mock_bootstrap2,
+        ):
             # Create mock tools registry with proper attribute access
             mock_tools = []
 
@@ -115,8 +127,12 @@ class TestListToolsCommand:
 
     def test_list_tools_empty_registry(self, cli_runner):
         """Test list-tools when no tools are available."""
-        with patch("local_coding_assistant.core.bootstrap") as mock_bootstrap, \
-             patch("local_coding_assistant.cli.commands.list_tools.bootstrap") as mock_bootstrap2:
+        with (
+            patch("local_coding_assistant.core.bootstrap") as mock_bootstrap,
+            patch(
+                "local_coding_assistant.cli.commands.list_tools.bootstrap"
+            ) as mock_bootstrap2,
+        ):
             mock_bootstrap.return_value = {"tools": []}
             mock_bootstrap2.return_value = {"tools": []}
 
@@ -128,8 +144,12 @@ class TestListToolsCommand:
 
     def test_list_tools_single_tool(self, cli_runner):
         """Test list-tools with only one tool."""
-        with patch("local_coding_assistant.core.bootstrap") as mock_bootstrap, \
-             patch("local_coding_assistant.cli.commands.list_tools.bootstrap") as mock_bootstrap2:
+        with (
+            patch("local_coding_assistant.core.bootstrap") as mock_bootstrap,
+            patch(
+                "local_coding_assistant.cli.commands.list_tools.bootstrap"
+            ) as mock_bootstrap2,
+        ):
             # Single tool mock
             single_tool = MagicMock()
             single_tool.__name__ = "single_function"
@@ -148,8 +168,12 @@ class TestListToolsCommand:
 
     def test_list_tools_json_single_tool(self, cli_runner):
         """Test list-tools JSON output with single tool."""
-        with patch("local_coding_assistant.core.bootstrap") as mock_bootstrap, \
-             patch("local_coding_assistant.cli.commands.list_tools.bootstrap") as mock_bootstrap2:
+        with (
+            patch("local_coding_assistant.core.bootstrap") as mock_bootstrap,
+            patch(
+                "local_coding_assistant.cli.commands.list_tools.bootstrap"
+            ) as mock_bootstrap2,
+        ):
             single_tool = MagicMock()
             single_tool.__name__ = "single_function"
             single_tool.name = "single_tool"
@@ -169,8 +193,12 @@ class TestListToolsCommand:
 
     def test_list_tools_missing_registry(self, cli_runner):
         """Test list-tools when tools registry is missing."""
-        with patch("local_coding_assistant.core.bootstrap") as mock_bootstrap, \
-             patch("local_coding_assistant.cli.commands.list_tools.bootstrap") as mock_bootstrap2:
+        with (
+            patch("local_coding_assistant.core.bootstrap") as mock_bootstrap,
+            patch(
+                "local_coding_assistant.cli.commands.list_tools.bootstrap"
+            ) as mock_bootstrap2,
+        ):
             mock_bootstrap.return_value = {}
             mock_bootstrap2.return_value = {}
 
@@ -182,8 +210,12 @@ class TestListToolsCommand:
     def test_list_tools_with_log_level(self, cli_runner):
         """Test list-tools with custom log level."""
         # Mock bootstrap directly in the test
-        with patch("local_coding_assistant.core.bootstrap") as mock_bootstrap, \
-             patch("local_coding_assistant.cli.commands.list_tools.bootstrap") as mock_bootstrap2:
+        with (
+            patch("local_coding_assistant.core.bootstrap") as mock_bootstrap,
+            patch(
+                "local_coding_assistant.cli.commands.list_tools.bootstrap"
+            ) as mock_bootstrap2,
+        ):
             # Create mock tools registry with proper attribute access
             mock_tools = []
 
@@ -204,7 +236,9 @@ class TestListToolsCommand:
             mock_bootstrap.return_value = {"tools": mock_tools}
             mock_bootstrap2.return_value = {"tools": mock_tools}
 
-            result = cli_runner.invoke(app, ["list-tools", "list", "--log-level", "DEBUG"])
+            result = cli_runner.invoke(
+                app, ["list-tools", "list", "--log-level", "DEBUG"]
+            )
 
             assert result.exit_code == 0
             assert "Available tools:" in result.stdout

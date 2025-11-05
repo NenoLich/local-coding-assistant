@@ -19,11 +19,11 @@ class TestBootstrapInitialization:
     @patch("local_coding_assistant.core.bootstrap.get_config_manager")
     @patch("local_coding_assistant.core.bootstrap._load_config")
     def test_bootstrap_successful_initialization(
-            self,
-            mock_load_config,
-            mock_get_config_manager,
-            mock_get_logger,
-            mock_setup_logging,
+        self,
+        mock_load_config,
+        mock_get_config_manager,
+        mock_get_logger,
+        mock_setup_logging,
     ):
         """Test successful bootstrap initialization."""
         # Mock configuration
@@ -47,9 +47,15 @@ class TestBootstrapInitialization:
         mock_llm_instance = MagicMock()
         mock_llm_class = MagicMock(return_value=mock_llm_instance)
 
-        with patch('local_coding_assistant.core.bootstrap.LLMManager', mock_llm_class), \
-                patch('local_coding_assistant.core.bootstrap.RuntimeManager') as mock_runtime_class, \
-                patch('local_coding_assistant.core.bootstrap.ToolManager') as mock_tool_class:
+        with (
+            patch("local_coding_assistant.core.bootstrap.LLMManager", mock_llm_class),
+            patch(
+                "local_coding_assistant.core.bootstrap.RuntimeManager"
+            ) as mock_runtime_class,
+            patch(
+                "local_coding_assistant.core.bootstrap.ToolManager"
+            ) as mock_tool_class,
+        ):
             # Mock RuntimeManager instance
             mock_runtime_instance = MagicMock()
             mock_runtime_class.return_value = mock_runtime_instance
@@ -89,11 +95,11 @@ class TestBootstrapInitialization:
     @patch("local_coding_assistant.core.bootstrap.get_logger")
     @patch("local_coding_assistant.core.bootstrap._setup_logging")
     def test_bootstrap_with_custom_config_path(
-            self,
-            mock_setup_logging,
-            mock_get_logger,
-            mock_get_config_manager,
-            mock_load_config,
+        self,
+        mock_setup_logging,
+        mock_get_logger,
+        mock_get_config_manager,
+        mock_load_config,
     ):
         """Test bootstrap with custom config path."""
         # Setup test data
@@ -117,9 +123,15 @@ class TestBootstrapInitialization:
         mock_runtime_instance = MagicMock()
         mock_tool_instance = MagicMock()
 
-        with patch('local_coding_assistant.core.bootstrap.LLMManager', mock_llm_class), \
-                patch('local_coding_assistant.core.bootstrap.RuntimeManager') as mock_runtime_class, \
-                patch('local_coding_assistant.core.bootstrap.ToolManager') as mock_tool_class:
+        with (
+            patch("local_coding_assistant.core.bootstrap.LLMManager", mock_llm_class),
+            patch(
+                "local_coding_assistant.core.bootstrap.RuntimeManager"
+            ) as mock_runtime_class,
+            patch(
+                "local_coding_assistant.core.bootstrap.ToolManager"
+            ) as mock_tool_class,
+        ):
             mock_runtime_class.return_value = mock_runtime_instance
             mock_tool_class.return_value = mock_tool_instance
 
@@ -140,11 +152,11 @@ class TestBootstrapInitialization:
     @patch("local_coding_assistant.core.bootstrap.get_logger")
     @patch("local_coding_assistant.core.bootstrap._setup_logging")
     def test_bootstrap_with_custom_log_level(
-            self,
-            mock_setup_logging,
-            mock_get_logger,
-            mock_get_config_manager,
-            mock_load_config,
+        self,
+        mock_setup_logging,
+        mock_get_logger,
+        mock_get_config_manager,
+        mock_load_config,
     ):
         """Test bootstrap with custom log level."""
         # Setup test data
@@ -168,9 +180,15 @@ class TestBootstrapInitialization:
         mock_runtime_instance = MagicMock()
         mock_tool_instance = MagicMock()
 
-        with patch('local_coding_assistant.core.bootstrap.LLMManager', mock_llm_class), \
-                patch('local_coding_assistant.core.bootstrap.RuntimeManager') as mock_runtime_class, \
-                patch('local_coding_assistant.core.bootstrap.ToolManager') as mock_tool_class:
+        with (
+            patch("local_coding_assistant.core.bootstrap.LLMManager", mock_llm_class),
+            patch(
+                "local_coding_assistant.core.bootstrap.RuntimeManager"
+            ) as mock_runtime_class,
+            patch(
+                "local_coding_assistant.core.bootstrap.ToolManager"
+            ) as mock_tool_class,
+        ):
             mock_runtime_class.return_value = mock_runtime_instance
             mock_tool_class.return_value = mock_tool_instance
 
@@ -195,11 +213,11 @@ class TestBootstrapErrorHandling:
     @patch("local_coding_assistant.core.bootstrap.get_logger")
     @patch("local_coding_assistant.core.bootstrap._setup_logging")
     def test_bootstrap_llm_initialization_failure(
-            self,
-            mock_setup_logging,
-            mock_get_logger,
-            mock_get_config_manager,
-            mock_load_config,
+        self,
+        mock_setup_logging,
+        mock_get_logger,
+        mock_get_config_manager,
+        mock_load_config,
     ):
         """Test bootstrap when LLM manager initialization fails."""
         # Setup test data
@@ -221,10 +239,16 @@ class TestBootstrapErrorHandling:
         mock_llm_class = MagicMock(side_effect=Exception("LLM initialization failed"))
         mock_tool_instance = MagicMock()
 
-        with patch('local_coding_assistant.core.bootstrap.LLMManager', mock_llm_class), \
-                patch('local_coding_assistant.core.bootstrap.RuntimeManager') as mock_runtime_class, \
-                patch('local_coding_assistant.core.bootstrap.ToolManager') as mock_tool_class, \
-                patch('local_coding_assistant.core.bootstrap.logger') as mock_logger:
+        with (
+            patch("local_coding_assistant.core.bootstrap.LLMManager", mock_llm_class),
+            patch(
+                "local_coding_assistant.core.bootstrap.RuntimeManager"
+            ) as mock_runtime_class,
+            patch(
+                "local_coding_assistant.core.bootstrap.ToolManager"
+            ) as mock_tool_class,
+            patch("local_coding_assistant.core.bootstrap.logger") as mock_logger,
+        ):
             mock_tool_class.return_value = mock_tool_instance
 
             # Call the function - should not raise an exception
@@ -253,11 +277,11 @@ class TestBootstrapErrorHandling:
     @patch("local_coding_assistant.core.bootstrap.get_logger")
     @patch("local_coding_assistant.core.bootstrap._setup_logging")
     def test_bootstrap_tool_manager_initialization_failure(
-            self,
-            mock_setup_logging,
-            mock_get_logger,
-            mock_get_config_manager,
-            mock_load_config,
+        self,
+        mock_setup_logging,
+        mock_get_logger,
+        mock_get_config_manager,
+        mock_load_config,
     ):
         """Test bootstrap when tool manager initialization fails."""
         # Setup test data
@@ -281,10 +305,14 @@ class TestBootstrapErrorHandling:
         mock_tool_class = MagicMock(side_effect=Exception("Tool manager failed"))
         mock_runtime_instance = MagicMock()
 
-        with patch('local_coding_assistant.core.bootstrap.LLMManager', mock_llm_class), \
-                patch('local_coding_assistant.core.bootstrap.RuntimeManager') as mock_runtime_class, \
-                patch('local_coding_assistant.core.bootstrap.ToolManager', mock_tool_class), \
-                patch('local_coding_assistant.core.bootstrap.logger') as mock_logger:
+        with (
+            patch("local_coding_assistant.core.bootstrap.LLMManager", mock_llm_class),
+            patch(
+                "local_coding_assistant.core.bootstrap.RuntimeManager"
+            ) as mock_runtime_class,
+            patch("local_coding_assistant.core.bootstrap.ToolManager", mock_tool_class),
+            patch("local_coding_assistant.core.bootstrap.logger") as mock_logger,
+        ):
             mock_runtime_class.return_value = mock_runtime_instance
 
             # Call the function
@@ -300,7 +328,7 @@ class TestBootstrapErrorHandling:
             mock_runtime_class.assert_called_once_with(
                 llm_manager=mock_llm_instance,
                 tool_manager=None,
-                config_manager=mock_config_manager
+                config_manager=mock_config_manager,
             )
 
             # Verify context has LLM and runtime, but tools is None
@@ -312,16 +340,17 @@ class TestBootstrapErrorHandling:
             mock_logger.warning.assert_called()
             warning_calls = [str(call) for call in mock_logger.warning.call_args_list]
             assert any("Tool manager failed" in call for call in warning_calls)
+
     @patch("local_coding_assistant.core.bootstrap._load_config")
     @patch("local_coding_assistant.core.bootstrap.get_config_manager")
     @patch("local_coding_assistant.core.bootstrap.get_logger")
     @patch("local_coding_assistant.core.bootstrap._setup_logging")
     def test_bootstrap_logging_disabled(
-            self,
-            mock_setup_logging,
-            mock_get_logger,
-            mock_get_config_manager,
-            mock_load_config,
+        self,
+        mock_setup_logging,
+        mock_get_logger,
+        mock_get_config_manager,
+        mock_load_config,
     ):
         """Test bootstrap when logging is disabled."""
         # Setup test data
@@ -345,9 +374,15 @@ class TestBootstrapErrorHandling:
         mock_runtime_instance = MagicMock()
         mock_tool_instance = MagicMock()
 
-        with patch('local_coding_assistant.core.bootstrap.LLMManager', mock_llm_class), \
-                patch('local_coding_assistant.core.bootstrap.RuntimeManager') as mock_runtime_class, \
-                patch('local_coding_assistant.core.bootstrap.ToolManager') as mock_tool_class:
+        with (
+            patch("local_coding_assistant.core.bootstrap.LLMManager", mock_llm_class),
+            patch(
+                "local_coding_assistant.core.bootstrap.RuntimeManager"
+            ) as mock_runtime_class,
+            patch(
+                "local_coding_assistant.core.bootstrap.ToolManager"
+            ) as mock_tool_class,
+        ):
             mock_runtime_class.return_value = mock_runtime_instance
             mock_tool_class.return_value = mock_tool_instance
 
@@ -366,11 +401,11 @@ class TestBootstrapErrorHandling:
     @patch("local_coding_assistant.core.bootstrap.get_logger")
     @patch("local_coding_assistant.core.bootstrap._setup_logging")
     def test_bootstrap_config_load_failure(
-            self,
-            mock_setup_logging,
-            mock_get_logger,
-            mock_get_config_manager,
-            mock_load_config,
+        self,
+        mock_setup_logging,
+        mock_get_logger,
+        mock_get_config_manager,
+        mock_load_config,
     ):
         """Test bootstrap when config loading fails."""
         # Setup test data - config loading fails
@@ -391,20 +426,34 @@ class TestBootstrapErrorHandling:
 
         # Mock the provider manager instance that will be used
         mock_provider_manager = MagicMock()
-        with patch('local_coding_assistant.core.bootstrap.LLMManager', mock_llm_class), \
-                patch('local_coding_assistant.core.bootstrap.RuntimeManager', mock_runtime_class), \
-                patch('local_coding_assistant.core.bootstrap.ToolManager', mock_tool_class), \
-                patch('local_coding_assistant.core.bootstrap.logger', mock_logger), \
-                patch('local_coding_assistant.core.bootstrap.get_config_manager', return_value=mock_config_manager), \
-                patch('local_coding_assistant.core.bootstrap._load_config', return_value=(None, False)), \
-                patch('local_coding_assistant.providers.provider_manager.provider_manager', mock_provider_manager):
+        with (
+            patch("local_coding_assistant.core.bootstrap.LLMManager", mock_llm_class),
+            patch(
+                "local_coding_assistant.core.bootstrap.RuntimeManager",
+                mock_runtime_class,
+            ),
+            patch("local_coding_assistant.core.bootstrap.ToolManager", mock_tool_class),
+            patch("local_coding_assistant.core.bootstrap.logger", mock_logger),
+            patch(
+                "local_coding_assistant.core.bootstrap.get_config_manager",
+                return_value=mock_config_manager,
+            ),
+            patch(
+                "local_coding_assistant.core.bootstrap._load_config",
+                return_value=(None, False),
+            ),
+            patch(
+                "local_coding_assistant.providers.provider_manager.provider_manager",
+                mock_provider_manager,
+            ),
+        ):
             # Call the function
             ctx = bootstrap()
 
             # Verify context is still created
             assert isinstance(ctx, AppContext)
 
-# Verify LLM manager was still initialized with config manager and provider manager
+            # Verify LLM manager was still initialized with config manager and provider manager
             mock_llm_class.assert_called_once()
             args, _ = mock_llm_class.call_args
             assert len(args) == 2
@@ -415,9 +464,9 @@ class TestBootstrapErrorHandling:
             mock_runtime_class.assert_called_once()
             _, kwargs = mock_runtime_class.call_args
             assert kwargs == {
-                'llm_manager': mock_llm_class.return_value,
-                'tool_manager': mock_tool_class.return_value,
-                'config_manager': mock_config_manager
+                "llm_manager": mock_llm_class.return_value,
+                "tool_manager": mock_tool_class.return_value,
+                "config_manager": mock_config_manager,
             }
 
             # Verify tool manager was called
@@ -427,7 +476,9 @@ class TestBootstrapErrorHandling:
             mock_logger.warning.assert_not_called()
 
             # Verify provider manager was passed to LLMManager
-            mock_llm_class.assert_called_once_with(mock_config_manager, mock_provider_manager)
+            mock_llm_class.assert_called_once_with(
+                mock_config_manager, mock_provider_manager
+            )
 
 
 class TestBootstrapIntegration:
@@ -438,11 +489,11 @@ class TestBootstrapIntegration:
     @patch("local_coding_assistant.core.bootstrap.get_logger")
     @patch("local_coding_assistant.core.bootstrap._setup_logging")
     def test_bootstrap_complete_flow(
-            self,
-            mock_setup_logging,
-            mock_get_logger,
-            mock_get_config_manager,
-            mock_load_config,
+        self,
+        mock_setup_logging,
+        mock_get_logger,
+        mock_get_config_manager,
+        mock_load_config,
     ):
         """Test complete bootstrap flow."""
         # Setup test data
@@ -466,9 +517,15 @@ class TestBootstrapIntegration:
         mock_runtime_instance = MagicMock()
         mock_tool_instance = MagicMock()
 
-        with patch('local_coding_assistant.core.bootstrap.LLMManager', mock_llm_class), \
-                patch('local_coding_assistant.core.bootstrap.RuntimeManager') as mock_runtime_class, \
-                patch('local_coding_assistant.core.bootstrap.ToolManager') as mock_tool_class:
+        with (
+            patch("local_coding_assistant.core.bootstrap.LLMManager", mock_llm_class),
+            patch(
+                "local_coding_assistant.core.bootstrap.RuntimeManager"
+            ) as mock_runtime_class,
+            patch(
+                "local_coding_assistant.core.bootstrap.ToolManager"
+            ) as mock_tool_class,
+        ):
             mock_runtime_class.return_value = mock_runtime_instance
             mock_tool_class.return_value = mock_tool_instance
 
@@ -500,11 +557,11 @@ class TestBootstrapIntegration:
     @patch("local_coding_assistant.core.bootstrap.get_logger")
     @patch("local_coding_assistant.core.bootstrap._setup_logging")
     def test_bootstrap_without_global_config(
-            self,
-            mock_setup_logging,
-            mock_get_logger,
-            mock_get_config_manager,
-            mock_load_config,
+        self,
+        mock_setup_logging,
+        mock_get_logger,
+        mock_get_config_manager,
+        mock_load_config,
     ):
         """Test bootstrap when no global config exists."""
         # Setup test data
@@ -512,13 +569,13 @@ class TestBootstrapIntegration:
         mock_config.runtime.enable_logging = True
         mock_config.runtime.log_level = "INFO"
         mock_config.llm = MagicMock()
-        
+
         # Mock the config manager to return None for global config
         mock_config_manager = MagicMock()
         mock_config_manager.global_config = None
         mock_config_manager.load_global_config.return_value = None
         mock_get_config_manager.return_value = mock_config_manager
-        
+
         # Mock _load_config to return our test config
         mock_load_config.return_value = (mock_config, True)
 
@@ -531,9 +588,15 @@ class TestBootstrapIntegration:
         mock_runtime_instance = MagicMock()
         mock_tool_instance = MagicMock()
 
-        with patch('local_coding_assistant.core.bootstrap.LLMManager', mock_llm_class), \
-                patch('local_coding_assistant.core.bootstrap.RuntimeManager') as mock_runtime_class, \
-                patch('local_coding_assistant.core.bootstrap.ToolManager') as mock_tool_class:
+        with (
+            patch("local_coding_assistant.core.bootstrap.LLMManager", mock_llm_class),
+            patch(
+                "local_coding_assistant.core.bootstrap.RuntimeManager"
+            ) as mock_runtime_class,
+            patch(
+                "local_coding_assistant.core.bootstrap.ToolManager"
+            ) as mock_tool_class,
+        ):
             mock_runtime_class.return_value = mock_runtime_instance
             mock_tool_class.return_value = mock_tool_instance
 
@@ -542,16 +605,18 @@ class TestBootstrapIntegration:
 
             # Verify context is returned
             assert isinstance(ctx, AppContext)
-            
+
             # Verify config manager was used
-            assert mock_get_config_manager.call_count == 2  # Called twice: once in bootstrap, once in _initialize_llm_manager
-            
+            assert (
+                mock_get_config_manager.call_count == 2
+            )  # Called twice: once in bootstrap, once in _initialize_llm_manager
+
             # Verify LLM manager was initialized with the config manager
             mock_llm_class.assert_called_once()
             args, _ = mock_llm_class.call_args
             assert len(args) == 2
             assert args[0] == mock_config_manager
-            
+
             # Verify no warnings were logged
             mock_logger.warning.assert_not_called()
 
@@ -564,11 +629,11 @@ class TestBootstrapContextRegistration:
     @patch("local_coding_assistant.core.bootstrap.get_logger")
     @patch("local_coding_assistant.core.bootstrap._setup_logging")
     def test_context_service_registration(
-            self,
-            mock_setup_logging,
-            mock_get_logger,
-            mock_get_config_manager,
-            mock_load_config,
+        self,
+        mock_setup_logging,
+        mock_get_logger,
+        mock_get_config_manager,
+        mock_load_config,
     ):
         """Test that services are properly registered in context."""
         # Setup test data
@@ -592,9 +657,15 @@ class TestBootstrapContextRegistration:
         mock_runtime_instance = MagicMock()
         mock_tool_instance = MagicMock()
 
-        with patch('local_coding_assistant.core.bootstrap.LLMManager', mock_llm_class), \
-                patch('local_coding_assistant.core.bootstrap.RuntimeManager') as mock_runtime_class, \
-                patch('local_coding_assistant.core.bootstrap.ToolManager') as mock_tool_class:
+        with (
+            patch("local_coding_assistant.core.bootstrap.LLMManager", mock_llm_class),
+            patch(
+                "local_coding_assistant.core.bootstrap.RuntimeManager"
+            ) as mock_runtime_class,
+            patch(
+                "local_coding_assistant.core.bootstrap.ToolManager"
+            ) as mock_tool_class,
+        ):
             mock_runtime_class.return_value = mock_runtime_instance
             mock_tool_class.return_value = mock_tool_instance
 
@@ -611,11 +682,11 @@ class TestBootstrapContextRegistration:
     @patch("local_coding_assistant.core.bootstrap.get_logger")
     @patch("local_coding_assistant.core.bootstrap._setup_logging")
     def test_context_none_services(
-            self,
-            mock_setup_logging,
-            mock_get_logger,
-            mock_get_config_manager,
-            mock_load_config,
+        self,
+        mock_setup_logging,
+        mock_get_logger,
+        mock_get_config_manager,
+        mock_load_config,
     ):
         """Test context when some services are None."""
         # Setup test data
@@ -639,9 +710,15 @@ class TestBootstrapContextRegistration:
         mock_runtime_instance = None  # Simulate Runtime initialization failure
         mock_tool_instance = MagicMock()
 
-        with patch('local_coding_assistant.core.bootstrap.LLMManager', mock_llm_class), \
-                patch('local_coding_assistant.core.bootstrap.RuntimeManager') as mock_runtime_class, \
-                patch('local_coding_assistant.core.bootstrap.ToolManager') as mock_tool_class:
+        with (
+            patch("local_coding_assistant.core.bootstrap.LLMManager", mock_llm_class),
+            patch(
+                "local_coding_assistant.core.bootstrap.RuntimeManager"
+            ) as mock_runtime_class,
+            patch(
+                "local_coding_assistant.core.bootstrap.ToolManager"
+            ) as mock_tool_class,
+        ):
             mock_runtime_class.return_value = mock_runtime_instance
             mock_tool_class.return_value = mock_tool_instance
 
@@ -653,8 +730,12 @@ class TestBootstrapContextRegistration:
 
             # Verify None services are handled
             assert ctx.get("llm") is None  # LLM is None due to initialization failure
-            assert ctx.get("runtime") is None  # Runtime is None due to initialization failure
-            assert ctx.get("tools") == mock_tool_instance  # Tools should still be registered
+            assert (
+                ctx.get("runtime") is None
+            )  # Runtime is None due to initialization failure
+            assert (
+                ctx.get("tools") == mock_tool_instance
+            )  # Tools should still be registered
 
 
 class TestBootstrapEnvironmentLoading:
@@ -667,7 +748,9 @@ class TestBootstrapEnvironmentLoading:
         mock_env_manager.load_env_files = MagicMock()
         mock_env_manager_class.return_value = mock_env_manager
 
-        with patch("local_coding_assistant.core.bootstrap._load_config") as mock_load_config:
+        with patch(
+            "local_coding_assistant.core.bootstrap._load_config"
+        ) as mock_load_config:
             mock_config = MagicMock()
             mock_config.runtime.enable_logging = True
             mock_config.runtime.log_level = "INFO"
@@ -683,7 +766,9 @@ class TestBootstrapEnvironmentLoading:
                                 with patch(
                                     "local_coding_assistant.core.bootstrap.ToolManager"
                                 ):
-                                    with patch("local_coding_assistant.providers.provider_manager.provider_manager"):
+                                    with patch(
+                                        "local_coding_assistant.providers.provider_manager.provider_manager"
+                                    ):
                                         bootstrap()
 
                                         # Verify env manager was created and used
@@ -699,7 +784,9 @@ class TestBootstrapEnvironmentLoading:
         )
         mock_env_manager_class.return_value = mock_env_manager
 
-        with patch("local_coding_assistant.core.bootstrap._load_config") as mock_load_config:
+        with patch(
+            "local_coding_assistant.core.bootstrap._load_config"
+        ) as mock_load_config:
             mock_config = MagicMock()
             mock_config.runtime.enable_logging = True
             mock_config.runtime.log_level = "INFO"
@@ -715,7 +802,9 @@ class TestBootstrapEnvironmentLoading:
                                 with patch(
                                     "local_coding_assistant.core.bootstrap.ToolManager"
                                 ):
-                                    with patch("local_coding_assistant.providers.provider_manager.provider_manager"):
+                                    with patch(
+                                        "local_coding_assistant.providers.provider_manager.provider_manager"
+                                    ):
                                         # Should not raise exception, just print warning
                                         ctx = bootstrap()
 

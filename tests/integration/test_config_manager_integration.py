@@ -25,7 +25,9 @@ class TestConfigManagerIntegration:
         # The default model would come from the provider system or agent policies
 
         # Should be able to get config with overrides
-        resolved_config_with_override = llm_manager.config_manager.resolve(model_name="gpt-4")
+        resolved_config_with_override = llm_manager.config_manager.resolve(
+            model_name="gpt-4"
+        )
         llm_config_with_override = resolved_config_with_override.llm
         assert isinstance(llm_config_with_override, LLMConfig)
 

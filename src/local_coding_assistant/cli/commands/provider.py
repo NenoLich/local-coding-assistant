@@ -198,18 +198,7 @@ def _create_models_config(models: list[str] | None) -> dict:
     if not models:
         return {}
 
-    default_params = [
-        "tool",
-        "tool_choice",
-        "max_tokens",
-        "temperature",
-        "top_p",
-        "stop",
-        "frequency_penalty",
-        "presence_penalty",
-        "seed",
-        "top_k",
-    ]
+    default_params = ["max_tokens", "temperature", "top_p"]
 
     return {
         model_name: {"supported_parameters": default_params.copy()}

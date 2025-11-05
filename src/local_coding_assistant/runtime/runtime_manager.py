@@ -165,11 +165,14 @@ class RuntimeManager:
             "metadata": session.metadata,
         }
 
+        # Ensure tool_outputs is always a dictionary
+        safe_tool_outputs = tool_outputs or {}
+
         request = LLMRequest(
             prompt=text,
             context=context,
             tools=available_tools if available_tools else None,
-            tool_outputs=tool_outputs,
+            tool_outputs=safe_tool_outputs,
             system_prompt=session.system_prompt,
         )
 

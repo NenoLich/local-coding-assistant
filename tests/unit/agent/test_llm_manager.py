@@ -12,6 +12,7 @@ from local_coding_assistant.providers.exceptions import (
 
 class TestLLMConfig:
     """Test LLMConfig pydantic model validation."""
+
     def test_valid_config_creation(self):
         """Test creating a valid LLMConfig."""
         config = LLMConfig(
@@ -160,18 +161,34 @@ class TestProviderConfig:
 
     def test_valid_provider_creation(self):
         """Test creating a valid ProviderConfig."""
-        provider = ProviderConfig(
-            name="openai",
-            driver="openai_chat",
-            base_url="https://api.openai.com/v1",
-            api_key_env="OPENAI_API_KEY",
-            models={"gpt-3.5-turbo": {"max_tokens": 4096}},
-        )
+        # Create a model config dictionary that will be converted to ModelConfig objects
+        models_config = {
+            "gpt-3.5-turbo": {
+                "supported_parameters": ["max_tokens", "temperature"]
+            }
+        }
+        
+        # Create provider config using from_dict to handle model conversion
+        provider = ProviderConfig.from_dict({
+            "name": "openai",
+            "driver": "openai_chat",
+            "base_url": "https://api.openai.com/v1",
+            "api_key_env": "OPENAI_API_KEY",
+            "models": models_config
+        })
+        
+        # Verify the provider configuration
         assert provider.name == "openai"
         assert provider.driver == "openai_chat"
         assert provider.base_url == "https://api.openai.com/v1"
         assert provider.api_key_env == "OPENAI_API_KEY"
-        assert provider.models == {"gpt-3.5-turbo": {"max_tokens": 4096}}
+        
+        # Verify the models were properly converted to ModelConfig objects
+        assert len(provider.models) == 1
+        model_config = provider.models[0]
+        assert model_config.name == "gpt-3.5-turbo"
+        assert "max_tokens" in model_config.supported_parameters
+        assert "temperature" in model_config.supported_parameters
 
     def test_provider_defaults(self):
         """Test ProviderConfig default values."""
@@ -181,7 +198,7 @@ class TestProviderConfig:
             base_url="https://api.example.com",
             api_key_env="TEST_API_KEY",
         )
-        assert provider.models == {}
+        assert provider.models == []
 
 
 class TestAppConfig:
@@ -236,7 +253,9 @@ class TestLLMManager:
         self, mock_provider_manager, mock_config_manager
     ):
         """Test LLMManager initialization with provider system."""
-        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        llm = LLMManager(
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+        )
 
         assert llm.config_manager == mock_config_manager
         assert llm.provider_manager == mock_provider_manager
@@ -261,11 +280,15 @@ class TestLLMManager:
 
         # Mock router
         mock_router = MagicMock()
-        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "gpt-3.5-turbo"))
+        mock_router.get_provider_for_request = AsyncMock(
+            return_value=(mock_provider, "gpt-3.5-turbo")
+        )
         mock_router.mark_provider_success = MagicMock()
         mock_router.mark_provider_failure = MagicMock()
 
-        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        llm = LLMManager(
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+        )
         llm.router = mock_router
 
         request = LLMRequest(prompt="Test prompt")
@@ -307,11 +330,15 @@ class TestLLMManager:
 
         # Mock router
         mock_router = MagicMock()
-        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "gpt-3.5-turbo"))
+        mock_router.get_provider_for_request = AsyncMock(
+            return_value=(mock_provider, "gpt-3.5-turbo")
+        )
         mock_router.mark_provider_success = MagicMock()
         mock_router.mark_provider_failure = MagicMock()
 
-        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        llm = LLMManager(
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+        )
         llm.router = mock_router
 
         request = LLMRequest(
@@ -352,14 +379,18 @@ class TestLLMManager:
 
         # Mock router with fallback
         mock_router = MagicMock()
-        mock_router.get_provider_for_request = AsyncMock(side_effect=[
-            (mock_failing_provider, "gpt-3.5-turbo"),  # First call (fails)
-            (mock_fallback_provider, "gpt-3.5-turbo"),  # Fallback call (succeeds)
-        ])
+        mock_router.get_provider_for_request = AsyncMock(
+            side_effect=[
+                (mock_failing_provider, "gpt-3.5-turbo"),  # First call (fails)
+                (mock_fallback_provider, "gpt-3.5-turbo"),  # Fallback call (succeeds)
+            ]
+        )
         mock_router.mark_provider_success = MagicMock()
         mock_router.mark_provider_failure = MagicMock()
 
-        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        llm = LLMManager(
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+        )
         llm.router = mock_router
 
         request = LLMRequest(prompt="Test prompt")
@@ -376,7 +407,10 @@ class TestLLMManager:
 
         # Enable mock mode
         with patch.dict(os.environ, {"LOCCA_TEST_MODE": "true"}):
-            llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+            llm = LLMManager(
+                config_manager=mock_config_manager,
+                provider_manager=mock_provider_manager,
+            )
 
             request = LLMRequest(prompt="Test prompt")
             response = await llm.generate(request)
@@ -403,9 +437,13 @@ class TestLLMManager:
 
         # Mock router
         mock_router = MagicMock()
-        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "gpt-3.5-turbo"))
+        mock_router.get_provider_for_request = AsyncMock(
+            return_value=(mock_provider, "gpt-3.5-turbo")
+        )
 
-        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        llm = LLMManager(
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+        )
         llm.router = mock_router
 
         request = LLMRequest(prompt="Test streaming")
@@ -419,9 +457,13 @@ class TestLLMManager:
         assert "Hello" in chunks[0]
         assert "world" in chunks[1]
 
-    def test_provider_status_management(self, mock_provider_manager, mock_config_manager):
+    def test_provider_status_management(
+        self, mock_provider_manager, mock_config_manager
+    ):
         """Test provider status management."""
-        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        llm = LLMManager(
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+        )
 
         # Mock provider status
         mock_provider_manager.list_providers.return_value = ["openai", "claude"]
@@ -434,7 +476,9 @@ class TestLLMManager:
         assert status_list[1]["name"] == "claude"
 
     @pytest.mark.asyncio
-    async def test_provider_health_check(self, mock_provider_manager, mock_config_manager):
+    async def test_provider_health_check(
+        self, mock_provider_manager, mock_config_manager
+    ):
         """Test provider health checking."""
         # Mock healthy provider
         mock_provider = MagicMock()
@@ -443,7 +487,9 @@ class TestLLMManager:
 
         mock_provider_manager.get_provider.return_value = mock_provider
 
-        llm = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        llm = LLMManager(
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+        )
 
         status = await llm.get_provider_status()
 

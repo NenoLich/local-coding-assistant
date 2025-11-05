@@ -33,7 +33,8 @@ def make_test_llm_manager():
 
     # Create LLM manager with mocked provider system
     with patch("local_coding_assistant.config.get_config_manager"):
-        with patch("local_coding_assistant.agent.llm_manager.ProviderManager") as mock_pm_class:
+        # Update the import path to use the correct module
+        with patch("local_coding_assistant.providers.ProviderManager") as mock_pm_class:
             mock_pm_class.return_value = mock_provider_manager
 
             llm = LLMManager.__new__(LLMManager)

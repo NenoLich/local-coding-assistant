@@ -34,19 +34,14 @@ def temp_providers_config(temp_config_dir):
         "test_openai": {
             "driver": "openai_chat",
             "api_key_env": "OPENAI_API_KEY",
-            "models": {
-                "gpt-4": {},
-                "gpt-3.5-turbo": {}
-            }
+            "models": {"gpt-4": {}, "gpt-3.5-turbo": {}},
         },
         "test_google": {
             "driver": "openai_chat",
             "api_key": "fake-key",
             "base_url": "https://generativelanguage.googleapis.com/v1beta",
-            "models": {
-                "gemini-pro": {}
-            }
-        }
+            "models": {"gemini-pro": {}},
+        },
     }
 
     with open(providers_file, "w") as f:
@@ -62,7 +57,7 @@ def mock_env_vars():
         "LOCCA_TEST_MODE": "true",
         "OPENAI_API_KEY": "test-openai-key",
         "LOCCA_LOG_LEVEL": "INFO",
-        "LOCCA_MODEL": "gpt-4"
+        "LOCCA_MODEL": "gpt-4",
     }
 
     with patch.dict(os.environ, test_env):
@@ -70,6 +65,7 @@ def mock_env_vars():
 
 
 from typing import Any, Dict, cast
+
 
 @pytest.fixture
 def mock_bootstrap_success():
@@ -80,24 +76,24 @@ def mock_bootstrap_success():
         mock_runtime = MagicMock()
         mock_llm = MagicMock()
         mock_tools = [MagicMock(name="test_tool")]
-        
+
         # Create typed mock context
         mock_ctx: Dict[str, Any] = {
             "runtime": mock_runtime,
             "llm": mock_llm,
-            "tools": mock_tools
+            "tools": mock_tools,
         }
-        
+
         # Set return value first to establish the type
         mock_bootstrap.return_value = mock_ctx
 
-        # Mock runtime orchestration with proper typing
-        mock_orchestrate = MagicMock()
-        mock_orchestrate.return_value = {"message": "[LLMManager] Echo: test query"}
-        
+        # Create an async function for the orchestrate mock
+        async def mock_orchestrate_async(*args, **kwargs):
+            return {"message": "[LLMManager] Echo: test query"}
+
         # Use cast to help the type checker understand the type of mock_runtime
         runtime = cast(MagicMock, mock_ctx["runtime"])
-        runtime.orchestrate = mock_orchestrate
+        runtime.orchestrate = AsyncMock(side_effect=mock_orchestrate_async)
 
         yield mock_bootstrap, mock_ctx
 
@@ -106,28 +102,22 @@ def mock_bootstrap_success():
 def mock_bootstrap_llm_manager():
     """Mock bootstrap with LLM manager for provider commands."""
     # Patch the bootstrap where it's actually imported and used
-    with patch("local_coding_assistant.cli.commands.provider.bootstrap") as mock_bootstrap:
+    with patch(
+        "local_coding_assistant.cli.commands.provider.bootstrap"
+    ) as mock_bootstrap:
         # Create mock LLM manager
         mock_llm_manager = MagicMock()
         mock_llm_manager.provider_manager = MagicMock()
-        mock_llm_manager.provider_manager.list_providers.return_value = ["openai", "google"]
-        mock_llm_manager.provider_manager.get_provider_source.side_effect = lambda name: {
-            "openai": "global",
-            "google": "local"
-        }.get(name)
+        mock_llm_manager.provider_manager.list_providers.return_value = [
+            "openai",
+            "google",
+        ]
+        mock_llm_manager.provider_manager.get_provider_source.side_effect = (
+            lambda name: {"openai": "global", "google": "local"}.get(name)
+        )
         mock_llm_manager.get_provider_status_list.return_value = [
-            {
-                "name": "openai",
-                "source": "global",
-                "status": "available",
-                "models": 2
-            },
-            {
-                "name": "google",
-                "source": "local",
-                "status": "available",
-                "models": 1
-            }
+            {"name": "openai", "source": "global", "status": "available", "models": 2},
+            {"name": "google", "source": "local", "status": "available", "models": 1},
         ]
         mock_llm_manager.reload_providers = MagicMock()
 
@@ -141,7 +131,9 @@ def mock_bootstrap_llm_manager():
 def mock_bootstrap_tools():
     """Mock bootstrap with tools registry for list-tools command."""
     # Patch the bootstrap where it's actually imported and used
-    with patch("local_coding_assistant.cli.commands.list_tools.bootstrap") as mock_bootstrap:
+    with patch(
+        "local_coding_assistant.cli.commands.list_tools.bootstrap"
+    ) as mock_bootstrap:
         # Create mock tools registry with proper attribute access
         mock_tools = []
 

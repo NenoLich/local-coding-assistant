@@ -5,6 +5,7 @@ Provider manager for dynamic provider loading and registration
 import importlib
 import importlib.util
 import os
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -54,9 +55,9 @@ class ProviderManager:
             Path(__file__).parent,  # Current providers directory
         ]
 
-        # Copy from module-level registry
-        self._providers.update(_provider_registry)
-        self._provider_sources = _provider_sources.copy()
+        # Reference the module-level registry
+        self._providers = _provider_registry
+        self._provider_sources = _provider_sources
 
     def register_provider(self, name: str):
         """Decorator to register a provider class"""
@@ -101,7 +102,7 @@ class ProviderManager:
         Layer priority (later layers override earlier ones):
         1. Builtins (from *_provider.py files)
         2. Global config (from config manager if available)
-        2.5. Global YAML (from providers.yaml file directly)
+        2.5. Global YAML (from providers.default.yaml file directly)
         3. Local config (from providers.local.yaml)
         """
         logger.info("Reloading providers from all sources")
@@ -109,9 +110,10 @@ class ProviderManager:
         # Clear current instances and configs
         self._instances.clear()
         self._provider_configs.clear()
+        self._provider_sources.clear()
 
         # Copy fresh from module-level registry
-        self._providers.update(_provider_registry)
+        self._providers = _provider_registry.copy()
         self._provider_sources = _provider_sources.copy()
         logger.debug(
             f"Loaded module-level builtin providers: {list(_provider_registry.keys())}"
@@ -123,10 +125,10 @@ class ProviderManager:
                 config_manager, ProviderSource.GLOBAL
             )
 
-        # Layer 2.5: Load from global providers.yaml file directly
+        # Layer 2.5: Load from global providers.default.yaml file directly
         self._load_providers_from_global_yaml()
 
-        # Layer 3: Load from local config
+        # Layer 3: Load from local config (this will override any previous sources)
         self._load_providers_from_local_config()
 
         # After all configs are loaded, instantiate the providers
@@ -191,195 +193,214 @@ class ProviderManager:
                     provider_dict = provider_config
 
                 # Register the provider configuration
-                existing_config = self._provider_configs.get(provider_name, {})
-                self._provider_configs[provider_name] = _deep_merge_dicts(
-                    existing_config, provider_dict
-                )
-                self._provider_sources[provider_name] = source
-
-                logger.debug(f"Loaded {source} provider config: {provider_name}")
+                self._process_provider_config(provider_name, provider_dict, source)
 
         except Exception as e:
             logger.error(f"Failed to load providers from config: {e}")
 
     def _load_providers_from_global_yaml(self) -> None:
-        """Load providers from global providers.yaml file directly."""
-        global_config_path = Path(__file__).parent.parent / "config" / "providers.yaml"
-
-        if not global_config_path.exists():
-            logger.debug(
-                f"Global providers.yaml file does not exist: {global_config_path}"
-            )
-            return
-
+        """Load providers from global providers.default.yaml file directly."""
         try:
-            import yaml
-
-            with open(global_config_path, encoding="utf-8") as f:
-                config = yaml.safe_load(f) or {}
-
-            if not isinstance(config, dict) or "providers" not in config:
-                logger.warning(
-                    f"Invalid global providers.yaml format in {global_config_path}"
-                )
+            # Use "default" as the config type but pass ProviderSource.GLOBAL for the source
+            global_config_path = self._get_config_path("default")
+            config = self._load_yaml_config(global_config_path)
+            if config is None:
                 return
 
-            providers_config = config["providers"]
-            if not isinstance(providers_config, dict):
+            if not isinstance(config.get("providers"), dict):
                 logger.warning(f"Invalid providers section in {global_config_path}")
                 return
 
-            for provider_name, provider_config in providers_config.items():
-                if isinstance(provider_config, dict):
-                    existing_config = self._provider_configs.get(provider_name, {})
-                    self._provider_configs[provider_name] = _deep_merge_dicts(
-                        existing_config, provider_config
+            for provider_name, provider_config in config["providers"].items():
+                if not isinstance(provider_config, dict):
+                    logger.warning(
+                        f"Invalid config for provider '{provider_name}' in global config"
                     )
-                    self._provider_sources[provider_name] = ProviderSource.GLOBAL
-                    logger.debug(f"Loaded global provider config: {provider_name}")
+                    continue
 
+                # Process the provider configuration using the helper method
+                # Use ProviderSource.GLOBAL to indicate this is from the global config
+                self._process_provider_config(
+                    provider_name, provider_config, ProviderSource.GLOBAL
+                )
+        except ValueError as e:
+            logger.error(f"Error getting global config path: {e}")
         except Exception as e:
-            logger.error(
-                f"Failed to load global providers from {global_config_path}: {e}"
-            )
+            logger.error(f"Unexpected error loading global config: {e}")
 
     def _load_providers_from_local_config(self) -> None:
         """Load providers from local configuration file."""
-        # Use the same path resolution as in _get_config_path
-        if os.getenv("LOCCA_DEV_MODE"):
-            # For development, use a path relative to the project root
-            current_file = Path(__file__).resolve()
-            path_str = str(current_file)
-            src_index = path_str.find("src/local_coding_assistant")
-            if src_index == -1:
-                src_index = path_str.find("src\\local_coding_assistant")
-            if src_index != -1:
-                base_path = path_str[:src_index]
-                local_config_path = (
-                    Path(base_path)
-                    / "src"
-                    / "local_coding_assistant"
-                    / "config"
-                    / "providers.local.yaml"
-                )
-            else:
-                # Fallback to the old method if the path doesn't contain src/local_coding_assistant
-                local_config_path = (
-                    current_file.parents[3]
-                    / "src"
-                    / "local_coding_assistant"
-                    / "config"
-                    / "providers.local.yaml"
-                )
-        else:
-            # For production, use the user's home directory
-            local_config_path = (
-                Path.home()
-                / ".local-coding-assistant"
-                / "config"
-                / "providers.local.yaml"
-            )
-
-        if not local_config_path.exists():
-            logger.debug(f"Local config file does not exist: {local_config_path}")
-            return
-
         try:
-            import yaml
-
-            with open(local_config_path, encoding="utf-8") as f:
-                config = yaml.safe_load(f) or {}
-
-            if not isinstance(config, dict):
+            local_config_path = self._get_config_path("local")
+            config = self._load_yaml_config(local_config_path)
+            if not config or not isinstance(config.get("providers"), dict):
                 logger.warning(f"Invalid local config format in {local_config_path}")
                 return
 
-            # Get the 'providers' dictionary from config, defaulting to empty dict
-            providers_config = config.get("providers", {})
-            if not isinstance(providers_config, dict):
-                logger.warning(f"Invalid 'providers' format in {local_config_path}")
-                return
-
-            for provider_name, provider_config in providers_config.items():
+            for provider_name, provider_config in config["providers"].items():
                 if not isinstance(provider_config, dict):
                     logger.warning(
                         f"Invalid config for provider '{provider_name}' in {local_config_path}"
                     )
                     continue
 
-                existing_config = self._provider_configs.get(provider_name, {})
-                self._provider_configs[provider_name] = _deep_merge_dicts(
-                    existing_config, provider_config
+                self._process_provider_config(
+                    provider_name, provider_config, ProviderSource.LOCAL
                 )
-                self._provider_sources[provider_name] = ProviderSource.LOCAL
-                logger.debug(f"Loaded local provider config: {provider_name}")
 
+        except ValueError as e:
+            logger.error(f"Error getting local config path: {e}")
         except Exception as e:
-            logger.error(
-                f"Failed to load local providers from {local_config_path}: {e}"
-            )
+            logger.error(f"Unexpected error loading local config: {e}")
 
-    def _instantiate_providers(self) -> None:
-        """Instantiate all loaded providers based on their configurations and classes."""
-        all_provider_names = sorted(
-            list(set(self._providers.keys()) | set(self._provider_configs.keys()))
+    def _get_config_path(self, config_type: str) -> Path:
+        """Get the path to a configuration file.
+
+        Args:
+            config_type: Type of config to get path for ('local' or 'global')
+
+        Returns:
+            Path: Path to the requested configuration file
+
+        Raises:
+            ValueError: If an invalid config_type is provided
+        """
+        if os.getenv("LOCCA_DEV_MODE"):
+            return self._get_config_path_from_src(config_type)
+        return (
+            Path.home()
+            / ".local-coding-assistant"
+            / "config"
+            / f"providers.{config_type}.yaml"
         )
 
-        allowed_drivers = {"openai_chat", "openai_responses", "local"}
+    def _get_config_path_from_src(self, config_type: str) -> Path:
+        """Get the path to a configuration file from the src directory."""
+        current_file = Path(__file__).resolve()
+        path_str = str(current_file)
 
-        for name in all_provider_names:
+        # Find the src directory in the path
+        src_marker = "src" + os.sep + "local_coding_assistant"
+        src_index = path_str.find(src_marker)
+
+        if src_index != -1:
+            base_path = path_str[:src_index]
+            return (
+                Path(base_path)
+                / "src"
+                / "local_coding_assistant"
+                / "config"
+                / f"providers.{config_type}.yaml"
+            )
+
+        # Fallback to the old method if the path doesn't contain src/local_coding_assistant
+        return (
+            current_file.parents[3]
+            / "src"
+            / "local_coding_assistant"
+            / "config"
+            / f"providers.{config_type}.yaml"
+        )
+
+    def _load_yaml_config(self, path: Path) -> dict:
+        """Load and parse YAML config file."""
+        import yaml
+
+        with open(path, encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+
+    def _process_provider_config(
+        self, provider_name: str, provider_config: dict, source: str | ProviderSource
+    ) -> None:
+        """Process and merge a provider configuration.
+
+        Args:
+            provider_name: Name of the provider
+            provider_config: Provider configuration dictionary
+            source: Source of the configuration (ProviderSource enum or string)
+        """
+        # Handle models configuration
+        if "models" in provider_config:
+            provider_config = self._normalize_models_config(provider_config)
+
+        # Get source as string (handles both enum and string inputs)
+        if isinstance(source, Enum):
+            source_str = source.name.lower()  # Use .name instead of .value for enums
+        else:
+            source_str = str(source).lower()
+
+        # Merge with existing config
+        existing_config = self._provider_configs.get(provider_name, {})
+        self._provider_configs[provider_name] = _deep_merge_dicts(
+            existing_config, provider_config
+        )
+        self._provider_sources[provider_name] = source_str
+        logger.debug(f"Loaded {source_str} provider config: {provider_name}")
+
+    def _normalize_models_config(self, provider_config: dict) -> dict:
+        """Normalize the models configuration format."""
+        provider_config = provider_config.copy()
+        models_config = provider_config["models"]
+        if isinstance(models_config, dict):
+            # Convert {model_name: {config}} to list of model configs
+            provider_config["models"] = [
+                {"name": name, **config} if isinstance(config, dict) else {"name": name}
+                for name, config in models_config.items()
+            ]
+        elif isinstance(models_config, list):
+            # Ensure each model has a name field
+            provider_config["models"] = [
+                model if isinstance(model, dict) else {"name": model}
+                for model in models_config
+            ]
+
+        return provider_config
+
+    def _instantiate_providers(self) -> None:
+        """Instantiate provider instances from loaded configurations."""
+        from local_coding_assistant.config.schemas import ModelConfig
+
+        for name, config in self._provider_configs.items():
             try:
-                instance_kwargs = {"name": name}
-                provider_class = self._providers.get(name)
-                config = self._provider_configs.get(name)
+                # Skip if already instantiated
+                if name in self._instances:
+                    continue
 
-                if config:
-                    # Normalize models: allow dict (from YAML) or list
-                    models = config.get("models")
-                    if isinstance(models, dict):
-                        # Convert dict of model -> metadata to list of model names
-                        config = dict(config)  # shallow copy
-                        config["models"] = list(models.keys())
+                # Make a copy of the config to avoid modifying the original
+                config = config.copy()
 
-                    instance_kwargs.update(config)
+                # Ensure name is included in the config
+                config["name"] = name
 
-                    # Validation for generic provider
-                    required_fields = ["base_url", "models", "driver"]
-                    if not all(field in instance_kwargs for field in required_fields):
-                        missing = [
-                            f for f in required_fields if f not in instance_kwargs
-                        ]
-                        raise ValueError(
-                            f"Provider '{name}' config is missing required fields: {missing}"
-                        )
+                # Convert models to ModelConfig objects if needed
+                if "models" in config:
+                    models = config["models"]
+                    model_configs = []
 
-                    if instance_kwargs.get("driver") not in allowed_drivers:
-                        raise ValueError(
-                            f"Provider '{name}' has unsupported driver: {instance_kwargs.get('driver')}. Supported: {sorted(allowed_drivers)}"
-                        )
+                    if isinstance(models, list):
+                        for model in models:
+                            if isinstance(model, str):
+                                model_configs.append(ModelConfig(name=model))
+                            elif isinstance(model, dict):
+                                model_configs.append(ModelConfig(**model))
+                            elif isinstance(model, ModelConfig):
+                                model_configs.append(model)
 
-                    if (
-                        "api_key" not in instance_kwargs
-                        and "api_key_env" not in instance_kwargs
-                    ):
-                        raise ValueError(
-                            f"Provider '{name}' config requires 'api_key' or 'api_key_env'"
-                        )
+                        config["models"] = model_configs
 
-                    instance = GenericProvider(**instance_kwargs)
-                    self._instances[name] = instance
-                    logger.debug(f"Created generic instance for provider: {name}")
-                elif provider_class:
-                    # Use dedicated provider class
-                    instance = provider_class(**instance_kwargs)
-                    self._instances[name] = instance
-                    logger.debug(f"Created instance for provider: {name}")
-                else:
-                    logger.warning(f"No class or config found for provider: {name}")
+                # Get provider class (use GenericProvider if not explicitly registered)
+                provider_class = self._providers.get(name, GenericProvider)
+
+                # Create provider instance
+                self._instances[name] = provider_class(**config)
+                logger.debug(f"Created instance for provider: {name}")
 
             except Exception as e:
-                logger.error(f"Failed to initialize provider {name}: {e!s}")
-                # Do not re-raise, allow other providers to load
+                logger.error(
+                    f"Failed to initialize provider {name}: {e}", exc_info=True
+                )
+                # Continue to next provider instead of failing completely
+                continue
 
 
 # Global provider manager instance

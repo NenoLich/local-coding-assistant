@@ -59,9 +59,9 @@ class TestLLMRequest:
         provider_request = request.to_provider_request("gpt-4")
 
         assert provider_request.model == "gpt-4"
-        assert provider_request.stream is False
+        assert provider_request.parameters.stream is False
         assert provider_request.temperature == 0.7
-        assert provider_request.tools == request.tools
+        assert provider_request.parameters.tools == request.tools
 
         # Check messages format
         messages = provider_request.messages
@@ -139,14 +139,18 @@ class TestLLMManagerInitialization:
             mock_get_config.return_value = mock_config_manager
 
             # Mock the ProviderManager import that will be used in LLMManager
-            with patch("local_coding_assistant.providers.ProviderManager") as mock_provider_manager_class:
+            with patch(
+                "local_coding_assistant.providers.ProviderManager"
+            ) as mock_provider_manager_class:
                 mock_provider_manager = MagicMock()
                 mock_provider_manager_class.return_value = mock_provider_manager
 
                 _manager = LLMManager()
 
                 # Verify provider manager was reloaded with config
-                mock_provider_manager.reload.assert_called_once_with(mock_config_manager)
+                mock_provider_manager.reload.assert_called_once_with(
+                    mock_config_manager
+                )
 
 
 class TestLLMManagerGenerate:
@@ -190,6 +194,7 @@ class TestLLMManagerGenerate:
             # Verify provider was marked healthy
             mock_router.mark_provider_success.assert_called_once_with("test_provider")
 
+
     @pytest.mark.asyncio
     async def test_generate_with_parameters(self):
         """Test generate method with various parameters."""
@@ -201,6 +206,7 @@ class TestLLMManagerGenerate:
             )
         )
 
+        # Create a mock for the router that will be called with a ProviderLLMRequest
         mock_router = AsyncMock(spec=ProviderRouter)
         mock_router.get_provider_for_request = AsyncMock(
             return_value=(mock_provider, "gpt-4")
@@ -210,22 +216,25 @@ class TestLLMManagerGenerate:
             manager = LLMManager.__new__(LLMManager)
             manager.router = mock_router
 
+            # Test with a specific temperature in overrides
             request = LLMRequest(prompt="Test")
+            # In test_generate_with_parameters, update the overrides to use "llm.temperature":
             _response = await manager.generate(
                 request,
                 provider="openai",
                 model="gpt-4",
                 policy="coding",
-                overrides={"temperature": 0.5},
+                overrides={"llm.temperature": 0.5},  # Changed from "temperature" to "llm.temperature"
             )
 
-            # Verify parameters were passed to router
-            mock_router.get_provider_for_request.assert_called_once_with(
-                provider_name="openai",
-                model_name="gpt-4",
-                role="coding",
-                overrides={"temperature": 0.5},
-            )
+            # Verify the provider was called with the correct parameters
+            mock_provider.generate_with_retry.assert_awaited_once()
+            call_args = mock_provider.generate_with_retry.await_args[0][0]
+            assert call_args.model == "gpt-4"
+
+            # The test was failing because the actual implementation uses a default temperature of 0.7
+            # Let's verify the temperature is correctly set from overrides
+            assert call_args.temperature == 0.5
 
     @pytest.mark.asyncio
     async def test_generate_with_provider_error(self):
@@ -293,7 +302,8 @@ class TestLLMManagerGenerate:
 
             # Verify both providers were marked appropriately
             mock_router.mark_provider_failure.assert_called_once_with(
-                "failing_provider", mock_failing_provider.generate_with_retry.side_effect
+                "failing_provider",
+                mock_failing_provider.generate_with_retry.side_effect,
             )
             mock_router.mark_provider_success.assert_called_once_with(
                 "success_provider"
@@ -715,11 +725,18 @@ class TestLLMManagerIntegration:
             # Verify provider request was created correctly
             mock_router.get_provider_for_request.assert_called_once()
             call_args = mock_router.get_provider_for_request.call_args
-            # Check that the call was made with the expected keyword arguments
-            assert call_args.kwargs["provider_name"] is None  # No provider override
-            assert call_args.kwargs["model_name"] is None    # No model override
-            assert call_args.kwargs["role"] is None         # No policy override
-            assert call_args.kwargs["overrides"] is None    # No overrides
+
+            # Check that the request contains the expected values
+            request_arg = call_args.kwargs.get("request")
+            assert request_arg is not None
+            from local_coding_assistant.providers import ProviderLLMRequest
+            assert isinstance(request_arg, ProviderLLMRequest)
+            assert request_arg.model == "gpt-4"  # Default model from the test mock
+            assert request_arg.temperature == 0.7  # Default temperature
+
+            # Check that the provider and role are None
+            assert call_args.kwargs.get("provider") is None  # No provider override
+            assert call_args.kwargs.get("role") is None  # No role override
 
     @pytest.mark.asyncio
     async def test_streaming_end_to_end_flow(self):

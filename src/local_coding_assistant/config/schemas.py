@@ -127,6 +127,23 @@ class RuntimeConfig(BaseModel):
     )
 
 
+class ModelConfig(BaseModel):
+    """Configuration for a specific model within a provider."""
+
+    name: str = Field(description="Model identifier")
+    supported_parameters: list[str] = Field(
+        default_factory=list,
+        description="List of supported parameter names for this model",
+    )
+
+    @classmethod
+    def from_dict(cls, name: str, config: dict) -> ModelConfig:
+        """Create ModelConfig from a model name and its configuration."""
+        return cls(
+            name=name, supported_parameters=config.get("supported_parameters", [])
+        )
+
+
 class ProviderConfig(BaseModel):
     """Configuration for LLM providers."""
 
@@ -135,15 +152,63 @@ class ProviderConfig(BaseModel):
         description="Driver type (openai_chat, openai_responses, local)"
     )
     base_url: str = Field(description="Base URL for the provider API")
-    api_key_env: str = Field(description="Environment variable name for API key")
-    models: dict[str, dict[str, Any]] = Field(
-        default_factory=dict, description="Available models with their configurations"
+    api_key_env: str | None = Field(
+        default=None, description="Environment variable name for API key"
+    )
+    models: list[ModelConfig] = Field(
+        default_factory=list, description="List of available model configurations"
+    )
+    health_check_endpoint: str | None = Field(
+        default=None, description="Endpoint to check provider health"
+    )
+    health_check_method: str = Field(
+        default="GET", description="HTTP method to use for health checks"
+    )
+    health_check_timeout: float = Field(
+        default=5.0, description="Timeout in seconds for health checks"
     )
 
     @classmethod
     def from_dict(cls, config_dict: dict[str, Any]) -> ProviderConfig:
         """Create ProviderConfig from dictionary."""
-        return cls(**config_dict)
+        # Make a copy to avoid modifying the input
+        config = config_dict.copy()
+
+        # Handle models configuration
+        models_config = config.pop("models", {})
+        models = []
+
+        # If models is a list, convert it to the expected dict format
+        if isinstance(models_config, list):
+            for model in models_config:
+                if isinstance(model, dict) and "name" in model:
+                    models.append(ModelConfig(**model))
+        # If models is a dict, process as before
+        elif isinstance(models_config, dict):
+            models = [
+                ModelConfig(name=name, **model_config)
+                for name, model_config in models_config.items()
+            ]
+
+        return cls(models=models, **config)
+
+    def get_model_config(self, model_name: str) -> ModelConfig | None:
+        """Get configuration for a specific model by name."""
+        for model in self.models:
+            if model.name == model_name:
+                return model
+        return None
+
+    def get_available_models(self) -> list[str]:
+        """Get list of available model names."""
+        return [model.name for model in self.models]
+
+    def is_parameter_supported(self, model_name: str, param: str) -> bool:
+        """Check if a parameter is supported by the specified model."""
+        model = self.get_model_config(model_name)
+        if not model:
+            return False
+        return param in model.supported_parameters
 
 
 class AgentConfig(BaseModel):

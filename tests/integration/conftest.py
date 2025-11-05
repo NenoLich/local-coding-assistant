@@ -35,7 +35,9 @@ class MockStreamingLLMManager(LLMManager):
         provider_manager: Any = None,
     ):
         # Initialize the parent LLMManager first
-        super().__init__(config_manager=config_manager, provider_manager=provider_manager)
+        super().__init__(
+            config_manager=config_manager, provider_manager=provider_manager
+        )
         self.responses = responses
         self.call_count = 0
         self.streaming_enabled = True
@@ -61,7 +63,9 @@ class MockStreamingLLMManager(LLMManager):
         # Create proper LLMResponse object instead of MagicMock
         tool_calls_data = response_data.get("tool_calls", [])
         # Ensure tool_calls is either a list of dicts or None
-        if isinstance(tool_calls_data, list) and all(isinstance(tc, dict) for tc in tool_calls_data):
+        if isinstance(tool_calls_data, list) and all(
+            isinstance(tc, dict) for tc in tool_calls_data
+        ):
             tool_calls = tool_calls_data
         else:
             tool_calls = None
@@ -103,7 +107,9 @@ class MockStreamingLLMManager(LLMManager):
         # Yield tool calls if present
         tool_calls_data = response_data.get("tool_calls", [])
         # Ensure tool_calls is either a list of dicts or None
-        if isinstance(tool_calls_data, list) and all(isinstance(tc, dict) for tc in tool_calls_data):
+        if isinstance(tool_calls_data, list) and all(
+            isinstance(tc, dict) for tc in tool_calls_data
+        ):
             tool_calls = tool_calls_data
         else:
             tool_calls = None
@@ -247,7 +253,9 @@ def mock_llm_with_tools():
             ],
         },
     ]
-    return MockStreamingLLMManager(responses, config_manager=None, provider_manager=None)
+    return MockStreamingLLMManager(
+        responses, config_manager=None, provider_manager=None
+    )
 
 
 @pytest.fixture
@@ -280,9 +288,16 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
         nonlocal agent_loop_instance
 
         # Create new agent loop if this is the first call or if the previous one has finished
-        if agent_loop_instance is None or (agent_loop_instance is not None and agent_loop_instance.final_answer is not None):
+        if agent_loop_instance is None or (
+            agent_loop_instance is not None
+            and agent_loop_instance.final_answer is not None
+        ):
             agent_loop_instance = AgentLoop(
-                llm_manager=MockStreamingLLMManager(mock_llm_with_tools.responses, config_manager=None, provider_manager=None),
+                llm_manager=MockStreamingLLMManager(
+                    mock_llm_with_tools.responses,
+                    config_manager=None,
+                    provider_manager=None,
+                ),
                 tool_manager=tool_manager,
                 name="integration_test_agent",
                 max_iterations=max_iterations,
@@ -327,9 +342,16 @@ def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
         nonlocal agent_loop_instance
 
         # Create new agent loop if this is the first call or if the previous one has finished
-        if agent_loop_instance is None or (agent_loop_instance is not None and agent_loop_instance.final_answer is not None):
+        if agent_loop_instance is None or (
+            agent_loop_instance is not None
+            and agent_loop_instance.final_answer is not None
+        ):
             agent_loop_instance = AgentLoop(
-                llm_manager=MockStreamingLLMManager(mock_llm_with_tools.responses, config_manager=None, provider_manager=None),
+                llm_manager=MockStreamingLLMManager(
+                    mock_llm_with_tools.responses,
+                    config_manager=None,
+                    provider_manager=None,
+                ),
                 tool_manager=tool_manager,
                 name="integration_test_agent_streaming",
                 max_iterations=max_iterations,
@@ -391,7 +413,9 @@ def complex_scenario_llm():
             ],
         },
     ]
-    return MockStreamingLLMManager(responses, config_manager=None, provider_manager=None)
+    return MockStreamingLLMManager(
+        responses, config_manager=None, provider_manager=None
+    )
 
 
 @pytest.fixture
@@ -409,7 +433,9 @@ def streaming_llm_single_response():
             "tool_calls": [],
         }
     ]
-    return MockStreamingLLMManager(responses, config_manager=None, provider_manager=None)
+    return MockStreamingLLMManager(
+        responses, config_manager=None, provider_manager=None
+    )
 
 
 @pytest.fixture(scope="function")
@@ -457,12 +483,9 @@ def mock_llm_manager(mock_llm_response):
 
     # Create a proper config manager for the new system
     from local_coding_assistant.config.schemas import LLMConfig
+
     llm_config = LLMConfig(
-        temperature=0.7,
-        max_tokens=1000,
-        max_retries=3,
-        retry_delay=1.0,
-        providers=[]
+        temperature=0.7, max_tokens=1000, max_retries=3, retry_delay=1.0, providers=[]
     )
     mock_config_manager = MagicMock()
     # Set up session overrides to return the model when accessed
@@ -535,11 +558,7 @@ def ctx_with_mocked_llm(mock_llm_manager):
 
     # Create proper config objects for the new system
     llm_config = LLMConfig(
-        temperature=0.7,
-        max_tokens=1000,
-        max_retries=3,
-        retry_delay=1.0,
-        providers=[]
+        temperature=0.7, max_tokens=1000, max_retries=3, retry_delay=1.0, providers=[]
     )
     runtime_config = RuntimeConfig(
         persistent_sessions=False,
@@ -570,20 +589,28 @@ def ctx_with_mocked_llm(mock_llm_manager):
             temperature = overrides["llm.temperature"]
             if temperature is not None and (temperature < 0.0 or temperature > 2.0):
                 from local_coding_assistant.core.exceptions import AgentError
-                raise AgentError("Configuration update validation failed: temperature must be between 0.0 and 2.0")
+
+                raise AgentError(
+                    "Configuration update validation failed: temperature must be between 0.0 and 2.0"
+                )
 
         # Validate max_tokens
         if "llm.max_tokens" in overrides:
             max_tokens = overrides["llm.max_tokens"]
             if max_tokens is not None and max_tokens <= 0:
                 from local_coding_assistant.core.exceptions import AgentError
-                raise AgentError("Configuration update validation failed: max_tokens must be greater than 0")
+
+                raise AgentError(
+                    "Configuration update validation failed: max_tokens must be greater than 0"
+                )
 
         # If validation passes, just store the overrides
         mock_session_overrides.clear()
         mock_session_overrides.update(overrides)
 
-    config_manager.set_session_overrides = MagicMock(side_effect=mock_set_session_overrides)
+    config_manager.set_session_overrides = MagicMock(
+        side_effect=mock_set_session_overrides
+    )
 
     runtime = RuntimeManager(
         llm_manager=mock_llm_manager,
@@ -647,7 +674,9 @@ class MockProviderManager:
         # Create specific provider instances that tests can reference
         openai_provider = AsyncMock(spec=BaseProvider)
         openai_provider.name = "openai"
-        openai_provider.get_available_models = MagicMock(return_value=["gpt-4", "gpt-3.5-turbo"])
+        openai_provider.get_available_models = MagicMock(
+            return_value=["gpt-4", "gpt-3.5-turbo"]
+        )
         openai_provider.health_check = AsyncMock(return_value=True)
 
         google_provider = AsyncMock(spec=BaseProvider)
@@ -677,6 +706,7 @@ class MockProviderManager:
 
         # Default provider for unknown names
         from unittest.mock import AsyncMock
+
         provider = AsyncMock(spec=BaseProvider)
         provider.name = name
         provider.get_available_models.return_value = ["gpt-4", "gpt-3.5-turbo"]
@@ -698,9 +728,12 @@ class MockProviderManager:
         for provider_name, config in yaml_content.get("providers", {}).items():
             # Create a mock provider instance
             from unittest.mock import AsyncMock, MagicMock
+
             provider = AsyncMock(spec=BaseProvider)
             provider.name = provider_name
-            provider.get_available_models = MagicMock(return_value=list(config.get("models", {}).keys()))
+            provider.get_available_models = MagicMock(
+                return_value=list(config.get("models", {}).keys())
+            )
             provider.health_check = AsyncMock(return_value=True)
 
             # Determine source based on config location
@@ -708,7 +741,7 @@ class MockProviderManager:
 
             self._loaded_providers[provider_name] = {
                 "instance": provider,
-                "source": source
+                "source": source,
             }
             self._provider_configs[provider_name] = config
 
@@ -874,7 +907,9 @@ def temp_provider_config_file():
 def integration_llm_manager_with_providers(mock_provider_manager):
     """Create LLM manager with provider manager for integration tests."""
     with patch("local_coding_assistant.config.get_config_manager"):
-        with patch("local_coding_assistant.agent.llm_manager.ProviderManager") as mock_pm_class:
+        with patch(
+            "local_coding_assistant.agent.llm_manager.ProviderManager"
+        ) as mock_pm_class:
             mock_pm_class.return_value = mock_provider_manager
 
             llm_manager = LLMManager.__new__(LLMManager)

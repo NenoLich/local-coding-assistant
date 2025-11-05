@@ -1,6 +1,5 @@
 """Unit tests for the ConfigManager system."""
 
-
 import pytest
 
 from local_coding_assistant.config import ConfigManager, get_config_manager

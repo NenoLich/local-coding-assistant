@@ -37,13 +37,16 @@ class TestBootstrapIntegration:
                 "openai": {
                     "name": "openai",
                     "driver": "openai_chat",
-                    "base_url": "https://api.openai.com/v1",
+                    "base_url": "https://api.openai.com/v1/chat/completions",
                     "api_key_env": "OPENAI_API_KEY",
+                    "health_check_endpoint": "https://api.openai.com/v1/models",
                     "models": {
-                        "gpt-4.1": {"max_tokens": 4000, "temperature": 0.8}
+                        "gpt-4.1": {
+                            "supported_parameters": ["max_tokens", "temperature", "top_p"]
+                        }
                     }
                 }
-            }
+            },
         }
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
@@ -62,22 +65,34 @@ class TestBootstrapIntegration:
 
             assert llm is not None
             assert runtime is not None
+
             # Check LLM config via config manager
             llm_resolved = llm.config_manager.resolve()
             assert llm_resolved.llm.temperature == 0.8
             assert llm_resolved.llm.max_tokens == 2000
             assert llm_resolved.llm.max_retries == 5
+            assert llm_resolved.runtime.persistent_sessions is True
+            assert llm_resolved.runtime.log_level == "DEBUG"
 
-            # Check that provider was loaded
-            assert "openai" in llm_resolved.providers
+            # Check provider configuration
+            assert len(llm_resolved.providers) == 1
+            openai_provider = llm_resolved.providers["openai"]
+            assert openai_provider.name == "openai"
+            assert openai_provider.driver == "openai_chat"
+            assert openai_provider.base_url == "https://api.openai.com/v1/chat/completions"
+            assert openai_provider.api_key_env == "OPENAI_API_KEY"
+            assert openai_provider.health_check_endpoint == "https://api.openai.com/v1/models"
 
-            # Check runtime config via config manager
-            runtime_resolved = runtime.config_manager.resolve()
-            assert runtime_resolved.runtime.persistent_sessions is True
-            assert runtime_resolved.runtime.log_level == "DEBUG"
+            # Check models
+            assert len(openai_provider.models) == 1
+            model_config = openai_provider.models[0]
+            assert model_config.name == "gpt-4.1"
+            assert set(model_config.supported_parameters) == {"max_tokens", "temperature", "top_p"}
 
         finally:
-            config_path.unlink()
+            # Clean up temporary file
+            if config_path.exists():
+                config_path.unlink()
 
     def test_bootstrap_with_environment_variables(self):
         """Test bootstrap with environment variable configuration."""
@@ -407,7 +422,9 @@ class TestConfigurationEdgeCases:
         initial_max_tokens = initial_llm_config.llm.max_tokens
 
         # Call with override
-        await runtime.orchestrate("test query", model="gpt-5-mini", temperature=0.9, max_tokens=1000)
+        await runtime.orchestrate(
+            "test query", model="gpt-5-mini", temperature=0.9, max_tokens=1000
+        )
 
         # Base config should remain unchanged
         updated_llm_config = runtime._llm_manager.config_manager.resolve()
@@ -415,7 +432,9 @@ class TestConfigurationEdgeCases:
         assert updated_llm_config.llm.max_tokens == initial_max_tokens
 
     @pytest.mark.asyncio
-    async def test_runtime_manager_handles_quota_errors_gracefully(self, ctx_with_mocked_llm):
+    async def test_runtime_manager_handles_quota_errors_gracefully(
+        self, ctx_with_mocked_llm
+    ):
         """Test that RuntimeManager handles quota exceeded errors gracefully."""
         runtime = ctx_with_mocked_llm.get("runtime")
         # This test uses mocked LLM manager to simulate quota errors
@@ -427,7 +446,9 @@ class TestConfigurationEdgeCases:
 
         async def mock_generate_quota_error(*args, **kwargs):
             # Simulate a quota error that should be caught by the test
-            raise AgentError("insufficient_quota: Your OpenAI API quota has been exceeded")
+            raise AgentError(
+                "insufficient_quota: Your OpenAI API quota has been exceeded"
+            )
 
         runtime._llm_manager.generate = AsyncMock(side_effect=mock_generate_quota_error)
 

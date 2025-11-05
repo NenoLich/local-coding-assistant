@@ -2,17 +2,20 @@
 Provider routing system for intelligent provider and model selection.
 """
 
-from typing import Any
-
-from local_coding_assistant.providers.base import BaseProvider
+from local_coding_assistant.providers import (
+    BaseProvider,
+    OptionalParameters,
+    ProviderLLMRequest,
+    ProviderManager,
+)
 from local_coding_assistant.providers.exceptions import (
     ProviderAuthError,
     ProviderConnectionError,
     ProviderNotFoundError,
     ProviderRateLimitError,
     ProviderTimeoutError,
+    ProviderValidationError,
 )
-from local_coding_assistant.providers.provider_manager import ProviderManager
 from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("providers.router")
@@ -69,36 +72,66 @@ class ProviderRouter:
 
     async def get_provider_for_request(
         self,
-        provider_name: str | None = None,
-        model_name: str | None = None,
+        request: ProviderLLMRequest,
         role: str | None = None,
-        overrides: dict[str, Any] | None = None,
+        provider: str | None = None,
     ) -> tuple[BaseProvider, str]:
         """Get the best provider and model for a request with fallback logic.
 
-        This method uses a dispatcher pattern to route to the appropriate
-        resolution strategy based on the provided parameters.
+        This method routes to the appropriate resolution strategy based on the request
+        and optional provider specification.
+
+        Args:
+            request: The provider request containing model and parameters
+            role: Optional role for policy-based routing
+            provider: Optional provider name to use for this request
+
+        Returns:
+            Tuple of (provider, model_name) that should handle the request
+
+        Raises:
+            ProviderNotFoundError: If no suitable provider/model can be found
         """
-        # Route based on provided parameters using helper methods
-        if provider_name and model_name:
-            return await self._resolve_provider_and_model(
-                provider_name, model_name, role, overrides
-            )
+        # If provider is specified, try to use it first
+        if provider and request.model:
+            try:
+                provider_instance = self.provider_manager.get_provider(provider)
+                if provider_instance and provider_instance.supports_model(
+                    request.model
+                ):
+                    provider_instance.validate_request(request)
+                    return provider_instance, request.model
+                else:
+                    logger.debug(
+                        f"Provider {provider} doesn't support model {request.model}"
+                    )
+            except Exception as e:
+                logger.debug(f"Error using provider {provider}: {e}")
+                # Fall through to model-based routing if provider lookup fails
+                pass
 
-        if provider_name:
-            return await self._resolve_provider_only(provider_name, role, overrides)
+        # If we have a model but no provider, try to find a provider that supports it
+        if request.model and not provider:
+            try:
+                return await self._resolve_model_only(request.model, request)
+            except ProviderNotFoundError as e:
+                logger.debug(f"No provider found for model {request.model}: {e}")
+                # Fall through to policy-based routing
+            except Exception as e:
+                logger.debug(f"Error resolving model {request.model}: {e}")
+                # Fall through to policy-based routing
 
-        if model_name:
-            return await self._resolve_model_only(model_name, role, overrides)
+        # If we get here, either no provider/model was specified or the specified ones failed
+        # Fall back to policy-based routing
+        logger.info(f"Falling back to policy-based routing for {role} role")
 
-        # No specific parameters provided, use policy-based routing
-        return await self._route_by_policy_with_fallback(role, overrides)
+        return await self._route_by_policy(role, request)
 
     async def _check_provider_health_and_fallback(
         self,
         provider_name: str,
         role: str | None,
-        overrides: dict[str, Any] | None,
+        request: ProviderLLMRequest,
         fallback_message: str,
     ) -> tuple[BaseProvider, str] | None:
         """Check if provider is healthy and fallback if not.
@@ -106,7 +139,7 @@ class ProviderRouter:
         Args:
             provider_name: Name of the provider to check
             role: Agent role for fallback routing
-            overrides: Configuration overrides
+            request: The provider request with model parameters to validate
             fallback_message: Message for logging
 
         Returns:
@@ -115,8 +148,19 @@ class ProviderRouter:
         if provider_name in self._unhealthy_providers:
             logger.warning(fallback_message)
             return await self._route_by_policy_with_fallback(
-                role, overrides, exclude_providers={provider_name}
+                role, request, exclude_providers={provider_name}
             )
+
+        # Validate the request against the provider
+        provider = self.provider_manager.get_provider(provider_name)
+        if provider and hasattr(request, "model") and request.model:
+            try:
+                provider.validate_request(request)
+            except ProviderValidationError as e:
+                raise ValueError(
+                    f"Invalid parameters for model '{request.model}': {e!s}"
+                ) from e
+
         return None  # Provider is healthy, continue with normal flow
 
     async def _resolve_provider_and_model(
@@ -124,18 +168,23 @@ class ProviderRouter:
         provider_name: str,
         model_name: str,
         role: str | None,
-        overrides: dict[str, Any] | None,
+        request: ProviderLLMRequest,
     ) -> tuple[BaseProvider, str]:
         """Resolve provider and model when both are specified."""
         provider = self.provider_manager.get_provider(provider_name)
         if not provider:
             raise ProviderNotFoundError(f"Provider {provider_name} not found")
 
-        # Check health and fallback if needed
+        # Create a copy of the request with the specified provider and model
+        model_request = request.model_copy(
+            update={"provider": provider_name, "model": model_name}
+        )
+
+        # Check health and validate parameters
         fallback_result = await self._check_provider_health_and_fallback(
             provider_name,
             role,
-            overrides,
+            model_request,
             f"Provider {provider_name} is marked unhealthy, trying fallback",
         )
         if fallback_result:
@@ -143,95 +192,183 @@ class ProviderRouter:
 
         # Check if provider supports the model
         if not provider.supports_model(model_name):
-            # Try to find a provider that supports this model
-            fallback_provider = self._find_provider_for_model(model_name)
-            if (
-                fallback_provider
-                and fallback_provider.name not in self._unhealthy_providers
-            ):
-                return fallback_provider, model_name
+            # Try to find a provider that supports this model and parameters
+            for fallback_provider_name in self.provider_manager.list_providers():
+                if (
+                    fallback_provider_name == provider_name
+                    or fallback_provider_name in self._unhealthy_providers
+                ):
+                    continue
 
+                fallback_provider = self.provider_manager.get_provider(
+                    fallback_provider_name
+                )
+                if not fallback_provider or not fallback_provider.supports_model(
+                    model_name
+                ):
+                    continue
+
+                try:
+                    # Create a new request with the fallback provider
+                    fallback_request = model_request.model_copy(
+                        update={"provider": fallback_provider_name}
+                    )
+                    fallback_provider.validate_request(fallback_request)
+
+                    logger.info(
+                        f"Model '{model_name}' not found in provider '{provider_name}', "
+                        f"falling back to provider '{fallback_provider_name}'"
+                    )
+                    return fallback_provider, model_name
+                except ProviderValidationError as e:
+                    logger.debug(f"Skipping provider {fallback_provider_name}: {e}")
+                    continue
+
+            # If we get here, no suitable fallback was found
+            available_models = provider.get_available_models()
+            raise ProviderNotFoundError(
+                f"Model '{model_name}' not found in provider '{provider_name}'. "
+                f"Available models: {', '.join(available_models) if available_models else 'None'}"
+            )
+
+        # If we get here, the provider supports the model
+        # The parameter validation is already done in _check_provider_health_and_fallback
         return provider, model_name
 
     async def _resolve_provider_only(
         self,
         provider_name: str,
         role: str | None,
-        overrides: dict[str, Any] | None,
+        request: ProviderLLMRequest,
     ) -> tuple[BaseProvider, str]:
         """Resolve provider when only provider name is specified."""
         provider = self.provider_manager.get_provider(provider_name)
         if not provider:
             raise ProviderNotFoundError(f"Provider {provider_name} not found")
 
-        # Check health and fallback if needed
+        # Check health and validate parameters
         fallback_result = await self._check_provider_health_and_fallback(
             provider_name,
             role,
-            overrides,
+            request,
             f"Provider {provider_name} is marked unhealthy, trying fallback",
         )
         if fallback_result:
             return fallback_result
 
-        # Use first available model for this provider
-        models = provider.get_available_models()
-        if not models:
+        # Get available models
+        available_models = provider.get_available_models()
+        if not available_models:
             raise ProviderNotFoundError(
                 f"No models available for provider {provider_name}"
             )
-        return provider, models[0]
+
+        # Try to find a model that supports the requested parameters
+        for model_name in available_models:
+            try:
+                # Create a copy of the request with the current model
+                model_request = request.model_copy(
+                    update={"provider": provider_name, "model": model_name}
+                )
+                provider.validate_request(model_request)
+                return provider, model_name
+            except ProviderValidationError as e:
+                logger.debug(f"Skipping model {model_name} for {provider_name}: {e}")
+                continue
+
+        # If we get here, no model supports the requested parameters
+        raise ProviderNotFoundError(
+            f"No models available for provider {provider_name} support the requested parameters"
+        )
 
     async def _resolve_model_only(
         self,
         model_name: str,
-        role: str | None,
-        overrides: dict[str, Any] | None,
+        request: ProviderLLMRequest,
     ) -> tuple[BaseProvider, str]:
-        """Resolve model when only model name is specified."""
-        provider = self._find_provider_for_model(model_name)
-        if not provider:
-            raise ProviderNotFoundError(f"No provider found for model {model_name}")
+        """Resolve model when only model name is specified.
 
-        # Check health and fallback if needed
-        fallback_result = await self._check_provider_health_and_fallback(
-            provider.name,
-            role,
-            overrides,
-            f"Provider {provider.name} for model {model_name} is marked unhealthy, trying fallback",
-        )
-        if fallback_result:
-            return fallback_result
+        Args:
+            model_name: Name of the model to find a provider for
+            request: The original provider request with parameters to validate
 
-        return provider, model_name
+        Returns:
+            Tuple of (provider, model_name) that can handle the request
 
-    def _find_provider_for_model(self, model_name: str) -> BaseProvider | None:
-        """Find a provider that supports the given model."""
-        # Check cache first
-        if model_name in self._provider_cache:
-            provider_name = self._provider_cache[model_name]
-            return self.provider_manager.get_provider(provider_name)
-
-        # Search through all providers
+        Raises:
+            ProviderNotFoundError: If no suitable provider is found for the model
+        """
+        # First find all providers that support this model
+        providers = []
         for provider_name in self.provider_manager.list_providers():
+            if provider_name in self._unhealthy_providers:
+                continue
+
             provider = self.provider_manager.get_provider(provider_name)
             if provider and provider.supports_model(model_name):
-                self._provider_cache[model_name] = provider_name
-                return provider
+                providers.append(provider)
 
-        return None
+        if not providers:
+            raise ProviderNotFoundError(
+                f"No healthy providers found that support model {model_name}"
+            )
+
+        # Try to find a provider that supports the requested parameters
+        for provider in providers:
+            try:
+                # Create a copy of the request with the current provider and model
+                model_request = request.model_copy(
+                    update={"provider": provider.name, "model": model_name}
+                )
+                provider.validate_request(model_request)
+                logger.info(f"Found provider {provider.name} for model {model_name}")
+                return provider, model_name
+            except ProviderValidationError as e:
+                logger.debug(
+                    f"Skipping provider {provider.name} for model {model_name}: {e}"
+                )
+                continue
+
+        # If we get here, no provider supports the requested parameters
+        raise ProviderNotFoundError(
+            f"No providers support model {model_name} with the requested parameters"
+        )
 
     async def _route_by_policy_with_fallback(
         self,
         role: str | None,
-        overrides: dict[str, Any] | None,
+        request: ProviderLLMRequest,
+        exclude_models: set[str] | None = None,
         exclude_providers: set[str] | None = None,
     ) -> tuple[BaseProvider, str]:
-        """Route based on agent policies with fallback support."""
-        exclude_providers = exclude_providers or set()
+        """Route based on agent policies with fallback support.
+
+        Args:
+            role: The agent role for policy selection
+            request: The provider request
+            exclude_models: Set of model names to exclude from consideration
+            exclude_providers: Set of provider names to exclude from consideration
+
+        Returns:
+            Tuple of (provider, model_name) that should handle the request
+
+        Raises:
+            ProviderNotFoundError: If no suitable provider/model can be found
+        """
+        exclude_models = set(exclude_models or [])
+        exclude_providers = set(exclude_providers or [])
+
+        # Add unhealthy providers to exclusions
+        exclude_providers.update(self._unhealthy_providers)
+
+        logger.debug(
+            f"Routing with exclusions - models: {exclude_models}, providers: {exclude_providers}"
+        )
 
         # Get agent config
-        resolved_config = self.config_manager.resolve(overrides=overrides or {})
+        resolved_config = self.config_manager.resolve(
+            overrides=request.parameters.model_dump() if request.parameters else {}
+        )
         agent_config = resolved_config.agent
 
         # Determine role (default to "general" if not specified)
@@ -240,56 +377,271 @@ class ProviderRouter:
         # Get policy for role
         policy = agent_config.get_policy_for_role(effective_role)
 
-        # Try each provider/model in the policy, skipping unhealthy ones
+        # Try each provider/model in the policy, skipping excluded/unhealthy ones
         for item in policy:
             if item == "fallback:any":
                 # Use any available provider/model as fallback
-                return await self._get_any_available_provider(exclude_providers)
+                try:
+                    return await self._get_any_available_provider(
+                        exclude_models=exclude_models,
+                        exclude_providers=exclude_providers,
+                        request=request,
+                    )
+                except ProviderNotFoundError:
+                    continue  # Try next policy item
 
             # Parse provider:model format
             if ":" in item:
                 provider_name, model_name = item.split(":", 1)
-                if provider_name in exclude_providers:
+
+                # Skip if provider or model is excluded
+                if provider_name in exclude_providers or model_name in exclude_models:
+                    logger.debug(
+                        f"Skipping excluded provider '{provider_name}' or model '{model_name}'"
+                    )
                     continue
 
                 provider = self.provider_manager.get_provider(provider_name)
-                if (
-                    provider
-                    and provider.name not in self._unhealthy_providers
-                    and provider.supports_model(model_name)
-                ):
-                    return provider, model_name
+                if provider:
+                    try:
+                        # Create a copy of the request with the current model
+                        model_request = request.model_copy(update={"model": model_name})
+                        provider.validate_request(model_request)
+                        return provider, model_name
+                    except ProviderValidationError as e:
+                        logger.debug(
+                            f"Skipping model {model_name} for {provider_name}: {e}"
+                        )
+                        continue
 
-        # If no policy matches, use fallback
-        return await self._get_any_available_provider(exclude_providers)
-
-    async def _route_by_policy(
-        self, role: str | None, overrides: dict[str, Any] | None
-    ) -> tuple[BaseProvider, str]:
-        """Route based on agent policies."""
-        return await self._route_by_policy_with_fallback(role, overrides)
+        # If no policy matches, try to find any available provider
+        return await self._get_any_available_provider(
+            exclude_models=exclude_models,
+            exclude_providers=exclude_providers,
+            request=request,
+        )
 
     async def _get_any_available_provider(
-        self, exclude_providers: set[str] | None = None
+        self,
+        exclude_models: set[str] | None = None,
+        exclude_providers: set[str] | None = None,
+        request: ProviderLLMRequest | None = None,
     ) -> tuple[BaseProvider, str]:
-        """Get any available provider and model."""
-        exclude_providers = exclude_providers or set()
+        """Get any available provider and model that meets the criteria.
 
+        Args:
+            exclude_models: Set of model names to exclude
+            exclude_providers: Set of provider names to exclude
+            request: Optional request to validate against the model
+
+        Returns:
+            Tuple of (provider, model_name) that is available
+
+        Raises:
+            ProviderNotFoundError: If no available provider/model is found
+        """
+        exclude_models = set(exclude_models or [])
+        exclude_providers = set(exclude_providers or [])
+
+        # Create a minimal validation request if none provided
+        validation_request = request or ProviderLLMRequest(
+            messages=[{"role": "user", "content": "validation"}],
+            model="",  # Will be set to the current model being checked
+            parameters=OptionalParameters(),
+        )
+
+        # Try each provider in the manager
         for provider_name in self.provider_manager.list_providers():
-            if provider_name in exclude_providers:
+            if (
+                provider_name in exclude_providers
+                or provider_name in self._unhealthy_providers
+            ):
+                logger.debug(f"Skipping excluded/unhealthy provider: {provider_name}")
                 continue
 
-            provider = self.provider_manager.get_provider(provider_name)
-            if provider and provider.name not in self._unhealthy_providers:
-                models = provider.get_available_models()
-                if models:
-                    return provider, models[0]
+            try:
+                provider = self.provider_manager.get_provider(provider_name)
+                if not provider:
+                    continue
 
-        raise ProviderNotFoundError("No available providers found")
+                # Find the first available model that's not excluded and passes validation
+                for model_name in provider.get_available_models():
+                    if model_name not in exclude_models:
+                        try:
+                            # Update the request with current model for validation
+                            validation_request.model = model_name
+                            provider.validate_request(validation_request)
+                            logger.debug(
+                                f"Validated provider {provider_name} with model {model_name}"
+                            )
+                            return provider, model_name
+                        except ProviderValidationError as e:
+                            logger.debug(
+                                f"Model {model_name} from {provider_name} failed validation: {e}"
+                            )
+                            continue
+            except Exception as e:
+                logger.debug(f"Error processing provider {provider_name}: {e}")
+                continue
 
-    def get_unhealthy_providers(self) -> set[str]:
-        """Get list of currently unhealthy providers."""
-        return self._unhealthy_providers.copy()
+        raise ProviderNotFoundError(
+            "No available providers found. "
+            f"Excluded providers: {exclude_providers}, "
+            f"Excluded models: {exclude_models}"
+        )
+
+    def _get_policy_config(self, role: str | None) -> dict:
+        """Get the policy configuration for the specified role.
+
+        Args:
+            role: The role to get the policy for. If None, returns the default policy.
+
+        Returns:
+            Dictionary containing the policy configuration
+        """
+        # Default policy configuration
+        default_policy = {"models": ["google_gemini:gemini-2.5-flash", "fallback:any"]}
+
+        # If no role is specified, return the default policy
+        if not role:
+            return default_policy
+
+        # Try to get role-specific policy from config
+        try:
+            if hasattr(self.config_manager, "get_agent_config"):
+                agent_config = self.config_manager.get_agent_config(role)
+                if hasattr(agent_config, "llm_policy"):
+                    return agent_config.llm_policy
+        except Exception as e:
+            logger.warning(f"Error getting policy for role '{role}': {e}")
+
+        # Fall back to default policy
+        return default_policy
+
+    def _should_skip_provider(
+        self, provider_name: str, exclude_providers: set[str]
+    ) -> bool:
+        """Check if a provider should be skipped based on exclusions and health status."""
+        return (
+            provider_name in exclude_providers
+            or provider_name in self._unhealthy_providers
+        )
+
+    def _validate_provider_model(
+        self, provider_name: str, model_name: str, request: ProviderLLMRequest
+    ) -> tuple[BaseProvider, str] | None:
+        """Validate if a provider and model can handle the request."""
+        provider = self.provider_manager.get_provider(provider_name)
+        if not provider:
+            logger.debug(f"Provider not found: {provider_name}")
+            return None
+
+        if not provider.supports_model(model_name):
+            logger.debug(
+                f"Model {model_name} not supported by provider {provider_name}"
+            )
+            return None
+
+        try:
+            model_request = request.model_copy(
+                update={"provider": provider_name, "model": model_name}
+            )
+            provider.validate_request(model_request)
+            logger.debug(f"Routing to provider {provider_name} and model {model_name}")
+            return provider, model_name
+        except ProviderValidationError as e:
+            logger.debug(f"Validation failed for {provider_name}/{model_name}: {e}")
+            return None
+
+    async def _handle_fallback_any(
+        self,
+        exclude_models: set[str],
+        exclude_providers: set[str],
+        request: ProviderLLMRequest,
+    ) -> tuple[BaseProvider, str] | None:
+        """Handle the 'fallback:any' special case in the policy."""
+        try:
+            return await self._get_any_available_provider(
+                exclude_models=exclude_models,
+                exclude_providers=exclude_providers,
+                request=request,
+            )
+        except ProviderNotFoundError:
+            return None
+
+    async def _route_by_policy(
+        self,
+        role: str | None,
+        request: ProviderLLMRequest,
+        exclude_models: set[str] | None = None,
+        exclude_providers: set[str] | None = None,
+    ) -> tuple[BaseProvider, str]:
+        """Route based on agent policies.
+
+        Args:
+            role: The role to use for policy selection
+            request: The provider request
+            exclude_models: Optional set of model names to exclude
+            exclude_providers: Optional set of provider names to exclude
+
+        Returns:
+            Tuple of (provider, model_name) that should handle the request
+
+        Raises:
+            ProviderNotFoundError: If no suitable provider/model is found
+        """
+        policy_config = self._get_policy_config(role)
+        exclude_models = set(exclude_models or [])
+        exclude_providers = set(exclude_providers or [])
+
+        if hasattr(request, "model") and request.model:
+            exclude_models.add(request.model)
+
+        # Process each model specification in the policy
+        for model_spec in policy_config.get("models", []):
+            if model_spec == "fallback:any":
+                if result := await self._handle_fallback_any(
+                    exclude_models, exclude_providers, request
+                ):
+                    return result
+                continue
+
+            # Parse provider:model specification
+            parts = model_spec.split(":", 1)
+            if len(parts) != 2:
+                logger.warning(f"Invalid model specification in policy: {model_spec}")
+                continue
+
+            provider_name, model_name = parts
+
+            # Skip if provider or model should be excluded
+            if (
+                self._should_skip_provider(provider_name, exclude_providers)
+                or model_name in exclude_models
+            ):
+                logger.debug(f"Skipping provider: {provider_name}, model: {model_name}")
+                continue
+
+            # Try to validate and get the provider/model
+            if result := self._validate_provider_model(
+                provider_name, model_name, request
+            ):
+                return result
+
+        # If we get here, no suitable provider/model was found in the policy
+        # Try to find any available provider as a last resort
+        try:
+            return await self._get_any_available_provider(
+                exclude_models=exclude_models,
+                exclude_providers=exclude_providers,
+                request=request,
+            )
+        except ProviderNotFoundError as e:
+            raise ProviderNotFoundError(
+                f"No available providers found that match the current policy. "
+                f"Excluded providers: {exclude_providers}, "
+                f"Excluded models: {exclude_models}"
+            ) from e
 
     def is_critical_error(self, error: Exception) -> bool:
         """Check if an error is considered critical for provider fallback.
@@ -335,3 +687,7 @@ class ProviderRouter:
         """
         if self._is_critical_error(error):
             self._mark_provider_unhealthy(provider_name)
+
+    def get_unhealthy_providers(self) -> set[str]:
+        """Get list of currently unhealthy providers."""
+        return self._unhealthy_providers.copy()

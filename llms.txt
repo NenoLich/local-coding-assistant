@@ -5,14 +5,12 @@ A sophisticated local-first Python project for building an advanced AI coding as
 ---
 
 ## Goals
-- **Local-first, privacy-respecting assistant** with advanced AI patterns.
-- **Sophisticated agent architecture** with observe-plan-act-reflect loops.
-- **LangGraph opar-agent** with advanced graph-based reasoning capabilities.
-- **Graph-based orchestration** compatibility with LangGraph.
-- **Extensible tool system** with JSON schema validation.
-- **Session and context awareness** for persistent conversations.
-- **Streaming LLM support** for real-time interactions.
-- **Robust error handling** and logging throughout.
+- **Local-first assistant** with layered configuration and provider routing.
+- **Observe-plan-act-reflect architecture** across legacy loop and LangGraph agent.
+- **Provider module** with automatic discovery, health checks, fallback policies.
+- **Extensible tool + runtime layers** supporting session persistence.
+- **Streaming LLM support** plus full CLI coverage.
+- **High test coverage** spanning unit, integration, and E2E scenarios.
 
 ---
 
@@ -20,48 +18,38 @@ A sophisticated local-first Python project for building an advanced AI coding as
 
 ### Package: `src/local_coding_assistant/`
 
-#### `agent/`
-- **`agent_loop.py`**: Full implementation of observe-plan-act-reflect pattern with:
-  - Multi-step reasoning loops
-  - Tool integration and result processing
-  - Session persistence and context management
-  - Error recovery and retry mechanisms
-  - Integration with LangGraph node interface
-- **`langgraph_agent.py`**: Sophisticated LangGraph opar-agent implementation featuring:
-  - Advanced graph-based reasoning with observe-plan-act-reflect nodes
-  - Sophisticated state management across multiple execution phases
-  - Streaming support for all agent phases (observe, plan, act, reflect)
-  - Robust error handling with fallback mechanisms
-  - LangGraph orchestration with proper node isolation
-- **`llm_manager.py`**: Advanced LLM interface supporting:
-  - Local and remote LLM providers
-  - Streaming responses and tool calling
-  - Request/response handling with proper async support
-  - Tool output processing and conversation management
+- **`agent/`**
+  - `agent_loop.py`: Observe-plan-act-reflect orchestration, tool integration, session persistence.
+  - `langgraph_agent.py`: LangGraph-compatible agent, graph node interface, streaming deltas.
+  - `llm_manager.py`: Provider-aware request routing, streaming, retry + fallback orchestration.
 
-#### `tools/`
-- **`base/`**: Tool system foundation including:
-  - `tool_base.py`: Abstract base classes for tools
-  - `tool_schemas.py`: JSON schema validation for tool I/O
-  - `exceptions.py`: Tool-specific error handling
-- **`tool_registry.py`**: Dynamic tool management with:
-  - Tool registration and discovery
-  - Schema validation and type checking
-  - Error handling and logging
+- **`providers/`**
+  - `provider_manager.py`: Layered config merge (builtins, global YAML, local YAML), registration decorators, instantiation.
+  - `router.py`: Policy-driven provider/model selection, health tracking, fallback logic.
+  - `base.py`: Provider interfaces, request/response schemas, retry wrappers.
+  - `generic_provider.py` + `compatible_drivers.py`: Adapters for OpenAI, OpenRouter, Google Gemini, local drivers.
 
-#### `runtime/`
-- **`runtime_manager.py`**: Session and context management with:
-  - Persistent session storage
-  - Context awareness across interactions
-  - Background task management
-  - Configuration management
+- **`config/`**
+  - `config_manager.py`: Three-layer hierarchy (global/session/call) with deep merge + validation.
+  - `providers.default.yaml` / `providers.local.yaml`: Declarative provider definitions; CLI writes to local file.
+  - `schemas.py`: Pydantic models (`AppConfig`, `ProviderConfig`, `LLMConfig`, `AgentConfig`).
 
-#### `core/`
-- **`app_context.py`**: Enhanced resource registry with dependency injection
-- **`bootstrap.py`**: Composition root wiring all components together
-- **`assistant.py`**: Main integration surface for agent functionality
-- **`exceptions.py`**: Centralized error handling and custom exceptions
-- **`logging_config.py`**: Structured logging configuration
+- **`runtime/`**
+  - `runtime_manager.py`: Session orchestration, per-call overrides, streaming response assembly.
+
+- **`core/`**
+  - `bootstrap.py`: Loads `.env`, merges config, builds `LLMManager`, `ToolManager`, `RuntimeManager`.
+  - `app_context.py`: Dependency container for CLI and integrations.
+
+- **`cli/`**
+  - `commands/provider.py`: `add|list|remove|validate|reload` provider management.
+  - `commands/run.py`: `locca run query` entry point, supports `--provider`, `--model`, `--streaming`.
+  - `commands/config.py`: Config inspection and mutation via Typer.
+
+- **`tests/`**
+  - `integration/`: Validates bootstrap, provider routing, env handling, CLI flows.
+  - `unit/`: Component-level coverage for agents, runtime, config utilities.
+  - `e2e/`: CLI smoke tests via Typer runner.
 
 #### `config/`
 - **`config_manager.py`**: Multi-source configuration management:
@@ -83,7 +71,7 @@ A sophisticated local-first Python project for building an advanced AI coding as
 ## Advanced Agent Patterns
 
 ### Observe-Plan-Act-Reflect Loop
-LOCCA implements a sophisticated multi-step reasoning pattern:
+LOCCA implements a sophisticated multistep reasoning pattern:
 
 1. **Observe**: Gather information and context
 2. **Plan**: Develop strategy and identify required tools
@@ -110,7 +98,7 @@ Each phase includes error handling, retry logic, and proper state management.
 
 ### Advanced Graph-Based Agent Implementation
 
-The LangGraph opar-agent (`langgraph_agent.py`) provides sophisticated multi-step reasoning capabilities:
+The LangGraph opar-agent (`langgraph_agent.py`) provides sophisticated multistep reasoning capabilities:
 
 #### Core Architecture
 - **Graph-Based Execution**: Uses LangGraph for orchestrating complex reasoning workflows
@@ -163,25 +151,26 @@ The test suite includes `MockLangGraph` and `MockLangGraphNode` for:
 
 ## CLI Interface
 
-### Enhanced Commands
+### Key commands
 ```bash
-# Advanced query execution
-uv run locca run query "Complex task" --streaming --model gpt-4
+# LLM queries
+uv run locca run query "Implement DFS" --provider openrouter --model "openrouter:qwen/qwen3-coder:free" --streaming
 
-# Tool management
-uv run locca list-tools list --json
-uv run locca tools register --name calculator --schema
+# Provider lifecycle
+uv run locca provider add openrouter --base-url https://openrouter.ai/api/v1 --api-key-env OPENROUTER_API_KEY --models qwen/qwen3-coder:free --dev
+uv run locca provider list
+uv run locca provider validate --dev
+uv run locca provider remove openrouter --dev
 
-# Configuration
-uv run locca config set LLM__MODEL_NAME gpt-4
+# Config inspection
 uv run locca config show
+uv run locca config set LLM__TEMPERATURE 0.6
 ```
 
-### Development Features
-- Comprehensive logging with structured output
-- Error handling with detailed stack traces
-- Development server with hot reload
-- Testing utilities and fixtures
+### Development features
+- `bootstrap()` builds context with logging level auto-derived from config.
+- CLI commands guard entrypoints with `safe_entrypoint` for consistent error handling.
+- Provider commands autogenerate YAML skeletons and reload via `LLMManager.reload_providers()`.
 
 ---
 
@@ -310,14 +299,14 @@ uv run locca config show
 
 ---
 
-## Quick Links (Key Files)
-- `src/local_coding_assistant/agent/agent_loop.py` - Main agent loop implementation
-- `src/local_coding_assistant/agent/langgraph_agent.py` - LangGraph opar-agent implementation
-- `src/local_coding_assistant/agent/llm_manager.py` - LLM interface with streaming
-- `src/local_coding_assistant/tools/base/tool_base.py` - Tool system foundation
-- `src/local_coding_assistant/runtime/runtime_manager.py` - Session management
-- `src/local_coding_assistant/core/bootstrap.py` - Component wiring
-- `tests/integration/test_langgraph_compatibility.py` - Graph integration tests
-- `tests/integration/conftest.py` - Test fixtures and mocks
+## Quick Links
+- `src/local_coding_assistant/providers/provider_manager.py`
+- `src/local_coding_assistant/providers/router.py`
+- `src/local_coding_assistant/agent/llm_manager.py`
+- `src/local_coding_assistant/config/config_manager.py`
+- `src/local_coding_assistant/core/bootstrap.py`
+- `tests/integration/test_provider_manager_integration.py`
+- `tests/integration/test_config_integration.py`
+- `tests/unit/runtime/test_runtime_manager.py`
 
 This document reflects the current sophisticated state of LOCCA with advanced AI patterns, robust architecture, comprehensive testing, and the new LangGraph opar-agent implementation. Update after any major architectural changes.

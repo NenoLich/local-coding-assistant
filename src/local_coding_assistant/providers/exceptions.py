@@ -52,6 +52,24 @@ class ProviderTimeoutError(ProviderError):
         super().__init__(message, provider, **kwargs)
 
 
+class ProviderValidationError(ProviderError):
+    """Raised when request validation fails against provider/model constraints"""
+
+    def __init__(
+        self,
+        message: str,
+        provider: str | None = None,
+        model: str | None = None,
+        **kwargs,
+    ):
+        self.model = model
+        super().__init__(
+            f"Validation failed for model {model}: {message}" if model else message,
+            provider,
+            **kwargs,
+        )
+
+
 class ProviderNotFoundError(ProviderError):
     """Raised when a requested provider is not available"""
 

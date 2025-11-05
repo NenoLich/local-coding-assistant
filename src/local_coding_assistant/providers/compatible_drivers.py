@@ -37,40 +37,26 @@ class OpenAIChatCompletionsDriver(BaseDriver):
 
     async def generate(self, request: ProviderLLMRequest) -> ProviderLLMResponse:
         """Generate using OpenAI chat.completions API"""
+        # Start with required parameters
         payload = {
             "model": request.model,
             "messages": request.messages,
             "temperature": request.temperature,
-            "stream": request.stream,
         }
-        if request.max_tokens:
-            payload["max_tokens"] = request.max_tokens
-        if request.tools:
-            payload["tools"] = request.tools
-            payload["tool_choice"] = request.tool_choice or "auto"
-        if request.response_format:
-            payload["response_format"] = request.response_format
-        if request.extra_params:
-            payload.update(request.extra_params)
+
+        # Add all parameters from request.parameters
+        if request.parameters:
+            # Get all set parameters, excluding None values
+            params = {
+                k: v
+                for k, v in request.parameters.model_dump(exclude_unset=True).items()
+                if v is not None
+            }
+            # Ensure stream is False for non-streaming
+            params["stream"] = False
+            payload.update(params)
 
         try:
-            #     # Log detailed request information
-            #     logger.debug(
-            #         "Making request to OpenAI-compatible API:",
-            #         extra={
-            #             "base_url": self.base_url,
-            #             "model": request.model,
-            #             "api_key_present": bool(self.api_key),
-            #             "api_key_prefix": f"{self.api_key[:5]}...{self.api_key[-3:]}" if self.api_key else "None",
-            #             "temperature": request.temperature,
-            #             "max_tokens": request.max_tokens,
-            #             "stream": request.stream,
-            #             "has_tools": bool(request.tools),
-            #             "message_count": len(request.messages),
-            #             "last_message": request.messages[-1]["content"][:100] + ("..." if len(request.messages[-1]["content"]) > 100 else "") if request.messages else ""
-            #         }
-            #     )
-
             response = await self.client.chat.completions.create(**payload)
             logger.debug("Response: %s", response)
             return self._parse_response(response, request.model)
@@ -82,37 +68,47 @@ class OpenAIChatCompletionsDriver(BaseDriver):
         self, request: ProviderLLMRequest
     ) -> AsyncGenerator[ProviderLLMResponseDelta, None]:
         """Generate a streaming response using OpenAI chat.completions API"""
+        # Start with required parameters
         payload = {
             "model": request.model,
             "messages": request.messages,
             "temperature": request.temperature,
-            "stream": True,
         }
-        if request.max_tokens:
-            payload["max_tokens"] = request.max_tokens
-        if request.tools:
-            payload["tools"] = request.tools
-            payload["tool_choice"] = request.tool_choice or "auto"
-        if request.extra_params:
-            payload.update(request.extra_params)
+
+        # Add all parameters from request.parameters
+        if request.parameters:
+            # Get all set parameters, excluding None values
+            params = {
+                k: v
+                for k, v in request.parameters.model_dump(exclude_unset=True).items()
+                if v is not None
+            }
+            # Ensure stream is True for streaming
+            params["stream"] = True
+            payload.update(params)
 
         try:
             stream = await self.client.chat.completions.create(**payload)
             async for chunk in stream:
+                if not chunk.choices:
+                    continue
+
                 choice = chunk.choices[0]
                 delta = choice.delta
+
                 yield ProviderLLMResponseDelta(
                     content=delta.content or "",
-                    role=delta.role,
-                    tool_calls=delta.tool_calls,
+                    role=getattr(delta, "role", None),
+                    tool_calls=getattr(delta, "tool_calls", None),
                     finish_reason=choice.finish_reason,
                     metadata={
-                        "response_id": chunk.id,
-                        "created": chunk.created,
-                        "model": chunk.model,
+                        "response_id": getattr(chunk, "id", None),
+                        "created": getattr(chunk, "created", None),
+                        "model": getattr(chunk, "model", request.model),
                     },
                 )
         except Exception as e:
+            logger.error("Error in OpenAI streaming request", exc_info=True)
             self._handle_error(e)
 
     def _parse_response(self, response, model: str) -> ProviderLLMResponse:
@@ -320,12 +316,34 @@ class OpenAIResponsesDriver(BaseDriver):
         super().__init__(api_key, base_url, **kwargs)
         self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
-    def _format_tools_for_openrouter(self, tools: list[dict]) -> list[dict]:
-        """Format tools to be compatible with OpenRouter API"""
+    def _format_tools_for_responses_api(self, tools: Any) -> list[dict]:
+        """Format tools to be compatible with Responses API
+
+        Args:
+            tools: Input tools which can be a list of dicts, a single dict, or other types
+
+        Returns:
+            List of formatted tool dictionaries
+
+        Raises:
+            TypeError: If tools is not a list or dict
+        """
+        if tools is None:
+            return []
+
+        if not isinstance(tools, list | dict):
+            raise TypeError(
+                f"Expected list or dict for tools, got {type(tools).__name__}"
+            )
+
+        # Handle single tool as dict
+        if isinstance(tools, dict):
+            tools = [tools]
+
         formatted_tools = []
         for tool in tools:
             if "function" in tool:
-                # Convert from OpenAI format to OpenRouter format
+                # Convert from Chat Completions format to Responses API format
                 formatted_tool = {
                     "type": "function",
                     "name": tool["function"].get("name", ""),
@@ -340,22 +358,36 @@ class OpenAIResponsesDriver(BaseDriver):
                 # Unsupported format, log a warning and include as-is
                 logger.warning(f"Unsupported tool format: {tool}")
                 formatted_tools.append(tool)
+
         return formatted_tools
 
     async def generate(self, request: ProviderLLMRequest) -> ProviderLLMResponse:
         """Generate using OpenAI responses API"""
+        # Get the flattened request data
+        request_data = request.model_dump()
+
+        # Build the payload with all available parameters
         payload: dict[str, Any] = {
             "model": request.model,
             "input": request.messages,
             "temperature": request.temperature,
+            **{
+                k: v
+                for k, v in request_data.items()
+                if k not in ["model", "messages", "temperature", "parameters"]
+                and v is not None
+            },
         }
-        if request.max_tokens:
-            payload["max_output_tokens"] = request.max_tokens
-        if request.tools:
-            payload["tools"] = self._format_tools_for_openrouter(request.tools)
-            payload["tool_choice"] = request.tool_choice or "auto"
-        if request.extra_params:
-            payload.update(request.extra_params)
+
+        # Handle max_tokens -> max_output_tokens mapping
+        if "max_tokens" in payload:
+            payload["max_output_tokens"] = payload.pop("max_tokens")
+
+        # Format tools if present
+        if "tools" in payload:
+            payload["tools"] = self._format_tools_for_responses_api(payload["tools"])
+            if "tool_choice" not in payload:
+                payload["tool_choice"] = "auto"
 
         try:
             response = await self.client.responses.create(**payload)
@@ -367,19 +399,31 @@ class OpenAIResponsesDriver(BaseDriver):
         self, request: ProviderLLMRequest
     ) -> AsyncGenerator[ProviderLLMResponseDelta, None]:
         """Generate a streaming response using OpenAI responses API"""
+        # Get the flattened request data
+        request_data = request.model_dump()
+
+        # Build the payload with all available parameters
         payload: dict[str, Any] = {
             "model": request.model,
             "input": request.messages,
             "temperature": request.temperature,
-            "stream": True,
+            **{
+                k: v
+                for k, v in request_data.items()
+                if k not in ["model", "messages", "temperature", "parameters"]
+                and v is not None
+            },
         }
-        if request.max_tokens:
-            payload["max_output_tokens"] = request.max_tokens
-        if request.tools:
-            payload["tools"] = self._format_tools_for_openrouter(request.tools)
-            payload["tool_choice"] = request.tool_choice or "auto"
-        if request.extra_params:
-            payload.update(request.extra_params)
+
+        # Handle max_tokens -> max_output_tokens mapping
+        if "max_tokens" in payload:
+            payload["max_output_tokens"] = payload.pop("max_tokens")
+
+        # Format tools if present
+        if "tools" in payload:
+            payload["tools"] = self._format_tools_for_responses_api(payload["tools"])
+            if "tool_choice" not in payload:
+                payload["tool_choice"] = "auto"
 
         try:
             stream = await self.client.responses.create(**payload)

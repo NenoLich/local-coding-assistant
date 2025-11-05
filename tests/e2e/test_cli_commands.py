@@ -1,6 +1,5 @@
 """End-to-end tests for general CLI functionality and error handling."""
 
-
 from local_coding_assistant.cli.main import app
 
 
@@ -40,28 +39,44 @@ class TestCLIErrorHandling:
         result = cli_runner.invoke(app, ["invalid_command"])
 
         assert result.exit_code != 0
-        assert "No such command" in result.stderr or "Error" in result.stderr or result.stderr.strip()
+        assert (
+            "No such command" in result.stderr
+            or "Error" in result.stderr
+            or result.stderr.strip()
+        )
 
     def test_cli_invalid_option(self, cli_runner):
         """Test CLI with invalid option."""
         result = cli_runner.invoke(app, ["run", "query", "test", "--invalid-option"])
 
         assert result.exit_code != 0
-        assert "No such option" in result.stderr or "Error" in result.stderr or result.stderr.strip()
+        assert (
+            "No such option" in result.stderr
+            or "Error" in result.stderr
+            or result.stderr.strip()
+        )
 
     def test_cli_missing_required_argument(self, cli_runner):
         """Test CLI with missing required argument."""
         result = cli_runner.invoke(app, ["run", "query"])
 
         assert result.exit_code != 0
-        assert "Missing argument" in result.stderr or "Error" in result.stderr or result.stderr.strip()
+        assert (
+            "Missing argument" in result.stderr
+            or "Error" in result.stderr
+            or result.stderr.strip()
+        )
 
     def test_cli_too_many_arguments(self, cli_runner):
         """Test CLI with too many arguments."""
         result = cli_runner.invoke(app, ["run", "query", "arg1", "arg2", "arg3"])
 
         assert result.exit_code != 0
-        assert "unexpected extra argument" in result.stderr or "Error" in result.stderr or result.stderr.strip()
+        assert (
+            "unexpected extra argument" in result.stderr
+            or "Error" in result.stderr
+            or result.stderr.strip()
+        )
 
 
 class TestCLIIntegration:
@@ -71,10 +86,13 @@ class TestCLIIntegration:
         """Test that CLI options override environment variables."""
         # Set environment variable
         import os
+
         os.environ["LOCCA_LOG_LEVEL"] = "WARNING"
 
         # CLI option should override
-        result = cli_runner.invoke(app, ["run", "query", "test", "--log-level", "DEBUG"])
+        result = cli_runner.invoke(
+            app, ["run", "query", "test", "--log-level", "DEBUG"]
+        )
 
         assert result.exit_code == 0
         # The command should run with DEBUG level despite env var being WARNING
@@ -82,7 +100,9 @@ class TestCLIIntegration:
     def test_cli_config_persistence_across_commands(self, cli_runner):
         """Test that config changes persist across CLI command invocations."""
         # Set a config value
-        result = cli_runner.invoke(app, ["config", "set", "PERSISTENCE_TEST", "test_value"])
+        result = cli_runner.invoke(
+            app, ["config", "set", "PERSISTENCE_TEST", "test_value"]
+        )
         assert result.exit_code == 0
 
         # Get the value in a separate invocation
@@ -96,13 +116,18 @@ class TestCLIIntegration:
         # Note: Bootstrap integration is complex, so we focus on config file operations
 
         # Step 1: Add a provider (test config file creation)
-        result = cli_runner.invoke(app, [
-            "provider", "add", "workflow_test", "gpt-4",
-            "--api-key", "workflow-key"
-        ])
+        result = cli_runner.invoke(
+            app,
+            ["provider", "add", "workflow_test", "gpt-4", "--api-key", "workflow-key"],
+        )
 
         # The command might fail due to bootstrap issues, but let's check if config file was created
-        config_path = temp_config_dir / ".local-coding-assistant" / "config" / "providers.local.yaml"
+        config_path = (
+            temp_config_dir
+            / ".local-coding-assistant"
+            / "config"
+            / "providers.local.yaml"
+        )
         if config_path.exists():
             # Config file was created, which means the core functionality worked
             with open(config_path) as f:
@@ -132,7 +157,9 @@ class TestCLIIntegration:
                     config_content = f.read()
                     assert "workflow_test" not in config_content
 
-    def test_cli_run_with_provider_setup(self, cli_runner, temp_config_dir, mock_bootstrap_success):
+    def test_cli_run_with_provider_setup(
+        self, cli_runner, temp_config_dir, mock_bootstrap_success
+    ):
         """Test run command with provider configuration."""
         mock_bootstrap, mock_ctx = mock_bootstrap_success
 
@@ -141,5 +168,7 @@ class TestCLIIntegration:
         result = cli_runner.invoke(app, ["run", "query", "Test with provider setup"])
 
         assert result.exit_code == 0
+        # Check that both the query and response are in the output
         assert "Running query: Test with provider setup" in result.stdout
         assert "Response:" in result.stdout
+        assert "[LLMManager] Echo: test query" in result.stdout

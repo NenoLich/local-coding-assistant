@@ -2,8 +2,16 @@
 Local provider implementation for offline/local models
 """
 
+from __future__ import annotations
+
+from typing import Any
+
+from local_coding_assistant.config.schemas import ModelConfig
 from local_coding_assistant.providers.base import BaseProvider
 from local_coding_assistant.providers.provider_manager import register_provider
+from local_coding_assistant.utils.logging import get_logger
+
+logger = get_logger("providers.local")
 
 
 @register_provider("local")
@@ -15,13 +23,30 @@ class LocalProvider(BaseProvider):
         api_key: str | None = None,  # Not needed for local
         api_key_env: str | None = None,  # Not needed for local
         base_url: str = "http://localhost:11434",  # Default Ollama URL
-        models: list | None = None,
+        models: list[ModelConfig] | list[str] | dict[str, dict] | None = None,
         driver: str = "local",  # Use local driver
-        **kwargs,
+        **kwargs: Any,
     ):
         # Default models if not specified
         default_models = (
-            ["llama3-8b", "llama3-70b", "codellama", "mistral"]
+            [
+                ModelConfig(
+                    name="llama3-8b",
+                    supported_parameters=["temperature", "max_tokens", "top_p"],
+                ),
+                ModelConfig(
+                    name="llama3-70b",
+                    supported_parameters=["temperature", "max_tokens", "top_p"],
+                ),
+                ModelConfig(
+                    name="codellama",
+                    supported_parameters=["temperature", "max_tokens", "top_p"],
+                ),
+                ModelConfig(
+                    name="mistral",
+                    supported_parameters=["temperature", "max_tokens", "top_p"],
+                ),
+            ]
             if models is None
             else models
         )
@@ -29,11 +54,7 @@ class LocalProvider(BaseProvider):
         # For local providers, use a dummy API key since they're typically free
         # and don't require authentication
         api_key = api_key or "dummy_key_for_local"
-
-        if kwargs["name"]:
-            name = kwargs.pop("name")
-        else:
-            name = "local"
+        name = kwargs.pop("name", "local")
 
         super().__init__(
             name=name,
@@ -45,7 +66,7 @@ class LocalProvider(BaseProvider):
             **kwargs,
         )
 
-    def _create_driver_instance(self):
+    def _create_driver_instance(self) -> Any:
         """Create and return a driver instance for local models.
 
         Returns:
@@ -55,5 +76,13 @@ class LocalProvider(BaseProvider):
         return self._initialize_driver()
 
     async def health_check(self) -> bool:
-        """Check local model health"""
-        return await self.driver_instance.health_check()
+        """Check local model health.
+
+        Returns:
+            bool: True if the local model server is healthy, False otherwise
+        """
+        try:
+            return await self.driver_instance.health_check()
+        except Exception as e:
+            logger.error(f"Health check failed for {self.name}: {e!s}")
+            return False

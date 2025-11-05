@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -112,22 +112,22 @@ class TestEnvManager:
     def test_env_file_loading_success(self):
         """Test successful .env file loading."""
         manager = EnvManager()
-        
+
         # Create a list to track which paths were loaded
         loaded_paths = []
-        
+
         def mock_load_dotenv(path, **kwargs):
             loaded_paths.append(Path(path).resolve())
             return None
-            
+
         with patch("dotenv.load_dotenv", side_effect=mock_load_dotenv):
             # Mock path existence
             with patch.object(Path, "exists", return_value=True):
                 manager.load_env_files()
-                
+
                 # Get the expected paths that should have been loaded
                 expected_paths = [Path(p).resolve() for p in manager.env_paths]
-                
+
                 # Verify the correct paths were loaded
                 assert len(loaded_paths) == len(expected_paths)
                 for path in expected_paths:
@@ -147,17 +147,18 @@ class TestEnvManager:
         """Test error handling when .env file loading fails."""
         test_error = Exception("File not found")
         manager = EnvManager()
-        
-        with patch("dotenv.load_dotenv") as mock_load, \
-             patch.object(Path, "exists", return_value=True):
-            
+
+        with (
+            patch("dotenv.load_dotenv") as mock_load,
+            patch.object(Path, "exists", return_value=True),
+        ):
             # Configure the mock to raise our test error
             mock_load.side_effect = test_error
-            
+
             # Verify the correct exception is raised with the expected message
             with pytest.raises(ConfigError) as exc_info:
                 manager.load_env_files()
-                
+
             # Verify the exception message includes the original error
             assert "Failed to load .env file" in str(exc_info.value)
             assert str(test_error) in str(exc_info.value)
@@ -187,7 +188,9 @@ class TestEnvManager:
         manager = EnvManager(env_prefix="TEST_")
         with patch.dict(os.environ, {"TEST_API_KEY": "123"}, clear=True):
             assert manager.get_env("API_KEY") == "123"
-            assert manager.get_env("TEST_API_KEY") == "123"  # Should work with or without prefix
+            assert (
+                manager.get_env("TEST_API_KEY") == "123"
+            )  # Should work with or without prefix
 
     def test_set_env(self):
         """Test setting an environment variable with prefix handling."""
@@ -207,48 +210,47 @@ class TestEnvManager:
         """Test saving a key-value pair to an env file."""
         # Create test env file path
         env_path = tmp_path / ".env.local"
-        
+
         # Create EnvManager instance with mocked dotenv
-        with patch('dotenv.set_key') as mock_set_key:
+        with patch("dotenv.set_key") as mock_set_key:
             manager = EnvManager()
-            
+
             # Mock get_env_path to return our test path
-            with patch.object(manager, 'get_env_path', return_value=env_path):
+            with patch.object(manager, "get_env_path", return_value=env_path):
                 # Call the method under test
                 manager.save_to_env_file("TEST_KEY", "test_value")
-                
+
                 # Get the actual path that was passed to set_key
                 call_args = mock_set_key.call_args[0]
                 called_path = call_args[0]
-                
+
                 # Verify the path points to the same file, regardless of string/Path
                 assert Path(called_path).resolve() == env_path.resolve()
-                
+
                 # Verify the rest of the arguments
                 assert call_args[1:] == ("TEST_KEY", "test_value")
                 assert mock_set_key.call_args[1] == {"quote_mode": "never"}
-    
 
     def test_remove_from_env_file(self, tmp_path):
         """Test removing a key from an env file."""
         # Create test env file path and ensure it exists
         env_path = tmp_path / ".env.local"
         env_path.touch()  # Create the file
-        
+
         # Create EnvManager instance with mocked dotenv
-        with patch('dotenv.unset_key') as mock_unset_key:
+        with patch("dotenv.unset_key") as mock_unset_key:
             manager = EnvManager()
-            
+
             # Mock get_env_path to return our test path
-            with patch.object(manager, 'get_env_path', return_value=env_path):
+            with patch.object(manager, "get_env_path", return_value=env_path):
                 # Call the method under test
                 manager.remove_from_env_file("TEST_KEY")
-                
+
                 # Verify unset_key was called with the correct arguments
                 mock_unset_key.assert_called_once()
                 call_args = mock_unset_key.call_args[0]
                 called_path = call_args[0]
-                
+
                 # Verify the path points to the same file, regardless of string/Path
                 assert Path(called_path).resolve() == env_path.resolve()
                 assert call_args[1] == "TEST_KEY"
@@ -260,11 +262,11 @@ class TestEnvManager:
         test_env = {
             "TEST_KEY1": "value1",
             "TEST_KEY2": "value2",
-            "OTHER_PREFIX_KEY": "value3"
+            "OTHER_PREFIX_KEY": "value3",
         }
-        
+
         with patch.dict(os.environ, test_env, clear=True):
             result = manager.get_all_env_vars()
-            
+
         assert result == {"TEST_KEY1": "value1", "TEST_KEY2": "value2"}
         assert "OTHER_PREFIX_KEY" not in result

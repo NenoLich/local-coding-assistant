@@ -18,7 +18,10 @@ from local_coding_assistant.utils.logging import get_logger
 
 if TYPE_CHECKING:
     # Type-only imports to avoid circular import at runtime
-    from local_coding_assistant.providers import ProviderLLMRequest
+    from local_coding_assistant.providers import (
+        BaseProvider,
+        ProviderLLMRequest,
+    )
 
 logger = get_logger("agent.llm_manager")
 
@@ -43,7 +46,10 @@ class LLMRequest:
     def to_provider_request(self, model: str) -> ProviderLLMRequest:
         """Convert to provider request format."""
         # Import the ProviderLLMRequest class at runtime to avoid circular imports
-        from local_coding_assistant.providers.base import ProviderLLMRequest
+        from local_coding_assistant.providers.base import (
+            OptionalParameters,
+            ProviderLLMRequest,
+        )
 
         messages = []
 
@@ -62,17 +68,21 @@ class LLMRequest:
         # Add the main prompt
         self._add_main_prompt(messages)
 
+        # Create optional parameters
+        parameters = OptionalParameters(
+            stream=False,
+            tools=self.tools,  # self.tools is already a list with default_factory=list in LLMRequest
+            tool_choice="auto" if self.tools else None,
+            response_format=None,
+            max_tokens=None,
+        )
+
         return ProviderLLMRequest(
             messages=messages,
             model=model,
             temperature=0.7,  # Default temperature
-            max_tokens=None,
-            stream=False,
-            tools=self.tools if self.tools else None,
-            tool_choice="auto" if self.tools else None,
-            response_format=None,
             tool_outputs=self.tool_outputs if self.tool_outputs else None,
-            extra_params=None,
+            parameters=parameters,
         )
 
     def _add_system_prompt(self, messages: list[dict[str, Any]]) -> None:
@@ -232,7 +242,7 @@ class LLMManager:
         policy: str | None = None,
         overrides: dict[str, Any] | None = None,
         stream: bool = True,
-    ) -> tuple[Any, Any]:
+    ) -> tuple[BaseProvider, ProviderLLMRequest]:
         """Route request to appropriate provider and convert request format.
 
         Args:
@@ -246,37 +256,52 @@ class LLMManager:
         Returns:
             Tuple of (selected_provider, provider_request)
         """
-        # Extract parameters from overrides if not provided directly
-        effective_model = model
-        effective_temperature = None
-        effective_max_tokens = None
+        # Apply overrides
+        overrides = overrides or {}
+        effective_model = model or overrides.get("llm.model_name", None)
+        effective_temperature = overrides.get("llm.temperature", None)
+        effective_max_tokens = overrides.get("llm.max_tokens", None)
 
-        if overrides:
-            if effective_model is None:
-                effective_model = overrides.get("llm.model_name")
-            effective_temperature = overrides.get("llm.temperature")
-            effective_max_tokens = overrides.get("llm.max_tokens")
+        # First convert the request to a provider request with a default model
+        # The actual model will be set after routing
+        temp_model = (
+            effective_model or "default"
+        )  # Use 'default' as a fallback model name
 
-        # Route to appropriate provider and model
-        (
-            selected_provider,
-            selected_model,
-        ) = await self.router.get_provider_for_request(
-            provider_name=provider,
-            model_name=effective_model,
-            role=policy,
-            overrides=overrides,
-        )
+        # Create the provider request with streaming disabled initially
+        provider_request = request.to_provider_request(temp_model)
 
-        # Convert request format
-        provider_request = request.to_provider_request(selected_model)
-        provider_request.stream = stream
+        # Initialize parameters if not already set
+        if provider_request.parameters is None:
+            from local_coding_assistant.providers.base import OptionalParameters
 
-        # Apply overrides to the provider request
+            provider_request.parameters = OptionalParameters()
+
+        # Set streaming in parameters
+        provider_request.parameters.stream = stream
+
+        # Set the model if specified
+        if effective_model:
+            provider_request.model = effective_model
+
+        # Apply temperature and max_tokens overrides if provided
         if effective_temperature is not None:
             provider_request.temperature = effective_temperature
+
         if effective_max_tokens is not None:
-            provider_request.max_tokens = effective_max_tokens
+            provider_request.parameters.max_tokens = effective_max_tokens
+
+        # Let the router handle provider and model selection with built-in validation and fallback
+        selected_provider, selected_model = await self.router.get_provider_for_request(
+            request=provider_request, role=policy, provider=provider
+        )
+
+        # Update the provider request with the selected model
+        provider_request.model = selected_model
+
+        # Update current provider and model
+        self._current_provider = selected_provider
+        self._current_model = selected_model
 
         return selected_provider, provider_request
 
@@ -797,37 +822,44 @@ class LLMManager:
                 # No async context, refresh synchronously
                 asyncio.run(self._refresh_provider_status_cache())
 
+            # Get the current list of providers from the provider manager
+        provider_names = self.provider_manager.list_providers()
+
         # Convert cached status to CLI format
         status_list = []
-        for provider_name in self.provider_manager.list_providers():
+        for provider_name in provider_names:
+            # Always get the current source directly from the provider manager
             source = (
                 self.provider_manager.get_provider_source(provider_name) or "unknown"
             )
 
-            if provider_name in self._provider_status_cache:
-                cached_status = self._provider_status_cache[provider_name]
-                status_list.append(
-                    {
-                        "name": provider_name,
-                        "source": source,
-                        "status": "available"
-                        if cached_status.get("healthy", False)
-                        else "unavailable",
-                        "models": len(cached_status.get("models", [])),
-                        "error": cached_status.get("error"),
-                    }
-                )
+            # Get the cached status if it exists
+            cached_status = self._provider_status_cache.get(provider_name, {})
+
+            # Determine provider status
+            if cached_status.get("status") == "not_implemented":
+                status = "config"
+                error = "Configured but no implementation"
+                models = 0
             else:
-                # Provider not in cache, assume it's config-only
-                status_list.append(
-                    {
-                        "name": provider_name,
-                        "source": source,
-                        "status": "config",
-                        "models": 0,
-                        "error": "Configured but no implementation",
-                    }
+                status = (
+                    "available"
+                    if cached_status.get("healthy", False)
+                    else "unavailable"
                 )
+                error = cached_status.get("error")
+                models = len(cached_status.get("models", []))
+
+            # Add provider to status list
+            status_list.append(
+                {
+                    "name": provider_name,
+                    "source": source,
+                    "status": status,
+                    "models": models,
+                    "error": error,
+                }
+            )
 
         return status_list
 

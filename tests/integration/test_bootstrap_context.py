@@ -64,6 +64,7 @@ def test_bootstrap_llm_manager_has_config(ctx: AppContext):
 
             # Verify LLMConfig structure
             from local_coding_assistant.config.schemas import LLMConfig
+
             assert isinstance(llm_config, LLMConfig)
 
             # Check expected LLMConfig attributes

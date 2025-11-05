@@ -1,6 +1,7 @@
 """
 Unit tests for LLMManager with provider system integration.
 """
+
 import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -72,9 +73,13 @@ class TestLLMManagerStreaming:
 
         # Mock router
         mock_router = MagicMock()
-        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "gpt-3.5-turbo"))
+        mock_router.get_provider_for_request = AsyncMock(
+            return_value=(mock_provider, "gpt-3.5-turbo")
+        )
 
-        manager = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        manager = LLMManager(
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+        )
         manager.router = mock_router
 
         request = LLMRequest(prompt="Test prompt")
@@ -109,9 +114,13 @@ class TestLLMManagerStreaming:
 
         # Mock router
         mock_router = MagicMock()
-        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "gpt-3.5-turbo"))
+        mock_router.get_provider_for_request = AsyncMock(
+            return_value=(mock_provider, "gpt-3.5-turbo")
+        )
 
-        manager = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        manager = LLMManager(
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+        )
         manager.router = mock_router
 
         request = LLMRequest(
@@ -145,9 +154,13 @@ class TestLLMManagerStreaming:
 
         # Mock router
         mock_router = MagicMock()
-        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "gpt-3.5-turbo"))
+        mock_router.get_provider_for_request = AsyncMock(
+            return_value=(mock_provider, "gpt-3.5-turbo")
+        )
 
-        manager = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        manager = LLMManager(
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+        )
         manager.router = mock_router
 
         request = LLMRequest(prompt="Test")
@@ -191,8 +204,10 @@ class TestLLMManagerMethodConsistency:
 
             # Both should return appropriate types
             # Handle both direct class reference and string forward reference
-            assert (generate_sig.return_annotation == LLMResponse or 
-                   str(generate_sig.return_annotation) == 'LLMResponse')
+            assert (
+                generate_sig.return_annotation == LLMResponse
+                or str(generate_sig.return_annotation) == "LLMResponse"
+            )
             assert "AsyncIterator" in str(stream_sig.return_annotation)
 
     @pytest.mark.asyncio
@@ -224,9 +239,13 @@ class TestLLMManagerMethodConsistency:
 
         # Mock router
         mock_router = MagicMock()
-        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "gpt-3.5-turbo"))
+        mock_router.get_provider_for_request = AsyncMock(
+            return_value=(mock_provider, "gpt-3.5-turbo")
+        )
 
-        manager = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        manager = LLMManager(
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+        )
         manager.router = mock_router
 
         # Test both methods raise LLMError for similar failures
@@ -274,7 +293,9 @@ class TestLLMManagerIntegrationUpdates:
 
             # generate should have the request parameter plus optional parameters
             assert "request" in generate_sig.parameters
-            assert len(generate_sig.parameters) > 1  # Has additional optional parameters
+            assert (
+                len(generate_sig.parameters) > 1
+            )  # Has additional optional parameters
 
     @pytest.mark.asyncio
     async def test_ainvoke_functionality(self):
@@ -297,9 +318,13 @@ class TestLLMManagerIntegrationUpdates:
 
         # Mock router
         mock_router = MagicMock()
-        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "gpt-3.5-turbo"))
+        mock_router.get_provider_for_request = AsyncMock(
+            return_value=(mock_provider, "gpt-3.5-turbo")
+        )
 
-        manager = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        manager = LLMManager(
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+        )
         manager.router = mock_router
 
         request = LLMRequest(prompt="Test")
@@ -388,10 +413,14 @@ class TestLLMManagerBackwardCompatibility:
 
         # Mock router
         mock_router = MagicMock()
-        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "gpt-3.5-turbo"))
+        mock_router.get_provider_for_request = AsyncMock(
+            return_value=(mock_provider, "gpt-3.5-turbo")
+        )
         mock_router._is_critical_error = MagicMock(return_value=True)
 
-        manager = LLMManager(config_manager=mock_config_manager, provider_manager=mock_provider_manager)
+        manager = LLMManager(
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+        )
         manager.router = mock_router
 
         request = LLMRequest(prompt="Test")

@@ -13,6 +13,7 @@ from . import (
 )
 from .base import (
     BaseProvider,
+    OptionalParameters,
     ProviderLLMRequest,
     ProviderLLMResponse,
     ProviderLLMResponseDelta,
@@ -24,6 +25,7 @@ from .exceptions import (
     ProviderNotFoundError,
     ProviderRateLimitError,
     ProviderTimeoutError,
+    ProviderValidationError,
 )
 from .provider_manager import (
     ProviderManager,
@@ -35,6 +37,7 @@ from .router import ProviderRouter
 
 __all__ = [
     "BaseProvider",
+    "OptionalParameters",
     "ProviderAuthError",
     "ProviderConnectionError",
     "ProviderError",
@@ -47,6 +50,7 @@ __all__ = [
     "ProviderRouter",
     "ProviderSource",
     "ProviderTimeoutError",
+    "ProviderValidationError",
     "list_providers",
     "register_provider",
 ]

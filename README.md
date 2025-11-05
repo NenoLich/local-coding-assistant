@@ -9,10 +9,10 @@ An AI-powered coding assistant that runs locally with support for LLMs, tools, a
 - **LangGraph Compatibility** - Integration with LangGraph for graph-based orchestration
 - **LangGraph Opar-Agent** - Sophisticated agent implementation with advanced reasoning capabilities
 - **Streaming LLM Support** - Real-time streaming responses and tool calling
-- **Plugin System** - Extensible tools and integrations
+- **Provider System** - Declarative provider configs with automatic fallback and health checks
+- **CLI-first interface** with comprehensive commands, including provider management
+- **Three-Layer Configuration** - Global defaults, session overrides, and call-level overrides
 - **Session Management** - Persistent sessions with context awareness
-- **CLI-first interface** with comprehensive commands
-- **Configuration System** - YAML and environment variable configuration
 - **Error Handling** - Robust error handling and logging throughout
 - **Tool System** - Extensible tool registry with JSON schema validation
 
@@ -34,21 +34,24 @@ LOCCA implements a sophisticated agent architecture with the following key compo
 
 ### Core Systems
 - **LLM Manager** - Unified interface for local and remote LLMs with streaming support
+- **Provider Manager & Router** - Discovers providers, merges layered configs, and handles fallback routing
 - **Tool Registry** - Dynamic tool loading and management with schema validation
 - **Runtime Manager** - Session and context management with persistence
-- **Configuration System** - Multi-source configuration with precedence handling
+- **Configuration System** - Three-layer precedence (global, session, call) with Pydantic schemas
 
 ## Configuration
 
-The application supports multiple configuration sources with the following priority order (highest to lowest):
+LOCCA ships with a three-layer configuration system managed by `ConfigManager`:
 
-1. **Environment variables** (including .env files)
-2. **YAML configuration files**
-3. **Default values**
+1. **Global layer** – Defaults merged with YAML (`defaults.yaml`, `providers.default.yaml`, optional custom files) and environment variables.
+2. **Session layer** – Runtime overrides applied for the duration of a session.
+3. **Call layer** – Per-call overrides supplied by CLI flags or API parameters.
+
+Higher layers override lower layers. The default bootstrap loads `.env`, optional `providers.default.yaml`, then merges user overrides from the home directory (`~/.local-coding-assistant/config/providers.local.yaml`).
 
 ### Environment Variables
 
-Environment variables use the `LOCCA_` prefix. For example:
+Environment variables use the `LOCCA_` prefix and can target nested keys using double underscores. For example:
 
 ```bash
 export LOCCA_LLM__MODEL_NAME=gpt-4
@@ -72,7 +75,12 @@ The application automatically loads:
 
 ### YAML Configuration Files
 
-You can also provide YAML configuration files that will be merged with environment variables and defaults.
+Place additional YAML files anywhere and pass them via `bootstrap(config_path=...)` or CLI `--config-file` flags. Provider definitions live in:
+
+- `src/local_coding_assistant/config/providers.default.yaml` – Built-in provider templates.
+- `~/.local-coding-assistant/config/providers.local.yaml` – User-managed overrides created automatically by CLI commands.
+
+Each provider entry follows the schema validated by `ProviderConfig` and can define drivers, base URLs, API keys, and model metadata.
 
 ## Development Setup
 
@@ -107,10 +115,11 @@ You can also provide YAML configuration files that will be merged with environme
 │       ├── agent/              # Agent loop and LLM management
 │       │   ├── agent_loop.py   # Observe-Plan-Act-Reflect implementation
 │       │   ├── langgraph_agent.py # LangGraph opar-agent implementation
-│       │   └── llm_manager.py  # LLM interface with streaming
+│       │   └── llm_manager.py  # LLM interface with streaming & provider routing
 │       ├── tools/              # Tool system
 │       │   ├── base/           # Base tool classes and schemas
 │       │   └── tool_registry.py # Tool registration and management
+│       ├── providers/          # Provider system with routing and health checks
 │       ├── runtime/             # Runtime and session management
 │       ├── core/                # Core infrastructure
 │       ├── config/              # Configuration management
@@ -139,6 +148,9 @@ uv run locca run query "Calculate 2 + 2" --model gpt-4 --temperature 0.7
 
 # Enable streaming responses
 uv run locca run query "Explain quantum computing" --streaming
+
+# Route through a specific provider/model for the request only
+uv run locca run query "Summarize RFC 9110" --provider openrouter --model "openrouter:google/gemini-pro"
 ```
 
 ### Tool Management
@@ -161,6 +173,12 @@ uv run locca config get LLM__MODEL_NAME
 
 # Show current configuration
 uv run locca config show
+
+# Manage provider configurations
+uv run locca provider list
+uv run locca provider add openrouter --base-url https://openrouter.ai/api/v1 --api-key-env OPENROUTER_API_KEY --models qwen/qwen3-coder:free qwen/qwen3-72b-preview --dev
+uv run locca provider validate
+uv run locca provider remove openrouter --dev
 ```
 
 ### Development Server
@@ -185,7 +203,7 @@ LOCCA implements sophisticated agent patterns:
 
 LOCCA now includes a sophisticated LangGraph-based opar-agent implementation:
 
-- **Graph-based Reasoning** - Advanced multi-step reasoning using LangGraph orchestration
+- **Graph-based Reasoning** - Advanced multistep reasoning using LangGraph orchestration
 - **Sophisticated State Management** - Complex state handling across multiple nodes
 - **Streaming Support** - Real-time streaming for all agent phases
 - **Error Recovery** - Robust error handling with fallback mechanisms
@@ -198,6 +216,13 @@ The system is designed for LangGraph compatibility:
 - **Graph Orchestration** - AgentLoop can serve as execution nodes in graphs
 - **State Management** - Proper state passing between graph nodes
 - **Node Isolation** - Clean separation of concerns in graph execution
+
+### Provider System
+
+- **Layered Configuration** – Built-in defaults merged with user YAML and environment variables.
+- **Automatic Reloads** – CLI commands trigger reloads through `ProviderManager.reload()`.
+- **Health Monitoring** – Providers expose health checks cached by `LLMManager`.
+- **Fallback Routing** – `ProviderRouter` promotes healthy providers following agent policies.
 
 ### Streaming Support
 
@@ -225,15 +250,15 @@ uv run pytest tests/integration/ -v
 uv run pytest tests/e2e/ -v
 ```
 
-## Recent Additions
-
 - **LangGraph Opar-Agent** - Sophisticated graph-based agent implementation with advanced reasoning
-- **LangGraph Compatibility Tests** - Integration tests for graph-based orchestration
+- **Provider Module** - Declarative provider configs, layered reloads, and CLI management
+- **Config Manager v2** - Three-layer hierarchy with validation and runtime overrides
+- **CLI Provider Commands** - `locca provider add|list|remove|validate|reload`
+- **Integration Tests** - Expanded coverage for config merging and provider routing
 - **Streaming LLM Responses** - Real-time streaming for better user experience
 - **Advanced Agent Loop** - Observe-Plan-Act-Reflect pattern implementation
 - **Session & Context Awareness** - Persistent sessions with context management
 - **Enhanced Tool System** - JSON schema validation and better error handling
-- **CLI Tools & Commands** - Comprehensive command-line interface
 - **Centralized Logging** - Structured logging throughout the application
 - **Error Handling** - Robust error handling with safe entry points
 

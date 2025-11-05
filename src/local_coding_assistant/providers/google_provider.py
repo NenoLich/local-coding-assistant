@@ -2,8 +2,16 @@
 Google Gemini provider implementation
 """
 
-import local_coding_assistant.providers.base as base
+from __future__ import annotations
+
+from typing import Any
+
+from local_coding_assistant.config.schemas import ModelConfig
+from local_coding_assistant.providers import base
 from local_coding_assistant.providers.provider_manager import register_provider
+from local_coding_assistant.utils.logging import get_logger
+
+logger = get_logger("providers.google")
 
 
 @register_provider("google_gemini")
@@ -15,15 +23,35 @@ class GoogleGeminiProvider(base.BaseProvider):
         api_key: str | None = None,
         api_key_env: str | None = "GEMINI_API_KEY",
         base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/",
-        models: list | None = None,
+        models: list[ModelConfig] | list[str] | dict[str, dict] | None = None,
         driver: str = "openai_chat",  # Use OpenAI chat driver
-        **kwargs,
+        **kwargs: Any,
     ):
         # Default models if not specified
-        default_models = ["gemini-2.5-flash"] if models is None else models
+        default_models = (
+            [
+                ModelConfig(
+                    name="gemini-2.5-flash",
+                    supported_parameters=[
+                        "temperature",
+                        "max_tokens",
+                        "top_p",
+                        "top_k",
+                        "stop",
+                        "presence_penalty",
+                        "frequency_penalty",
+                    ],
+                )
+            ]
+            if models is None
+            else models
+        )
+
+        # Set provider name if not provided
+        name = kwargs.pop("name", "google_gemini")
 
         super().__init__(
-            name="google_gemini",
+            name=name,
             api_key=api_key,
             api_key_env=api_key_env,
             base_url=base_url,
@@ -38,5 +66,9 @@ class GoogleGeminiProvider(base.BaseProvider):
         Returns:
             An instance of a BaseDriver configured for Google Gemini
         """
-        # Use the parent's _initialize_driver helper method
-        return self._initialize_driver()
+        try:
+            # Use the parent's _initialize_driver helper method
+            return self._initialize_driver()
+        except Exception as e:
+            logger.error(f"Failed to create Google Gemini driver: {e!s}")
+            raise
