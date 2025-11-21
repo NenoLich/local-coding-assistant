@@ -16,55 +16,6 @@ from local_coding_assistant.tools.tool_manager import ToolManager
 from local_coding_assistant.tools.types import ToolExecutionRequest
 
 
-@pytest.fixture
-def tool_test_env(tmp_path, monkeypatch):
-    """Create an isolated tool configuration environment."""
-
-    home_dir = tmp_path / "home"
-    config_dir = home_dir / ".local-coding-assistant" / "config"
-    config_dir.mkdir(parents=True)
-
-    default_config = config_dir / "tools.default.yaml"
-    local_config = config_dir / "tools.local.yaml"
-    default_config.write_text(yaml.safe_dump({"tools": []}), encoding="utf-8")
-    local_config.write_text(yaml.safe_dump({"tools": []}), encoding="utf-8")
-
-    modules_dir = tmp_path / "tool_modules"
-    modules_dir.mkdir()
-
-    def create_tool_module(tool_id: str, multiplier: int = 2) -> Path:
-        class_name = "".join(part.capitalize() for part in tool_id.split("_"))
-        module_path = modules_dir / f"{tool_id}.py"
-        module_path.write_text(
-            textwrap.dedent(
-                f"""
-                from pydantic import BaseModel
-                from local_coding_assistant.tools.base import Tool
-
-                class {class_name}(Tool):
-                    class Input(BaseModel):
-                        value: int
-
-                    class Output(BaseModel):
-                        result: int
-
-                    def run(self, input_data: Input) -> Output:
-                        return self.Output(result=input_data.value * {multiplier})
-                """
-            ),
-            encoding="utf-8",
-        )
-        return module_path
-
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home_dir))
-
-    return SimpleNamespace(
-        home_dir=home_dir,
-        config_dir=config_dir,
-        default_config=default_config,
-        local_config=local_config,
-        create_tool_module=create_tool_module,
-    )
 
 
 def test_tool_manager_loads_tools_from_config_and_executes(tool_test_env):
@@ -96,7 +47,10 @@ def test_tool_manager_loads_tools_from_config_and_executes(tool_test_env):
     )
     tool_test_env.local_config.write_text(yaml.safe_dump({"tools": []}), encoding="utf-8")
 
-    config_manager = ConfigManager()
+    # Explicitly provide the test's config paths to the ConfigManager
+    config_manager = ConfigManager(
+        tool_config_paths=[tool_test_env.default_config, tool_test_env.local_config]
+    )
     tool_manager = ToolManager(config_manager=config_manager, auto_load=True)
 
     info = tool_manager.get_tool_info("sample_tool")
