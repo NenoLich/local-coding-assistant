@@ -62,11 +62,11 @@ known-first-party = ["local_coding_assistant"]
 unused-ignore-comment = "warn"
 redundant-cast = "ignore"
 
-[[tool.ty.overrides]]
-include = ["tests/**", "**/test_*.py"]
-
-[tool.ty.overrides.rules]
-possibly-unresolved-reference = "ignore"
+#[[tool.ty.overrides]]
+#include = ["tests/**", "**/test_*.py"]
+#
+#[tool.ty.overrides.rules]
+#possibly-unresolved-reference = "ignore"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

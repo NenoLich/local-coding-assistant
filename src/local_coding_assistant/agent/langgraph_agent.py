@@ -11,7 +11,8 @@ from pydantic import BaseModel, Field
 
 from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
 from local_coding_assistant.core.exceptions import AgentError
-from local_coding_assistant.tools.tool_manager import ToolManager
+from local_coding_assistant.core.protocols import IToolManager
+from local_coding_assistant.tools.types import ToolExecutionRequest
 from local_coding_assistant.utils.langgraph_utility import (
     handle_graph_error,
     node_logger,
@@ -111,7 +112,7 @@ class LangGraphAgent:
     def __init__(
         self,
         llm_manager: LLMManager,
-        tool_manager: ToolManager | None = None,
+        tool_manager: IToolManager | None = None,
         name: str = "langgraph_agent",
         max_iterations: int = 10,
         streaming: bool = False,
@@ -483,7 +484,12 @@ Please provide a plan with specific actions to take. Respond in JSON format with
                 tool_result = f"Error: No tool manager available to execute {func_name}"
             else:
                 try:
-                    tool_result = self.tool_manager.run_tool(func_name, args)
+                    request = ToolExecutionRequest(tool_name=func_name, payload=args)
+                    response = self.tool_manager.execute(request)
+                    if not response.success:
+                        tool_result = f"Error: {response.error_message}"
+                    else:
+                        tool_result = response.result
                 except Exception as e:
                     tool_result = f"Error executing tool {func_name}: {e!s}"
 
@@ -491,6 +497,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
             if func_name == "final_answer":
                 # Set final answer on state and return action result
                 state.set_final_answer(args.get("answer", ""))
+
                 return {
                     "success": True,
                     "output": f"Final answer: {args.get('answer', '')}",
@@ -553,7 +560,7 @@ Please describe what actions were taken and their results.
 """
 
             # Get LLM response and tool calls
-            response_content, tool_calls = self._get_llm_response_with_tools(
+            response_content, tool_calls = await self._get_llm_response_with_tools(
                 action_prompt, writer, "act"
             )
 

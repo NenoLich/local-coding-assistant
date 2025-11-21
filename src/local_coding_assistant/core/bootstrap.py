@@ -2,238 +2,281 @@
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from local_coding_assistant.agent.llm_manager import LLMManager
-from local_coding_assistant.config import get_config_manager
-from local_coding_assistant.config.config_manager import ConfigManager
 from local_coding_assistant.config.env_manager import EnvManager
 from local_coding_assistant.core.app_context import AppContext
+from local_coding_assistant.core.dependencies import AppDependencies
+from local_coding_assistant.core.protocols import IConfigManager, IToolManager
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
-from local_coding_assistant.tools.builtin import SumTool
-from local_coding_assistant.tools.tool_manager import ToolManager
 from local_coding_assistant.utils.logging import get_logger, setup_logging
+
+# Imported here to avoid circular imports
+if TYPE_CHECKING:
+    pass
 
 logger = get_logger("core.bootstrap")
 
 
-def bootstrap(
-    config_path: str | None = None, *, log_level: int | None = None
-) -> AppContext:
-    """Initialize and configure the application."""
-
-    # Load .env files before anything else
-    _env_manager = EnvManager()
+def _setup_environment() -> None:
+    """Load environment variables and perform environment setup."""
+    env_manager = EnvManager()
     try:
-        _env_manager.load_env_files()
+        env_manager.load_env_files()
     except Exception as e:
-        print(f"Warning: Failed to load .env files: {e}")
+        logger.warning("Failed to load .env files: %s", e, exc_info=True)
 
-    ctx = AppContext()
 
-    # Load configuration
-    config, config_is_valid = _load_config(config_path)
+def bootstrap(
+    config_path: str | None = None,
+    *,
+    log_level: int | None = None,
+    config_manager: IConfigManager | None = None,
+) -> AppContext:
+    """Initialize and configure the application.
 
-    # Configure logging
-    # Determine the appropriate log level
-    effective_log_level = log_level
-    if effective_log_level is None and config is not None:
-        if hasattr(config, "runtime") and not config.runtime.enable_logging:
-            effective_log_level = 50  # CRITICAL level to disable logging
+    Args:
+        config_path: Optional path to configuration file
+        log_level: Override log level
+        config_manager: Optional pre-configured config manager (for testing)
 
-    _setup_logging(config, effective_log_level)
+    Returns:
+        Initialized AppContext with all dependencies
 
-    # Initialize LLM manager
-    llm_manager = _initialize_llm_manager(config, config_is_valid, config_path)
+    Raises:
+        RuntimeError: If application initialization fails
+    """
+    # 1. Setup basic console logging first with just the log level
+    setup_logging(level=log_level or logging.INFO)
+    global logger
+    logger = get_logger("core.bootstrap")
 
-    # Initialize tool manager
-    tool_manager = _initialize_tool_manager()
+    try:
+        logger.debug("Starting application bootstrap")
 
-    # Initialize runtime manager if both LLM and tools are available
-    runtime = _initialize_runtime_manager(llm_manager, tool_manager, config)
+        # 2. Setup environment
+        _setup_environment()
+        logger.debug("Environment setup completed")
 
-    # Register components in the application context
-    ctx.register("llm", llm_manager)
-    ctx.register("tools", tool_manager)
-    ctx.register("runtime", runtime)
+        # 3. Initialize configuration
+        config, config_manager = _initialize_config(config_path, config_manager)
+        logger.debug("Configuration loaded successfully")
 
-    return ctx
+        # 4. Now setup full logging with the loaded config
+        _setup_logging(config, log_level)
+        logger = get_logger("core.bootstrap")  # Reinitialize logger after setup
+
+        # 4. Initialize dependencies with the config manager
+        deps = _initialize_dependencies(config_manager)
+
+        # 5. Create context with dependencies
+        ctx = AppContext(dependencies=deps)
+
+        # 6. Initialize components
+        deps.llm_manager = _initialize_llm_manager(config_manager, config)
+        deps.tool_manager = _initialize_tool_manager(config_manager)
+
+        # 7. Initialize runtime manager with required config_manager
+        deps.runtime_manager = _initialize_runtime_manager(
+            config_manager=config_manager,
+            llm_manager=deps.llm_manager,
+            tool_manager=deps.tool_manager,
+        )
+
+        # 8. Register components in context
+        if deps.llm_manager:
+            ctx.register("llm", deps.llm_manager)
+        if deps.tool_manager:
+            ctx.register("tools", deps.tool_manager)
+        if deps.runtime_manager:
+            ctx.register("runtime", deps.runtime_manager)
+
+        # 9. Mark dependencies as fully initialized
+        deps.mark_initialized()
+
+        logger.info("Application bootstrap completed successfully")
+        return ctx
+
+    except Exception as e:
+        logger.critical("Failed to bootstrap application", exc_info=True)
+        raise RuntimeError("Failed to initialize application") from e
 
 
 # --- Helper Functions ---
 
 
-def _load_config(config_path: str | None) -> tuple[Any, bool]:
-    """Load application configuration.
+def _initialize_config(
+    config_path: str | None, config_manager: IConfigManager | None = None
+) -> tuple[Any, IConfigManager]:
+    """Initialize configuration and config manager.
+
+    Args:
+        config_path: Optional path to configuration file
+        config_manager: Optional pre-configured config manager
 
     Returns:
-        Tuple of (config, is_valid) where is_valid indicates if the loaded config passed validation
+        Tuple of (config, config_manager)
     """
-    if config_path:
-        config_paths = [Path(config_path)]
-        try:
-            # Check if file exists first
-            if not Path(config_path).exists():
-                from local_coding_assistant.core.exceptions import ConfigError
 
-                raise ConfigError(f"Configuration file not found: {config_path}")
+    from local_coding_assistant.config.config_manager import ConfigManager
 
-            # Create ConfigManager with specific paths and load config
-            # This becomes our global manager for the rest of the application
-            global_manager = ConfigManager(config_paths)
-            config = global_manager.load_global_config()
-            global_manager._session_overrides = {}
+    # Use provided config manager or create a new one
+    if config_manager is None:
+        config_paths = [Path(config_path)] if config_path else []
+        config_manager = ConfigManager(config_paths=config_paths)
 
-            # Set this as the global manager for the rest of the app
-            import local_coding_assistant.config.config_manager as cm
+    # Load config if not already loaded
+    if not hasattr(config_manager, "_config"):
+        config = config_manager.load_global_config()
+    else:
+        # Access the config directly from the instance if it's a ConfigManager
+        config = getattr(config_manager, "_config", None)
 
-            cm._config_manager = global_manager
+    if config is None:
+        raise RuntimeError("Failed to load configuration")
 
-            return config, True
-        except Exception as err:
-            # Re-raise ConfigError for file not found or invalid YAML
-            from local_coding_assistant.core.exceptions import ConfigError
+    return config, config_manager
 
-            if isinstance(err, ConfigError):
-                # Check if this is a validation error (not file not found or YAML error)
-                if (
-                    "validation" in str(err).lower()
-                    or "invalid global configuration" in str(err).lower()
-                ):
-                    logger.warning(f"Configuration schema validation failed: {err}")
-                    logger.info("Falling back to default configuration")
-                    # Return None config but mark as invalid
-                    return None, False
+
+def _initialize_dependencies(config_manager: IConfigManager) -> AppDependencies:
+    """Initialize application dependencies.
+
+    Args:
+        config_manager: Initialized config manager
+
+    Returns:
+        Initialized AppDependencies instance
+    """
+    return AppDependencies(config_manager=config_manager)
+
+
+def _setup_logging(config: Any | None = None, log_level: int | None = None) -> None:
+    """Configure application logging.
+
+    Args:
+        config: Optional loaded configuration. If None, only basic logging is configured.
+        log_level: Optional log level override. Takes precedence over config.
+    """
+    try:
+        # If log_level is provided, use it directly
+        if log_level is not None:
+            setup_logging(level=log_level)
+            return
+
+        # If we have a config with logging settings, use those
+        if config is not None and hasattr(config, "logging"):
+            # Check if logging is explicitly disabled
+            if hasattr(config.logging, "enabled") and not config.logging.enabled:
+                setup_logging(level=logging.CRITICAL)
+                return
+
+            # Use log level from config if available
+            if hasattr(config.logging, "level"):
+                log_level_str = str(config.logging.level)
+                if log_level_str.isdigit():
+                    setup_logging(level=int(log_level_str))
                 else:
-                    # Re-raise for actual file errors
-                    raise
+                    # Use explicit mapping for log levels
+                    log_level_map = {
+                        "DEBUG": logging.DEBUG,
+                        "INFO": logging.INFO,
+                        "WARNING": logging.WARNING,
+                        "ERROR": logging.ERROR,
+                        "CRITICAL": logging.CRITICAL,
+                    }
+                    level = log_level_map.get(log_level_str.upper(), logging.INFO)
+                    setup_logging(level=level)
+                return
 
-            # Check for validation errors specifically
-            if "validation" in str(err).lower() or (
-                hasattr(err, "__class__")
-                and "validation" in err.__class__.__name__.lower()
-            ):
-                logger.warning(f"Configuration schema validation failed: {err}")
-                logger.info("Falling back to default configuration")
-                return None, False
+        # Default to INFO level if no specific config found
+        setup_logging(level=logging.INFO)
 
-            # For all other errors, fall back to defaults
-            logger.warning(f"Failed to load configuration: {err}")
-            logger.info("Falling back to default configuration")
-            return None, False
-    else:
-        # No custom config path, use default global manager
-        try:
-            global_manager = get_config_manager()
-            config = global_manager.load_global_config()
-            global_manager._session_overrides = {}
-            return config, True
-        except Exception as err:
-            logger.warning(f"Failed to load default configuration: {err}")
-            logger.info("Continuing without configuration")
-            return None, False
-
-
-def _setup_logging(config: Any, log_level: int | None) -> None:
-    """Configure application logging."""
-    if (
-        config is not None
-        and hasattr(config, "runtime")
-        and config.runtime.enable_logging
-    ):
-        # Use provided log_level parameter if given, otherwise use config
-        if log_level is not None:
-            setup_logging(level=log_level)
-        else:
-            # Convert string log level to integer using explicit mapping
-            log_level_str = config.runtime.log_level or "INFO"
-            # Ensure log_level_str is a string (handles test mocks)
-            if hasattr(log_level_str, "__str__"):
-                log_level_str = str(log_level_str)
-
-            # Use explicit mapping instead of getattr for reliability
-            log_level_map = {
-                "DEBUG": logging.DEBUG,
-                "INFO": logging.INFO,
-                "WARNING": logging.WARNING,
-                "ERROR": logging.ERROR,
-                "CRITICAL": logging.CRITICAL,
-            }
-            level = log_level_map.get(log_level_str.upper(), logging.INFO)
-            setup_logging(level=level)
-    else:
-        # Config failed to load or logging explicitly disabled - use provided log_level or CRITICAL
-        if log_level is not None:
-            setup_logging(level=log_level)
-        else:
-            setup_logging(level=50)  # CRITICAL level to effectively disable
+    except Exception as e:
+        # If logging setup fails, configure basic logging as fallback
+        logging.basicConfig(level=logging.INFO)
+        global logger
+        logger = logging.getLogger("core.bootstrap")
+        logger.warning("Failed to configure logging: %s", str(e), exc_info=True)
 
 
 def _initialize_llm_manager(
-    config: Any, config_is_valid: bool, config_path: str | None
+    config_manager: IConfigManager, config: Any
 ) -> LLMManager | None:
-    """Initialize the LLM manager."""
+    """Initialize the LLM manager.
 
-    # Lazy import to avoid circular imports
-    from local_coding_assistant.providers.provider_manager import provider_manager
+    Args:
+        config_manager: The config manager implementing IConfigManager
+        config: Loaded configuration
 
-    # If config was invalid, don't initialize LLM manager even if defaults are available
-    if not config_is_valid and config_path is not None:
-        logger.info("Skipping LLM manager initialization due to invalid configuration")
-        return None
-
+    Returns:
+        Initialized LLMManager instance or None if initialization fails
+    """
     try:
-        # Use the global config manager which already has the correct config loaded
-        config_manager = get_config_manager()
+        # Lazy import to avoid circular imports
+        from local_coding_assistant.providers.provider_manager import provider_manager
 
-        # Try to initialize LLM manager - this may fail if config is invalid
         llm_manager = LLMManager(config_manager, provider_manager)
         logger.info("LLM manager initialized successfully")
         return llm_manager
-    except Exception as err:
-        # Check if this is a schema validation error
-        if (
-            "validation" in str(err).lower()
-            or "schema" in str(err).lower()
-            or "invalid" in str(err).lower()
-        ):
-            logger.warning(
-                f"LLM manager initialization failed due to config validation: {err}"
-            )
-            logger.info("Continuing without LLM functionality")
-        else:
-            logger.warning(f"Failed to initialize LLM manager: {err}")
-            logger.info("Continuing without LLM functionality")
+
+    except Exception as e:
+        logger.error("Failed to initialize LLM manager: %s", str(e), exc_info=True)
         return None
 
 
-def _initialize_tool_manager() -> ToolManager | None:
-    """Initialize the tool manager."""
+def _initialize_tool_manager(config_manager: IConfigManager) -> IToolManager | None:
+    """Initialize the tool manager.
+
+    Args:
+        config_manager: The config manager implementing IConfigManager
+
+    Returns:
+        Initialized ToolManager instance or None if initialization fails
+    """
     try:
-        tool_manager = ToolManager()
-        tool_manager.register_tool(SumTool())
-        logger.info("Tool manager initialized successfully")
+        from local_coding_assistant.tools.tool_manager import (
+            ToolManager,  # Local import
+        )
+
+        tool_manager: IToolManager = ToolManager(config_manager=config_manager)
         return tool_manager
-    except Exception as err:
-        logger.warning(f"Failed to initialize tool manager: {err}")
-        logger.info("Continuing without tool functionality")
+    except Exception as e:
+        logger.error("Failed to initialize tool manager: %s", str(e), exc_info=True)
         return None
 
 
 def _initialize_runtime_manager(
-    llm_manager: LLMManager | None, tool_manager: ToolManager | None, _config: Any
+    config_manager: IConfigManager,
+    llm_manager: LLMManager | None = None,
+    tool_manager: IToolManager | None = None,
 ) -> RuntimeManager | None:
-    """Initialize the runtime manager."""
-    if llm_manager is not None:
-        # Use the global config manager which already has the correct config loaded
-        runtime_config_manager = get_config_manager()
+    """Initialize the runtime manager.
 
-        return RuntimeManager(
+    Args:
+        config_manager: The config manager instance (required)
+        llm_manager: Optional LLM manager instance
+        tool_manager: Optional tool manager instance
+
+    Returns:
+        Initialized RuntimeManager instance or None if initialization fails
+    """
+    try:
+        if not llm_manager:
+            logger.warning(
+                "LLM manager not available, skipping runtime manager initialization"
+            )
+            return None
+
+        runtime_manager = RuntimeManager(
+            config_manager=config_manager,
             llm_manager=llm_manager,
             tool_manager=tool_manager,
-            config_manager=runtime_config_manager,
         )
-    else:
-        if llm_manager is None:
-            logger.warning("Skipping runtime manager creation due to missing LLM")
+
+        logger.info("Runtime manager initialized successfully")
+        return runtime_manager
+
+    except Exception as e:
+        logger.error("Failed to initialize runtime manager: %s", str(e), exc_info=True)
         return None

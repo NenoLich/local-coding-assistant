@@ -421,7 +421,7 @@ class TestProviderCommands:
             yaml.dump(valid_config, f)
 
         # Now load it back, modify it to remove the driver, and save again
-        with open(config_file, "r") as f:
+        with open(config_file) as f:
             config = yaml.safe_load(f)
 
         # Remove the driver from the provider

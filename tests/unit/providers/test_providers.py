@@ -15,7 +15,6 @@ from local_coding_assistant.providers.base import (
 )
 from local_coding_assistant.providers.exceptions import ProviderError
 from local_coding_assistant.providers.google_provider import GoogleGeminiProvider
-from local_coding_assistant.providers.local_provider import LocalProvider
 from local_coding_assistant.providers.openrouter_provider import OpenRouterProvider
 from local_coding_assistant.providers.provider_manager import ProviderManager
 from local_coding_assistant.providers.router import ProviderRouter
@@ -27,20 +26,20 @@ class TestProviderLLMRequest:
     def test_request_creation(self):
         """Test creating a ProviderLLMRequest."""
         from local_coding_assistant.providers.base import OptionalParameters
-        
+
         messages = [{"role": "user", "content": "Test message"}]
         params = OptionalParameters(
             max_tokens=1000,
             stream=False,
-            tools=[{"type": "function", "function": {"name": "test"}}]
+            tools=[{"type": "function", "function": {"name": "test"}}],
         )
-        
+
         request = ProviderLLMRequest(
             messages=messages,
             model="gpt-4",
             temperature=0.7,
             tool_outputs={"test": "output"},
-            parameters=params
+            parameters=params,
         )
 
         assert request.messages == messages
@@ -55,12 +54,10 @@ class TestProviderLLMRequest:
     def test_request_defaults(self):
         """Test ProviderLLMRequest default values."""
         from local_coding_assistant.providers.base import OptionalParameters
-        
+
         messages = [{"role": "user", "content": "Test"}]
         request = ProviderLLMRequest(
-            messages=messages, 
-            model="gpt-3.5",
-            parameters=OptionalParameters()
+            messages=messages, model="gpt-3.5", parameters=OptionalParameters()
         )
 
         assert request.temperature == 0.7
@@ -71,6 +68,109 @@ class TestProviderLLMRequest:
         assert request.parameters.tools == []
         assert request.parameters.tool_choice is None
         assert request.parameters.response_format is None
+
+    def test_validate_against_model(self):
+        """Test validate_against_model method with different validation modes."""
+        from local_coding_assistant.providers.base import OptionalParameters
+
+        # Create a request with some parameters including required ones
+        messages = [{"role": "user", "content": "Test"}]
+        params = OptionalParameters(
+            max_tokens=100,
+            stream=True,
+            tools=[{"type": "function", "function": {"name": "test"}}],
+            tool_choice="auto",  # Add required tool_choice parameter
+        )
+        request = ProviderLLMRequest(
+            messages=messages, model="test-model", parameters=params
+        )
+
+        # Test IGNORE mode - should do nothing
+        request.validate_against_model(
+            [], mode=ProviderLLMRequest.ValidationMode.IGNORE
+        )
+        assert (
+            len(request.parameters.model_fields_set) > 0
+        )  # No parameters should be removed
+
+        # Test TRUNCATE mode with unsupported parameters
+        # Include required parameters in supported list
+        supported = ["max_tokens", "temperature", "tools", "tool_choice"]
+        request.validate_against_model(
+            supported,
+            mode=ProviderLLMRequest.ValidationMode.TRUNCATE,
+            required_parameters={"tools", "tool_choice"},  # Mark tools as required
+        )
+
+        # After validation, check that unsupported parameters are set to None
+        if "stream" not in supported:
+            assert getattr(request.parameters, "stream", None) is None, (
+                "Expected 'stream' to be set to None but it's not"
+            )
+
+        # Then check the expected set of parameters
+        remaining_params = {
+            field
+            for field in request.parameters.model_fields_set
+            if getattr(request.parameters, field) is not None
+        }
+        expected_params = {"max_tokens", "tools", "tool_choice"}
+        assert remaining_params == expected_params, (
+            f"Expected parameters {expected_params}, got {remaining_params}"
+        )
+
+        # Create a new request for VALIDATE mode test
+        validate_request = ProviderLLMRequest(
+            messages=messages,
+            model="test-model",
+            parameters=OptionalParameters(
+                max_tokens=100,
+                stream=True,  # Set stream to True for validation
+                tools=[{"type": "function", "function": {"name": "test"}}],
+                tool_choice="auto",
+            ),
+        )
+
+        # Test VALIDATE mode with required parameters
+        required = {"max_tokens"}
+        validate_request.validate_against_model(
+            {
+                "max_tokens": int,
+                "temperature": float,
+                "tools": list,
+                "tool_choice": (str, dict),
+                "stream": bool,
+            },
+            mode=ProviderLLMRequest.ValidationMode.VALIDATE,
+            required_parameters=required,
+        )
+
+        # Test missing required parameter
+        with pytest.raises(ValueError, match="missing required parameters"):
+            request.validate_against_model(
+                {"temperature": float},
+                mode=ProviderLLMRequest.ValidationMode.VALIDATE,
+                required_parameters=required,
+            )
+
+        # Test type validation with presence_penalty field (should be float between -2 and 2)
+        # First create a request with a valid presence_penalty
+        type_test_request = ProviderLLMRequest(
+            messages=messages,
+            model="test-model",
+            parameters=OptionalParameters(
+                tools=[{"type": "function", "function": {"name": "test"}}],
+                tool_choice="auto",
+            ),
+        )
+        # Set presence_penalty to an invalid value directly to bypass Pydantic's validation
+        type_test_request.parameters.presence_penalty = "not_a_float"
+        # The validation should fail with a ValueError
+        with pytest.raises(ValueError, match="must be float"):
+            type_test_request.validate_against_model(
+                {"presence_penalty": float, "tools": list, "tool_choice": (str, dict)},
+                mode=ProviderLLMRequest.ValidationMode.VALIDATE,
+            )
 
 
 class TestProviderLLMResponse:
@@ -240,14 +340,14 @@ class TestBaseProvider:
 
         # Test that stream falls back to single delta when no driver is available
         from local_coding_assistant.providers.base import OptionalParameters
-        
+
         async def test_stream():
             deltas = []
             async for delta in provider.stream(
                 ProviderLLMRequest(
                     messages=[{"role": "user", "content": "test"}],
                     model="gpt-4",
-                    parameters=OptionalParameters(stream=True)
+                    parameters=OptionalParameters(stream=True),
                 )
             ):
                 deltas.append(delta)
@@ -681,11 +781,11 @@ class TestGoogleGeminiProvider:
 
         # Test that stream delegates to driver
         from local_coding_assistant.providers.base import OptionalParameters
-        
+
         _request = ProviderLLMRequest(
             messages=[{"role": "user", "content": "test"}],
             model="gemini-pro",
-            parameters=OptionalParameters(stream=True)
+            parameters=OptionalParameters(stream=True),
         )
 
         # The stream method should delegate to the driver
@@ -737,11 +837,11 @@ class TestOpenRouterProvider:
 
         # Verify method exists and delegates to driver
         from local_coding_assistant.providers.base import OptionalParameters
-        
+
         _request = ProviderLLMRequest(
             messages=[{"role": "user", "content": "test"}],
             model="gpt-4",
-            parameters=OptionalParameters()
+            parameters=OptionalParameters(),
         )
 
         import inspect
@@ -910,12 +1010,12 @@ class TestProviderIntegration:
         # Test streaming
         deltas = []
         from local_coding_assistant.providers.base import OptionalParameters
-        
+
         async for delta in provider.stream(
             ProviderLLMRequest(
                 messages=[{"role": "user", "content": "test"}],
                 model="stream-model",
-                parameters=OptionalParameters(stream=True)
+                parameters=OptionalParameters(stream=True),
             )
         ):
             deltas.append(delta)
@@ -973,12 +1073,12 @@ class TestProviderIntegration:
         # Test error in generate
         with pytest.raises(ProviderError, match="Test error"):
             from local_coding_assistant.providers.base import OptionalParameters
-            
+
             await provider.generate(
                 ProviderLLMRequest(
                     messages=[{"role": "user", "content": "test"}],
                     model="error-model",
-                    parameters=OptionalParameters()
+                    parameters=OptionalParameters(),
                 )
             )
 
@@ -986,12 +1086,12 @@ class TestProviderIntegration:
         with pytest.raises(ProviderError, match="Stream error"):
             deltas = []
             from local_coding_assistant.providers.base import OptionalParameters
-            
+
             async for delta in provider.stream(
                 ProviderLLMRequest(
                     messages=[{"role": "user", "content": "test"}],
                     model="error-model",
-                    parameters=OptionalParameters(stream=True)
+                    parameters=OptionalParameters(stream=True),
                 )
             ):
                 deltas.append(delta)

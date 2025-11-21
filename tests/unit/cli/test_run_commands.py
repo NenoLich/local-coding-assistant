@@ -4,14 +4,13 @@ Unit tests for CLI run commands.
 
 import asyncio
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import typer
 from typer.testing import CliRunner
 
-from local_coding_assistant.cli.commands.run import app, query
-from local_coding_assistant.core.error_handler import safe_entrypoint
+from local_coding_assistant.cli.commands.run import query
 
 # Initialize test runner
 runner = CliRunner()
@@ -213,7 +212,7 @@ class TestRunCommands:
         try:
             query(text=TEST_QUERY, verbose=False, model=None, log_level="INFO")
         except Exception as e:
-            pytest.fail(f"Query raised {type(e).__name__} unexpectedly: {str(e)}")
+            pytest.fail(f"Query raised {type(e).__name__} unexpectedly: {e!s}")
 
         # Verify the error was logged (check both error and critical logs)
         error_logged = False

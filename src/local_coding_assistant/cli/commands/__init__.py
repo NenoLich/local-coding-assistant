@@ -1,5 +1,5 @@
 """CLI commands for the Local Coding Assistant."""
 
-from . import config, list_tools, provider, run, serve
+from . import config, provider, run, serve, tool
 
-__all__ = ["config", "list_tools", "provider", "run", "serve"]
+__all__ = ["config", "provider", "run", "serve", "tool"]

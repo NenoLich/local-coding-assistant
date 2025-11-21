@@ -163,26 +163,26 @@ class TestProviderConfig:
         """Test creating a valid ProviderConfig."""
         # Create a model config dictionary that will be converted to ModelConfig objects
         models_config = {
-            "gpt-3.5-turbo": {
-                "supported_parameters": ["max_tokens", "temperature"]
-            }
+            "gpt-3.5-turbo": {"supported_parameters": ["max_tokens", "temperature"]}
         }
-        
+
         # Create provider config using from_dict to handle model conversion
-        provider = ProviderConfig.from_dict({
-            "name": "openai",
-            "driver": "openai_chat",
-            "base_url": "https://api.openai.com/v1",
-            "api_key_env": "OPENAI_API_KEY",
-            "models": models_config
-        })
-        
+        provider = ProviderConfig.from_dict(
+            {
+                "name": "openai",
+                "driver": "openai_chat",
+                "base_url": "https://api.openai.com/v1",
+                "api_key_env": "OPENAI_API_KEY",
+                "models": models_config,
+            }
+        )
+
         # Verify the provider configuration
         assert provider.name == "openai"
         assert provider.driver == "openai_chat"
         assert provider.base_url == "https://api.openai.com/v1"
         assert provider.api_key_env == "OPENAI_API_KEY"
-        
+
         # Verify the models were properly converted to ModelConfig objects
         assert len(provider.models) == 1
         model_config = provider.models[0]

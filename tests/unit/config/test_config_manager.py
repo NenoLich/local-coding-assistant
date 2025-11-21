@@ -2,7 +2,7 @@
 
 import pytest
 
-from local_coding_assistant.config import ConfigManager, get_config_manager
+from local_coding_assistant.config import ConfigManager
 from local_coding_assistant.config.schemas import AppConfig, LLMConfig, RuntimeConfig
 
 
@@ -131,13 +131,6 @@ class TestConfigManager:
 
         assert resolved.llm.temperature == 0.8  # Session override wins
 
-    def test_get_config_manager_global_instance(self):
-        """Test getting the global config manager instance."""
-        manager1 = get_config_manager()
-        manager2 = get_config_manager()
-
-        # Should return the same instance
-        assert manager1 is manager2
 
     def test_config_manager_properties(self):
         """Test ConfigManager property accessors."""

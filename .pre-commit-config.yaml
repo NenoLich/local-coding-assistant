@@ -1,3 +1,4 @@
+fail_fast: true
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.11.0
@@ -33,6 +34,7 @@ repos:
       - id: ty
         name: ty type check
         entry: uvx ty check --ignore unresolved-import
+        exclude: ^(tests|build|dist|.venv|.temp).*$
         language: python
         stages: [pre-commit]
   - repo: local

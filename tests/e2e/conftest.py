@@ -64,7 +64,24 @@ def mock_env_vars():
         yield test_env
 
 
-from typing import Any, Dict, cast
+from typing import Any, cast
+
+
+@pytest.fixture
+def temp_tool_config_path(temp_config_dir):
+    """Provide a temporary tools configuration path."""
+
+    config_file = temp_config_dir / "tools.local.yaml"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    return config_file
+
+
+@pytest.fixture
+def patch_tool_bootstrap():
+    """Patch the tool CLI bootstrap helper."""
+
+    with patch("local_coding_assistant.cli.commands.tool.bootstrap") as mock_bootstrap:
+        yield mock_bootstrap
 
 
 @pytest.fixture
@@ -78,7 +95,7 @@ def mock_bootstrap_success():
         mock_tools = [MagicMock(name="test_tool")]
 
         # Create typed mock context
-        mock_ctx: Dict[str, Any] = {
+        mock_ctx: dict[str, Any] = {
             "runtime": mock_runtime,
             "llm": mock_llm,
             "tools": mock_tools,

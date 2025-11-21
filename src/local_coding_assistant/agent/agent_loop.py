@@ -2,18 +2,12 @@
 
 import json
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
 from local_coding_assistant.core.exceptions import AgentError
-
-if TYPE_CHECKING:
-    from local_coding_assistant.tools.tool_manager import ToolManager
-
-    ToolManagerType = ToolManager | None
-else:
-    # For runtime, allow any object that behaves like ToolManager or None
-    ToolManagerType = object
+from local_coding_assistant.core.protocols import IToolManager
+from local_coding_assistant.tools.types import ToolExecutionRequest
 from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("agent.loop")
@@ -30,7 +24,7 @@ class AgentLoop:
     def __init__(
         self,
         llm_manager: LLMManager,
-        tool_manager: ToolManagerType = None,
+        tool_manager: IToolManager | None = None,
         name: str = "agent_loop",
         max_iterations: int = 10,
         streaming: bool = False,
@@ -148,7 +142,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
                 "metadata": {"error": str(e)},
             }
 
-    async def _default_act_handler(self, plan: dict[str, Any]) -> dict[str, Any]:
+    async def _default_act_handler(self, plan: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
         """Execute actions using tools and LLM."""
         try:
             # Create a prompt that includes tool calling instructions
@@ -207,9 +201,14 @@ Please describe what actions were taken and their results.
                                 tool_result = f"Error: No tool manager available to execute {func_name}"
                             else:
                                 try:
-                                    tool_result = self.tool_manager.run_tool(
-                                        func_name, args
+                                    request = ToolExecutionRequest(
+                                        tool_name=func_name, payload=args
                                     )
+                                    response = self.tool_manager.execute(request)
+                                    if not response.success:
+                                        tool_result = f"Error: {response.error_message}"
+                                    else:
+                                        tool_result = response.result
                                 except Exception as e:
                                     tool_result = (
                                         f"Error executing tool {func_name}: {e!s}"

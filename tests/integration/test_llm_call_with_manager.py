@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
 
 import pytest
 
@@ -7,6 +8,7 @@ from local_coding_assistant.agent.llm_manager import (
     LLMRequest,
     LLMResponse,
 )
+from local_coding_assistant.config.config_manager import ConfigManager
 from local_coding_assistant.providers import ProviderLLMResponse
 
 
@@ -32,17 +34,24 @@ def make_test_llm_manager():
     mock_provider_manager.get_provider.return_value = mock_provider
 
     # Create LLM manager with mocked provider system
-    with patch("local_coding_assistant.config.get_config_manager"):
-        # Update the import path to use the correct module
-        with patch("local_coding_assistant.providers.ProviderManager") as mock_pm_class:
-            mock_pm_class.return_value = mock_provider_manager
+    with patch("local_coding_assistant.providers.ProviderManager") as mock_pm_class:
+        mock_pm_class.return_value = mock_provider_manager
 
-            llm = LLMManager.__new__(LLMManager)
-            llm.provider_manager = mock_provider_manager
-            llm.config_manager = MagicMock()
-            llm.router = MagicMock()
+        # Create a mock config manager
+        mock_config_manager = MagicMock(spec=ConfigManager)
+        mock_config_manager.global_config = {
+            "llm": {
+                "default_provider": "test_provider",
+                "providers": {"test_provider": {"type": "test_provider"}}
+            }
+        }
 
-            return llm
+        llm = LLMManager.__new__(LLMManager)
+        llm.provider_manager = mock_provider_manager
+        llm.config_manager = mock_config_manager
+        llm.router = MagicMock()
+
+        return llm
 
 
 class TestLLMManagerIntegration:
@@ -70,29 +79,37 @@ class TestLLMManagerIntegration:
             return_value=(mock_provider, "test-model")
         )
 
-        with patch("local_coding_assistant.config.get_config_manager"):
-            llm = LLMManager.__new__(LLMManager)
-            llm.router = mock_router
-            llm.provider_manager = MagicMock()
-            llm.config_manager = MagicMock()
+        # Create a mock config manager
+        mock_config_manager = MagicMock(spec=ConfigManager)
+        mock_config_manager.global_config = {
+            "llm": {
+                "default_provider": "test_provider",
+                "providers": {"test_provider": {"type": "test_provider"}}
+            }
+        }
 
-            request = LLMRequest(
-                prompt="Integration test prompt",
-                context={"test": "data"},
-                system_prompt="You are a test assistant",
-            )
+        llm = LLMManager.__new__(LLMManager)
+        llm.router = mock_router
+        llm.provider_manager = MagicMock()
+        llm.config_manager = mock_config_manager
 
-            response = await llm.generate(request)
+        request = LLMRequest(
+            prompt="Integration test prompt",
+            context={"test": "data"},
+            system_prompt="You are a test assistant",
+        )
 
-            # Verify response structure
-            assert isinstance(response, LLMResponse)
-            assert response.content == "Integration test response"
-            assert response.model_used == "test-model"
-            assert response.tokens_used == 50
+        response = await llm.generate(request)
 
-            # Verify provider was called correctly
-            mock_provider.generate_with_retry.assert_called_once()
-            mock_router.get_provider_for_request.assert_called_once()
+        # Verify response structure
+        assert isinstance(response, LLMResponse)
+        assert response.content == "Integration test response"
+        assert response.model_used == "test-model"
+        assert response.tokens_used == 50
+
+        # Verify provider was called correctly
+        mock_provider.generate_with_retry.assert_called_once()
+        mock_router.get_provider_for_request.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_llm_tool_calls_are_executed(self):

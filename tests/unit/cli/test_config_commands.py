@@ -5,19 +5,14 @@ Unit tests for CLI config management commands.
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-import typer
 from typer.testing import CliRunner
 
 from local_coding_assistant.cli.commands.config import (
-    _env_manager,
     _k,
     app,
-    get_config,
-    set_config,
-    unset_config,
 )
 
 # Initialize test runner
@@ -68,7 +63,6 @@ class TestConfigCommands:
                 del os.environ[key]
 
         # Import here to ensure the patch is in place
-        from local_coding_assistant.cli.commands import config
 
         self.test_env_manager.get_env.side_effect = lambda k: os.environ.get(
             self.test_env_manager.with_prefix(k)

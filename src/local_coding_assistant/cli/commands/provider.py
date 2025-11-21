@@ -515,9 +515,30 @@ def remove(
         typer.echo("Error: LLM manager not available (provider initialization failed)")
         raise typer.Exit(code=1)
 
-    # Trigger reload through the bootstrap system
-    llm_manager.reload_providers()
-    typer.echo(f"Provider '{name}' has been removed")
+    # Verify the provider is no longer available
+    try:
+        # This should raise an exception if the provider doesn't exist
+        provider = llm_manager.get_provider(name)
+        if provider is not None:
+            typer.echo(
+                f"❌ Error: Provider '{name}' is still available after removal",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+    except Exception as e:
+        # Expected case - provider should not be found
+        if (
+            "not found" not in str(e).lower()
+            and "no such provider" not in str(e).lower()
+        ):
+            typer.echo(f"❌ Error verifying provider removal: {e}", err=True)
+            if actual_log_level.upper() == "DEBUG":
+                import traceback
+
+                typer.echo(traceback.format_exc(), err=True)
+            raise typer.Exit(code=1) from e
+
+    typer.echo(f"✅ Successfully removed provider '{name}'")
 
 
 @app.command()

@@ -4,23 +4,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Handle case where langgraph is not installed
-try:
-    from local_coding_assistant.agent.langgraph_agent import AgentState, LangGraphAgent
-    from local_coding_assistant.agent.llm_manager import (
-        LLMManager,
-        LLMRequest,
-        LLMResponse,
-    )
-    from local_coding_assistant.core.exceptions import AgentError, LLMError
-    from local_coding_assistant.tools.tool_manager import ToolManager
 
-    LANGGRAPH_AVAILABLE = True
-except ImportError:
-    LANGGRAPH_AVAILABLE = False
+from local_coding_assistant.agent.langgraph_agent import AgentState, LangGraphAgent
+from local_coding_assistant.agent.llm_manager import (
+    LLMManager,
+)
+from local_coding_assistant.core.exceptions import AgentError
+from local_coding_assistant.tools.tool_manager import ToolManager
 
 
-@pytest.mark.skipif(not LANGGRAPH_AVAILABLE, reason="LangGraph not installed")
 class TestAgentState:
     """Test AgentState functionality."""
 
@@ -94,7 +86,6 @@ class TestAgentState:
         assert "timestamp" in history_entry
 
 
-@pytest.mark.skipif(not LANGGRAPH_AVAILABLE, reason="LangGraph not installed")
 class TestLangGraphAgent:
     """Test LangGraphAgent functionality."""
 
@@ -132,36 +123,30 @@ class TestLangGraphAgent:
 
     def test_langgraph_agent_get_tools_methods(self):
         """Test LangGraphAgent tool-related methods."""
-        # Create a simple test without mocks to understand the method behavior
-        from local_coding_assistant.tools.tool_manager import ToolManager
+        # Create a mock LLM manager
+        mock_llm_manager = MagicMock()
 
-        # Use a real ToolManager instance
-        real_tool_manager = ToolManager()
+        # Create a mock tool manager
+        mock_tool_manager = MagicMock()
 
-        # Create mock tools and register them
+        # Configure the mock tool manager's __iter__ to return mock tools
         mock_tool1 = MagicMock()
         mock_tool1.name = "tool1"
         mock_tool1.description = "First tool"
-
         mock_tool2 = MagicMock()
         mock_tool2.name = "tool2"
         mock_tool2.description = "Second tool"
+        mock_tool_manager.__iter__.return_value = [mock_tool1, mock_tool2]
 
-        # Register tools
-        real_tool_manager.register_tool(mock_tool1)
-        real_tool_manager.register_tool(mock_tool2)
-
-        llm_manager = MagicMock(spec=LLMManager)
-
+        # Create the LangGraphAgent with the mock managers
         agent = LangGraphAgent(
-            llm_manager=llm_manager,
-            tool_manager=real_tool_manager,
+            llm_manager=mock_llm_manager,
+            tool_manager=mock_tool_manager,
+            name="test_agent"
         )
 
         # Test _get_available_tools
         tools = agent._get_available_tools()
-        print(f"Tools returned: {tools}")
-        print(f"Tool manager tools: {list(real_tool_manager)}")
         assert len(tools) == 2
         assert tools[0]["name"] == "tool1"
         assert tools[1]["name"] == "tool2"
@@ -170,6 +155,15 @@ class TestLangGraphAgent:
         description = agent._get_tools_description()
         assert "tool1: First tool" in description
         assert "tool2: Second tool" in description
+
+        # Test with no tool manager
+        agent_no_tools = LangGraphAgent(
+            llm_manager=mock_llm_manager,
+            tool_manager=None,
+            name="test_agent_no_tools"
+        )
+        assert agent_no_tools._get_available_tools() == []
+        assert agent_no_tools._get_tools_description() == "No tools available"
 
     def test_langgraph_agent_build_graph(self):
         """Test LangGraphAgent builds graph correctly."""

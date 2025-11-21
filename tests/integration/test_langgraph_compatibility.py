@@ -72,6 +72,7 @@ class LangGraphAgentLoop:
         self.final_answer = None
         self.session_id = f"langgraph_{name}_{int(time.time())}"
         self.history: list[dict[str, Any]] = []
+        self.model = "gpt-4"  # Default model
 
         # Build the LangGraph
         self.graph = self._build_graph()
@@ -81,12 +82,17 @@ class LangGraphAgentLoop:
 
         # Observe node
         async def observe_handler(state: dict[str, Any]) -> dict[str, Any]:
-            content = f"LangGraph iteration {self.current_iteration + 1} in session {self.session_id}"
+            user_input = state.get("user_input", "How can I help you today?")
+            content = (
+                f"LangGraph iteration {self.current_iteration + 1} in session {self.session_id}\n"
+                f"User input: {user_input}"
+            )
             return {
                 "content": content,
                 "metadata": {
                     "session_id": self.session_id,
                     "iteration": self.current_iteration + 1,
+                    "user_input": user_input,
                 },
                 "timestamp": time.time(),
                 "source": "langgraph_agent",
@@ -110,8 +116,14 @@ Please provide a plan with specific actions to take. Respond in JSON format with
 - confidence: confidence level (0-1)
 """
             try:
-                request = LLMRequest(prompt=prompt, tools=self._get_available_tools())
-                response = await self.llm_manager.generate(request)
+                    # Create the LLM request with the model
+                request = LLMRequest(
+                    prompt=prompt,
+                    tools=self._get_available_tools()
+                )
+                
+                # Generate the response with the model parameter
+                response = await self.llm_manager.generate(request, model=self.model)
 
                 return {
                     "reasoning": f"Based on observation: {observation['content'][:100]}...",
@@ -149,9 +161,10 @@ If you need to provide a final answer, use the final_answer tool.
 Please describe what actions were taken and their results.
 """
                 request = LLMRequest(
-                    prompt=action_prompt, tools=self._get_available_tools()
+                    prompt=action_prompt,
+                    tools=self._get_available_tools()
                 )
-                response = await self.llm_manager.generate(request)
+                response = await self.llm_manager.generate(request, model=self.model)
 
                 # Parse tool calls
                 tool_calls = response.tool_calls or []
@@ -225,8 +238,8 @@ Please provide:
 - improvements: suggested improvements
 - success_rating: success rating (0-1)
 """
-                request = LLMRequest(prompt=reflection_prompt)
-                response = await self.llm_manager.generate(request)
+                request = LLMRequest(prompt=reflection_prompt, model="gpt-4")
+                response = await self.llm_manager.generate(request, model="gpt-4")
 
                 return {
                     "analysis": f"Plan execution {'succeeded' if action_result['success'] else 'failed'}: {response.content[:200]}",
@@ -283,13 +296,21 @@ Please provide:
                 descriptions.append(f"- {tool.name}: {tool.description}")
         return "\n".join(descriptions) if descriptions else "No tools available"
 
-    async def run(self) -> str | None:
-        """Run the LangGraph-based agent loop."""
+    async def run(self, user_input: str | None = None) -> str | None:
+        """Run the LangGraph-based agent loop.
+        
+        Args:
+            user_input: Optional user input to process. If not provided, will use a default prompt.
+        """
         self.current_iteration = 0
         self.final_answer = None
         self.history = []
 
-        initial_state = {"tool_outputs": []}
+        # Initialize with user input if provided
+        initial_state = {
+            "tool_outputs": [],
+            "user_input": user_input or "How can I help you today?"
+        }
 
         while self.current_iteration < self.max_iterations:
             self.current_iteration += 1
@@ -350,14 +371,17 @@ class TestLangGraphCompatibility:
         for prompt in test_prompts:
             print(f"\n--- Testing prompt: {prompt} ---")
 
-            # Run AgentLoop
+            # Run AgentLoop with model parameter
             agent_loop = AgentLoop(
                 llm_manager=mock_llm_with_tools,
                 tool_manager=tool_manager,
                 name="test_agent_loop",
                 max_iterations=5,
             )
-
+            
+            # Set the model in the LLM manager
+            mock_llm_with_tools.default_model = "gpt-4"
+            
             agent_result = await agent_loop.run()
             agent_history = agent_loop.get_history()
 
@@ -367,15 +391,25 @@ class TestLangGraphCompatibility:
             # Reset LLM manager call count for fair comparison
             mock_llm_with_tools.call_count = 0
 
-            # Run LangGraph version
+            # Ensure the mock LLM manager has the default model set
+            mock_llm_with_tools.default_model = "gpt-4"
+            
+            # Run LangGraph version with model specified
             langgraph_agent = LangGraphAgentLoop(
                 llm_manager=mock_llm_with_tools,
                 tool_manager=tool_manager,
                 name="test_langgraph",
                 max_iterations=5,
             )
-
-            langgraph_result = await langgraph_agent.run()
+            
+            # Ensure the model is set
+            langgraph_agent.model = "gpt-4"
+            
+            # Ensure the LLM manager has the model set
+            mock_llm_with_tools.default_model = "gpt-4"
+            
+            # Pass the prompt to the run method
+            langgraph_result = await langgraph_agent.run(prompt)
             langgraph_history = langgraph_agent.history
 
             print(f"LangGraph result: {langgraph_result}")
@@ -552,13 +586,19 @@ class TestLangGraphCompatibility:
             max_iterations=3,
             streaming=True,
         )
-
+        
+        # Set the default model for the streaming LLM
+        streaming_llm.default_model = "gpt-4"
+    
         langgraph_agent = LangGraphAgentLoop(
             llm_manager=streaming_llm,
             tool_manager=tool_manager,
             name="streaming_langgraph",
             max_iterations=3,
         )
+        
+        # Set the model for the langgraph agent
+        langgraph_agent.model = "gpt-4"
 
         # Both should handle streaming gracefully
         agent_result = await agent_loop.run()

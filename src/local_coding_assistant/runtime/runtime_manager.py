@@ -6,6 +6,7 @@ end-to-end query handling across the LLM and tools using a per-run session.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 from local_coding_assistant.agent.llm_manager import (
@@ -13,8 +14,9 @@ from local_coding_assistant.agent.llm_manager import (
     LLMRequest,
     LLMResponse,
 )
-from local_coding_assistant.config import get_config_manager
+from local_coding_assistant.core.protocols import IConfigManager, IToolManager
 from local_coding_assistant.runtime.session import SessionState
+from local_coding_assistant.tools.types import ToolExecutionRequest
 
 if TYPE_CHECKING:
     from local_coding_assistant.tools.tool_manager import ToolManager
@@ -25,26 +27,30 @@ from local_coding_assistant.utils.logging import get_logger
 class RuntimeManager:
     def __init__(
         self,
-        llm_manager: LLMManager,
-        tool_manager: ToolManager | None = None,
-        config_manager=None,
+        config_manager: IConfigManager,
+        llm_manager: LLMManager | None = None,
+        tool_manager: IToolManager | ToolManager | None = None,
     ) -> None:
-        """Initialize the runtime with its dependencies.
+        """Initialize the runtime manager.
 
         Args:
-            llm_manager: An LLM manager providing `generate()` method.
-            tool_manager: Optional tool manager capable of being iterated or invoked.
-                        If None, tool functionality will be disabled.
-            config_manager: ConfigManager instance for resolving configuration.
-                          If None, uses the global config manager.
+            config_manager: The config manager to use for configuration (required)
+            llm_manager: The LLM manager to use for generating responses
+            tool_manager: The tool manager to use for executing tools
         """
+        if config_manager is None:
+            raise ValueError("config_manager is required")
+
         self._llm_manager = llm_manager
         self._tool_manager = tool_manager
         self._log = get_logger("runtime.runtime_manager")
-        self.config_manager = config_manager or get_config_manager()
+        self.config_manager = config_manager
 
         # Ensure config manager has global configuration loaded
-        if self.config_manager.global_config is None:
+        if (
+            not hasattr(self.config_manager, "global_config")
+            or self.config_manager.global_config is None
+        ):
             self.config_manager.load_global_config()
 
         self.session: SessionState | None = None
@@ -96,8 +102,16 @@ class RuntimeManager:
             self.session = SessionState()
 
         session = self.session
-        runtime_config = self.config_manager.resolve().runtime
-        if not runtime_config.persistent_sessions:
+        config = self.config_manager.resolve()
+        # Access runtime config from dictionary
+        if not isinstance(config, dict):
+            # For backward compatibility if resolve() returns an object
+            runtime_config = config.runtime
+        else:
+            runtime_config = config.get("runtime", {})
+
+        # Check if persistent_sessions is False or not set (default to False)
+        if not runtime_config.get("persistent_sessions", False):
             session.reset()
 
         return session
@@ -124,15 +138,34 @@ class RuntimeManager:
                 _, rest = text.split(":", 1)
                 name, payload_str = rest.strip().split(" ", 1)
                 payload = json.loads(payload_str)
-                result = self._tool_manager.run_tool(name, payload)
-                tool_outputs = {name: result}
-                self._log.debug("Tool invoked: %s => %s", name, result)
-                # Return the tool result instead of the original text
-                processed_text = f"Tool {name} executed successfully"
+
+                # Use ToolExecutionRequest for better error handling
+                request = ToolExecutionRequest(tool_name=name, payload=payload)
+                response = self._tool_manager.execute(request)
+
+                if not response.success:
+                    error_msg = (
+                        f"Tool {name} execution failed: {response.error_message}"
+                    )
+                    self._log.error(error_msg)
+                    return None, error_msg
+
+                tool_outputs = {name: response.result}
+                self._log.debug("Tool invoked: %s => %s", name, response.result)
+
+                # Include execution time in the response
+                exec_time = (
+                    f"{response.execution_time_ms:.2f}ms"
+                    if response.execution_time_ms
+                    else "unknown"
+                )
+                processed_text = f"Tool {name} executed successfully in {exec_time}"
                 return tool_outputs, processed_text
+
             except json.JSONDecodeError as e:
-                self._log.error("Invalid JSON in tool payload: %s", e)
-                return None, f"Invalid JSON in tool payload: {e!s}"
+                error_msg = f"Invalid JSON in tool payload: {e!s}"
+                self._log.error(error_msg)
+                return None, error_msg
             except ToolRegistryError:
                 # Re-raise ToolRegistryError to be handled by the caller
                 raise
@@ -152,44 +185,28 @@ class RuntimeManager:
         max_tokens: int | None = None,
     ) -> tuple[LLMRequest, dict[str, Any]]:
         """Prepare the LLM request with context and configuration."""
-        # Prepare tools for LLM request
-        available_tools = self._get_available_tools()
-
-        # Create LLM request
-        context = {
-            "session_id": session.id,
-            "history": [
-                m.model_dump() for m in session.history
-            ],  # Include all history for context
-            "tool_calls": [tc.model_dump() for tc in session.tool_calls],
-            "metadata": session.metadata,
-        }
-
-        # Ensure tool_outputs is always a dictionary
-        safe_tool_outputs = tool_outputs or {}
-
         request = LLMRequest(
             prompt=text,
-            context=context,
-            tools=available_tools if available_tools else None,
-            tool_outputs=safe_tool_outputs,
+            context=self._build_llm_context(session),
+            tools=self._get_available_tools(),
+            tool_outputs=tool_outputs or {},
             system_prompt=session.system_prompt,
         )
 
-        # Handle configuration overrides
-        overrides = self.config_manager.session_overrides.copy()
-        if model is not None:
-            overrides["llm.model_name"] = model
-        if temperature is not None:
-            overrides["llm.temperature"] = temperature
-        if max_tokens is not None:
-            overrides["llm.max_tokens"] = max_tokens
-
-        # Update session configuration if overrides are provided
-        if overrides:
-            self.config_manager.set_session_overrides(overrides)
+        overrides = self._apply_overrides(
+            model=model, temperature=temperature, max_tokens=max_tokens
+        )
 
         return request, overrides
+
+    def _build_llm_context(self, session: SessionState) -> dict[str, Any]:
+        """Construct the contextual payload for LLM interactions."""
+        return {
+            "session_id": session.id,
+            "history": [m.model_dump() for m in session.history],
+            "tool_calls": [tc.model_dump() for tc in session.tool_calls],
+            "metadata": session.metadata,
+        }
 
     def _build_result(
         self, session: SessionState, response: LLMResponse
@@ -212,52 +229,112 @@ class RuntimeManager:
             return
 
         if self._tool_manager is None:
-            self._log.warning("Tool calls received but tool manager is not available")
-            for tool_call in response.tool_calls:
-                if "function" in tool_call:
-                    func_name = tool_call["function"]["name"]
-                    try:
-                        args = json.loads(tool_call["function"]["arguments"])
-                    except json.JSONDecodeError:
-                        args = {}
-                    session.add_tool_message(
-                        name=func_name,
-                        args=args,
-                        result={"error": "Tool functionality is not available"},
-                    )
-                    self._log.warning(
-                        "Tool call '%s' ignored: Tool manager not available", func_name
-                    )
+            self._handle_missing_tool_manager(session, response.tool_calls)
             return
 
         for tool_call in response.tool_calls:
             if "function" in tool_call:
+                self._process_single_tool_call(tool_call, session)
+
+    def _handle_missing_tool_manager(
+        self, session: SessionState, tool_calls: list[dict[str, Any]]
+    ) -> None:
+        """Handle tool calls when tool manager is not available."""
+        self._log.warning("Tool calls received but tool manager is not available")
+        for tool_call in tool_calls:
+            if "function" in tool_call:
                 func_name = tool_call["function"]["name"]
-                args = {}
                 try:
                     args = json.loads(tool_call["function"]["arguments"])
-                    tool_result = self._tool_manager.run_tool(func_name, args)
-                    session.add_tool_message(
-                        name=func_name, args=args, result=tool_result
-                    )
-                    self._log.debug(
-                        "LLM-initiated tool call: %s => %s", func_name, tool_result
-                    )
-                except json.JSONDecodeError as e:
-                    error_msg = f"Failed to parse tool arguments: {e!s}"
-                    self._log.error(
-                        "%s: %s", error_msg, tool_call["function"]["arguments"]
-                    )
-                    session.add_tool_message(
-                        name=func_name, args={}, result={"error": error_msg}
-                    )
-                except Exception as e:
-                    self._log.error("Tool call '%s' failed: %s", func_name, str(e))
-                    session.add_tool_message(
-                        name=func_name,
-                        args=args,  # args is now guaranteed to be defined
-                        result={"error": str(e)},
-                    )
+                except json.JSONDecodeError:
+                    args = {}
+
+                session.add_tool_message(
+                    name=func_name,
+                    args=args,
+                    result={"error": "Tool functionality is not available"},
+                )
+                self._log.warning(
+                    "Tool call '%s' ignored: Tool manager not available", func_name
+                )
+
+    def _process_single_tool_call(
+        self, tool_call: dict[str, Any], session: SessionState
+    ) -> None:
+        """Process a single tool call from the LLM response."""
+        func_name = tool_call["function"]["name"]
+        args = {}
+
+        try:
+            args = json.loads(tool_call["function"]["arguments"])
+            tool_result = self._execute_tool(func_name, args)
+            self._log_tool_success(func_name, tool_result)
+        except json.JSONDecodeError as e:
+            self._handle_json_decode_error(e, tool_call, func_name, session)
+            return
+        except Exception as e:
+            self._handle_tool_error(e, func_name, args, session)
+            return
+
+        session.add_tool_message(name=func_name, args=args, result=tool_result)
+
+    def _execute_tool(self, func_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """Execute a single tool and return its result."""
+        request = ToolExecutionRequest(tool_name=func_name, payload=args)
+        if self._tool_manager is None:
+            return {"error": "Tool functionality is not available"}
+
+        response = self._tool_manager.execute(request)
+        exec_time = (
+            f"{response.execution_time_ms:.2f}ms"
+            if response.execution_time_ms
+            else "unknown"
+        )
+
+        if response.success:
+            self._log.debug("Tool %s executed successfully in %s", func_name, exec_time)
+            # Ensure we always return a dictionary
+            if isinstance(response.result, dict):
+                return response.result
+            return {"result": response.result}
+        else:
+            error_msg = f"Tool execution failed: {response.error_message}"
+            self._log.error(
+                "Tool %s execution failed: %s", func_name, response.error_message
+            )
+            return {"error": error_msg}
+
+    def _handle_json_decode_error(
+        self,
+        error: json.JSONDecodeError,
+        tool_call: dict[str, Any],
+        func_name: str,
+        session: SessionState,
+    ) -> None:
+        """Handle JSON decode errors during tool argument parsing."""
+        error_msg = f"Failed to parse tool arguments: {error!s}"
+        self._log.error("%s: %s", error_msg, tool_call["function"]["arguments"])
+        session.add_tool_message(name=func_name, args={}, result={"error": error_msg})
+
+    def _handle_tool_error(
+        self,
+        error: Exception,
+        func_name: str,
+        args: dict[str, Any],
+        session: SessionState,
+    ) -> None:
+        """Handle general tool execution errors."""
+        error_msg = str(error)
+        self._log.error("Tool call '%s' failed: %s", func_name, error_msg)
+        session.add_tool_message(
+            name=func_name,
+            args=args,
+            result={"error": error_msg},
+        )
+
+    def _log_tool_success(self, func_name: str, tool_result: Any) -> None:
+        """Log successful tool execution."""
+        self._log.debug("LLM-initiated tool call: %s => %s", func_name, tool_result)
 
     async def _run_regular_mode(
         self,
@@ -269,32 +346,19 @@ class RuntimeManager:
         """Run a single query in regular mode."""
         session = self._setup_session()
 
-        # Handle direct tool invocation: "tool:<name> <json-payload>"
-        tool_outputs, processed_text = self._handle_direct_tool_call(text)
+        user_message, tool_outputs = self._record_user_message(text, session)
 
-        # If there were tool outputs, replace the original message with tool result
-        # Otherwise, use the original text for LLM request
-        if tool_outputs:
-            # Record the original tool call for context
-            for tool_name, result in tool_outputs.items():
-                session.add_tool_message(name=tool_name, args={}, result=result)
-            # Use processed text (tool result) for LLM request
-            user_message_for_llm = processed_text
-        else:
-            # Use original text for LLM request
-            user_message_for_llm = text
-
-        # Record user message after determining the final message to use
-        session.add_user_message(user_message_for_llm)
-        self._log.debug("Recorded user message; session_id=%s", session.id)
-
-        # Prepare and execute LLM request
         request, overrides = self._prepare_llm_request(
-            user_message_for_llm, session, tool_outputs, model, temperature, max_tokens
+            user_message,
+            session,
+            tool_outputs,
+            model,
+            temperature,
+            max_tokens,
         )
 
-        # Ask LLM with context
-        response = await self._llm_manager.generate(
+        llm_manager = self._require_llm_manager()
+        response = await llm_manager.generate(
             request, overrides=overrides if overrides else None
         )
         self._log.debug("LLM returned response; len=%d", len(response.content))
@@ -320,17 +384,9 @@ class RuntimeManager:
     ) -> dict[str, Any]:
         """Run the runtime in agent mode, delegating to AgentLoop or LangGraphAgent."""
         # Handle configuration overrides
-        overrides = {}
-        if model is not None:
-            overrides["llm.model_name"] = model
-        if temperature is not None:
-            overrides["llm.temperature"] = temperature
-        if max_tokens is not None:
-            overrides["llm.max_tokens"] = max_tokens
-
-        # Update session configuration if overrides are provided
-        if overrides:
-            self.config_manager.set_session_overrides(overrides)
+        _overrides = self._apply_overrides(
+            model=model, temperature=temperature, max_tokens=max_tokens
+        )
 
         # Determine which agent implementation to use
         runtime_config = self.config_manager.resolve().runtime
@@ -361,10 +417,13 @@ class RuntimeManager:
             LangGraphAgent,
         )
 
+        if self._llm_manager is None:
+            return {"error": "LLM manager is not available"}
+
         # Create LangGraph agent with runtime components
         agent = LangGraphAgent(
             llm_manager=self._llm_manager,
-            tool_manager=self._tool_manager,
+            tool_manager=self._tool_manager if self._tool_manager is not None else None,
             name="runtime_langgraph_agent",
             streaming=streaming,
         )
@@ -416,10 +475,13 @@ class RuntimeManager:
         # Import AgentLoop locally to avoid circular imports
         from local_coding_assistant.agent.agent_loop import AgentLoop
 
+        if self._llm_manager is None:
+            return {"error": "LLM manager is not available"}
+
         # Create agent loop with runtime components
         agent_loop = AgentLoop(
             llm_manager=self._llm_manager,
-            tool_manager=self._tool_manager,
+            tool_manager=self._tool_manager if self._tool_manager is not None else None,
             name="runtime_agent",
             streaming=streaming,
         )
@@ -436,61 +498,150 @@ class RuntimeManager:
         }
 
     def _get_available_tools(self) -> list[dict[str, Any]] | None:
-        """Get available tools for LLM requests with full parameter specifications.
-
-        Extracts parameter information from the tool's Input Pydantic model.
-        Returns None if no tools are available.
-        """
+        """Return registered tools in OpenAI function-calling format."""
         if self._tool_manager is None:
             return None
 
-        available_tools: list[dict[str, Any]] = []
+        tool_specs: list[dict[str, Any]] = []
 
-        if not hasattr(self._tool_manager, "__iter__"):
-            return available_tools
+        for entry in self._tool_manager:
+            resolved = self._resolve_tool_entry(entry)
+            if resolved is None:
+                continue
 
-        try:
-            for tool in self._tool_manager:
-                if not (hasattr(tool, "name") and hasattr(tool, "description")):
-                    continue
+            name, tool_obj = resolved
+            spec = self._build_tool_spec(name, tool_obj)
+            if spec is not None:
+                tool_specs.append(spec)
 
-                # Create tool spec with basic info
-                tool_spec: dict[str, Any] = {
-                    "type": "function",
-                    "function": {
-                        "name": tool.name,
-                        "description": tool.description,
-                        "parameters": {
-                            "type": "object",
-                            "properties": {},
-                            "required": [],
-                        },
-                    },
-                }
+        return tool_specs or None
 
-                # Extract parameters from the Input model if it exists
-                if hasattr(tool, "Input") and hasattr(tool.Input, "model_json_schema"):
-                    try:
-                        # Get the JSON schema from the Pydantic model
-                        schema = tool.Input.model_json_schema()
-                        if "properties" in schema:
-                            tool_spec["function"]["parameters"]["properties"] = schema[
-                                "properties"
-                            ]
-                            tool_spec["function"]["parameters"]["required"] = (
-                                schema.get("required", [])
-                            )
-                    except Exception as e:
-                        self._log.warning(
-                            "Failed to process tool schema for %s: %s",
-                            tool.name,
-                            str(e),
-                        )
+    def _record_user_message(
+        self, text: str, session: SessionState
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Handle direct tool calls and record the effective user message."""
+        tool_outputs, processed_text = self._handle_direct_tool_call(text)
 
-                available_tools.append(tool_spec)
+        if tool_outputs:
+            for tool_name, result in tool_outputs.items():
+                session.add_tool_message(name=tool_name, args={}, result=result)
 
-        except Exception as e:
-            self._log.error("Error getting available tools: %s", str(e))
+        session.add_user_message(processed_text)
+        self._log.debug("Recorded user message; session_id=%s", session.id)
+
+        return processed_text, tool_outputs
+
+    def _apply_overrides(
+        self,
+        *,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> dict[str, Any]:
+        """Merge provided overrides with current session overrides."""
+        base_overrides = self._current_overrides()
+        overrides = base_overrides.copy()
+
+        if model is not None:
+            overrides["llm.model_name"] = model
+        if temperature is not None:
+            overrides["llm.temperature"] = temperature
+        if max_tokens is not None:
+            overrides["llm.max_tokens"] = max_tokens
+
+        if overrides and overrides != base_overrides:
+            self.config_manager.set_session_overrides(overrides)
+        elif overrides and not base_overrides:
+            self.config_manager.set_session_overrides(overrides)
+
+        return overrides
+
+    def _current_overrides(self) -> dict[str, Any]:
+        """Return a defensive copy of current session overrides."""
+        base = getattr(self.config_manager, "session_overrides", {}) or {}
+
+        if isinstance(base, dict):
+            return base.copy()
+
+        if isinstance(base, Iterable):
+            return dict(base)
+
+        return {}
+
+    def _require_llm_manager(self) -> LLMManager:
+        """Ensure an LLM manager with generation capability is available."""
+        if not self._llm_manager or not hasattr(self._llm_manager, "generate"):
+            raise RuntimeError(
+                "LLM manager is not available or does not support generation"
+            )
+
+        return self._llm_manager
+
+    def _resolve_tool_entry(self, entry: Any) -> tuple[str, Any] | None:
+        """Normalize tool entries from the tool manager iterator."""
+        if isinstance(entry, tuple) and len(entry) == 2:
+            name, tool_obj = entry
+        else:
+            name = getattr(entry, "name", str(entry))
+            tool_obj = entry
+
+        if not hasattr(tool_obj, "description"):
             return None
 
-        return available_tools if available_tools else None
+        return name, tool_obj
+
+    def _build_tool_spec(self, name: str, tool_obj: Any) -> dict[str, Any] | None:
+        """Create the OpenAI function definition for a tool."""
+        try:
+            parameters = self._extract_tool_parameters(tool_obj)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self._log.warning("Failed to extract tool parameters: %s", exc)
+            parameters = {"type": "object", "properties": {}, "required": []}
+
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": tool_obj.description,
+                "parameters": parameters,
+            },
+        }
+
+    def _extract_tool_parameters(self, tool_obj: Any) -> dict[str, Any]:
+        """Extract JSON schema parameters from registered tools."""
+        parameters: dict[str, Any] = {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        }
+
+        schema_sources: list[dict[str, Any]] = []
+
+        if hasattr(tool_obj, "Input"):
+            try:
+                schema = tool_obj.Input.model_json_schema()
+                if isinstance(schema, dict):
+                    schema_sources.append(schema)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                self._log.warning("Failed to derive schema from Input: %s", exc)
+
+        input_schema = getattr(tool_obj, "input_schema", None)
+        if input_schema:
+            try:
+                schema = (
+                    input_schema.schema()
+                    if hasattr(input_schema, "schema")
+                    else input_schema
+                )
+                if isinstance(schema, dict):
+                    schema_sources.append(schema)
+            except Exception as exc:  # pragma: no cover - defensive logging
+                self._log.warning("Failed to derive schema from input_schema: %s", exc)
+
+        for schema in schema_sources:
+            for key in ("properties", "required"):
+                value = schema.get(key)
+                if isinstance(value, dict | list):
+                    parameters[key] = value
+
+        return parameters

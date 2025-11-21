@@ -163,14 +163,20 @@ class LLMResponse:
 class LLMManager:
     """Enhanced LLM manager with provider system integration."""
 
-    def __init__(self, config_manager=None, provider_manager=None):
-        """Initialize the LLM manager with a config manager."""
-        from local_coding_assistant.config import get_config_manager
+    def __init__(self, config_manager, provider_manager=None):
+        """Initialize the LLM manager with a config manager.
+
+        Args:
+            config_manager: An instance of ConfigManager
+            provider_manager: Optional instance of ProviderManager
+        """
+        if config_manager is None:
+            raise ValueError("config_manager is required")
 
         # Import provider classes lazily at runtime to avoid circular imports
         from local_coding_assistant.providers import ProviderManager, ProviderRouter
 
-        self.config_manager = config_manager or get_config_manager()
+        self.config_manager = config_manager
         self.provider_manager = provider_manager or ProviderManager()
         self.router = ProviderRouter(self.config_manager, self.provider_manager)
         self._current_provider = None
@@ -259,8 +265,8 @@ class LLMManager:
         # Apply overrides
         overrides = overrides or {}
         effective_model = model or overrides.get("llm.model_name", None)
-        effective_temperature = overrides.get("llm.temperature", None)
-        effective_max_tokens = overrides.get("llm.max_tokens", None)
+        effective_temperature: float | None = overrides.get("llm.temperature", None)
+        effective_max_tokens: int | None = overrides.get("llm.max_tokens", None)
 
         # First convert the request to a provider request with a default model
         # The actual model will be set after routing

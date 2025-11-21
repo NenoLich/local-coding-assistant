@@ -1,446 +1,1216 @@
-"""Enhanced tool management with proper error handling and logging."""
+"""Enhanced tool management with registry, async, and streaming support.
 
-from __future__ import annotations
+This module provides the ToolManager class which handles tool registration,
+execution, and discovery. It works with the ToolLoader for configuration
+and module loading.
+"""
 
+import asyncio
 import inspect
+import json
+import logging
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import (
+    TYPE_CHECKING,
+    Any,
+)
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ValidationError
+from pydantic.fields import FieldInfo
 
 from local_coding_assistant.core.exceptions import ToolRegistryError
+from local_coding_assistant.core.protocols import IToolManager
 from local_coding_assistant.tools.base import Tool
+from local_coding_assistant.tools.types import (
+    ToolCategory,
+    ToolExecutionRequest,
+    ToolExecutionResponse,
+    ToolInfo,
+    ToolSource,
+)
 from local_coding_assistant.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from local_coding_assistant.core.protocols import IConfigManager
 
 logger = get_logger("tools.tool_manager")
 
 
-class ToolRegistration(BaseModel):
-    name: str = Field(..., description="Unique name for the tool")
-    tool_class: type = Field(..., description="Tool class to register")
-    description: str | None = Field(default=None, description="Tool description")
-    category: str | None = Field(
-        default=None, description="Tool category for organization"
-    )
+class ToolInputTransformer:
+    """Transforms input data to match a tool's expected format.
 
+    This class handles common input transformations to make tool usage more flexible.
+    """
 
-class ToolExecutionRequest(BaseModel):
-    """Model for tool execution requests."""
+    @classmethod
+    def transform(
+        cls,
+        input_data: Any,
+        tool_info: ToolInfo | None = None,
+        tool_instance: Any | None = None,
+    ) -> Any:
+        """Transform input data to match the tool's expected format.
 
-    tool_name: str = Field(..., description="Name of the tool to execute")
-    payload: dict[str, Any] = Field(
-        default_factory=dict, description="Input payload for the tool"
-    )
+        Args:
+            input_data: The input data to transform
+            tool_info: Optional ToolInfo for the tool
+            tool_instance: Optional tool instance for inspection
 
+        Returns:
+            Transformed input data
+        """
+        if input_data is None or not (tool_info or tool_instance):
+            return input_data
 
-class ToolExecutionResponse(BaseModel):
-    """Model for tool execution responses."""
+        # Try to get the input model from the tool instance
+        input_model = None
+        if tool_instance and hasattr(tool_instance, "Input"):
+            input_model = tool_instance.Input
 
-    tool_name: str = Field(..., description="Name of the executed tool")
-    success: bool = Field(..., description="Whether execution was successful")
-    result: dict[str, Any] | None = Field(
-        default=None, description="Tool execution result"
-    )
-    error_message: str | None = Field(
-        default=None, description="Error message if execution failed"
-    )
-    execution_time_ms: float | None = Field(
-        default=None, description="Execution time in milliseconds"
-    )
+        # If we have an input model, use it to guide the transformation
+        if input_model and hasattr(input_model, "model_fields"):
+            return cls._transform_with_model(input_data, input_model)
 
+        # Fall back to tool info if available
+        if (
+            tool_info
+            and hasattr(tool_info, "tool_class")
+            and hasattr(tool_info.tool_class, "Input")
+        ):
+            input_model = tool_info.tool_class.Input
+            if hasattr(input_model, "model_fields"):
+                return cls._transform_with_model(input_data, input_model)
 
-class ToolInfo(BaseModel):
-    """Model for tool information."""
+        return input_data
 
-    name: str = Field(..., description="Tool name")
-    class_name: str = Field(..., description="Tool class name")
-    description: str | None = Field(default=None, description="Tool description")
-    category: str | None = Field(default=None, description="Tool category")
-    has_input_validation: bool = Field(
-        default=False, description="Whether tool has input validation"
-    )
-    has_output_validation: bool = Field(
-        default=False, description="Whether tool has output validation"
-    )
+    @classmethod
+    def _get_multi_value_handler(
+        cls, input_data: Any
+    ) -> Callable[[str], list[Any]] | None:
+        """Get a function to handle multi-value form data if available.
+
+        Returns:
+            A callable that takes a field name and returns a list of values, or None if no
+            suitable handler is found.
+        """
+        if hasattr(input_data, "getall") and callable(input_data.getall):
+            return (
+                lambda key: input_data.getall(key)
+                if hasattr(input_data, "getall")
+                else []
+            )
+        if hasattr(input_data, "getlist") and callable(input_data.getlist):
+            return (
+                lambda key: input_data.getlist(key)
+                if hasattr(input_data, "getlist")
+                else []
+            )
+        return None
+
+    @classmethod
+    def _process_multi_value_field(
+        cls,
+        data: dict[str, Any],
+        field_name: str,
+        field_info: FieldInfo,
+        get_multi_value: Callable[[str], list[Any]] | None,
+    ) -> None:
+        """Process a field that might have multiple values."""
+        if field_name not in data or not isinstance(data[field_name], str):
+            return
+
+        # Get all values for this field (handles multiple parameters with same name)
+        if get_multi_value:
+            values = get_multi_value(field_name)
+        else:
+            values = [data[field_name]]
+
+        if len(values) <= 1:
+            return
+
+        # Convert all values to the appropriate type
+        try:
+            if cls._is_list_or_tuple_field(field_info):
+                data[field_name] = [float(v) for v in values]
+            else:
+                data[field_name] = values[0] if len(values) == 1 else values
+        except (ValueError, TypeError):
+            # If conversion fails, keep the original value
+            pass
+
+    @classmethod
+    def _transform_dict_input(
+        cls, input_data: dict, model_fields: dict[str, FieldInfo]
+    ) -> dict:
+        """Transform dictionary input according to the model."""
+        data = dict(input_data)
+        get_multi_value = cls._get_multi_value_handler(input_data)
+
+        # Process each field in the model
+        for field_name, field_info in model_fields.items():
+            if field_name in data and isinstance(data[field_name], list):
+                # Already in the correct format
+                continue
+            cls._process_multi_value_field(
+                data, field_name, field_info, get_multi_value
+            )
+
+        # Handle positional arguments if present
+        if "args" in data and isinstance(data["args"], list) and data["args"]:
+            return cls._transform_positional_args(data, model_fields)
+
+        return data
+
+    @classmethod
+    def _transform_sequence_input(
+        cls, input_data: list | tuple, model_fields: dict[str, FieldInfo]
+    ) -> dict:
+        """Transform sequence input (list/tuple) into a dictionary."""
+        return cls._transform_positional_args({"args": input_data}, model_fields)
+
+    @classmethod
+    def _transform_with_model(
+        cls, input_data: Any, input_model: type[BaseModel]
+    ) -> Any:
+        """Transform input data using the provided Pydantic model."""
+        model_fields = getattr(input_model, "model_fields", {})
+
+        if isinstance(input_data, dict):
+            return cls._transform_dict_input(input_data, model_fields)
+        if isinstance(input_data, list | tuple):
+            return cls._transform_sequence_input(input_data, model_fields)
+
+        return input_data
+
+    @classmethod
+    def _handle_numbers_field(cls, args: list) -> dict[str, list[float]] | None:
+        """Handle case where tool expects a 'numbers' field with positional args."""
+        try:
+            return {"numbers": [float(arg) for arg in args]}
+        except (ValueError, TypeError):
+            return None
+
+    @classmethod
+    def _handle_single_field(
+        cls, args: list, field_name: str, field_info: FieldInfo
+    ) -> dict[str, Any]:
+        """Handle case where tool has a single field that can accept a list."""
+        # If the field is a list/tuple, pass all args as a list
+        if cls._is_list_or_tuple_field(field_info):
+            return {field_name: list(args)}
+
+        # If there's only one arg, pass it directly
+        if len(args) == 1:
+            return {field_name: args[0]}
+
+        # Otherwise, pass all args as a list (may raise validation error)
+        return {field_name: list(args)}
+
+    @classmethod
+    def _map_args_to_fields(
+        cls, args: list, model_fields: dict[str, FieldInfo]
+    ) -> dict[str, Any]:
+        """Map positional arguments to field names by position."""
+        result = {}
+        for i, (field_name, field_info) in enumerate(model_fields.items()):
+            if i < len(args):
+                result[field_name] = args[i]
+            elif hasattr(field_info, "default") and field_info.default is not None:
+                # For missing args, use default if available
+                result[field_name] = field_info.default
+        return result
+
+    @classmethod
+    def _transform_positional_args(
+        cls, input_data: dict[str, Any], model_fields: dict[str, FieldInfo]
+    ) -> dict[str, Any]:
+        """Transform positional arguments to named fields based on the model."""
+        args = input_data.get("args", [])
+        if not args or not model_fields:
+            return input_data
+
+        # Case 1: Tool expects a 'numbers' field but got positional args
+        if "numbers" in model_fields and cls._is_list_or_tuple_field(
+            model_fields["numbers"]
+        ):
+            if result := cls._handle_numbers_field(args):
+                return result
+
+        # Case 2: Tool has a single field that can accept a list
+        if len(model_fields) == 1:
+            field_name = next(iter(model_fields))
+            return cls._handle_single_field(args, field_name, model_fields[field_name])
+
+        # Case 3: Try to map positional args to field names by position
+        return cls._map_args_to_fields(args, model_fields)
+
+    @staticmethod
+    def _is_list_or_tuple_field(field_info: FieldInfo) -> bool:
+        """Check if a field is a list or tuple type."""
+        if not hasattr(field_info, "annotation"):
+            return False
+
+        annotation = field_info.annotation
+
+        # Handle direct type annotation
+        if annotation in (list, list, tuple, tuple):
+            return True
+
+        # Handle generic types like List[int]
+        if hasattr(annotation, "__origin__"):
+            return annotation.__origin__ in (list, list, tuple, tuple)
+
+        return False
 
 
 @dataclass
-class ToolValidationResult:
-    """Named tuple for the validation result."""
+class ToolRuntime:
+    """Runtime wrapper encapsulating execution and validation behavior for a tool."""
 
+    info: ToolInfo
+    instance: Any
+    kind: str  # "tool", "callable", or "mcp"
+    run_is_async: bool
+    supports_streaming: bool
     has_input_validation: bool
     has_output_validation: bool
 
+    async def execute(self, payload: dict[str, Any]) -> Any:
+        """Execute the tool with the provided payload."""
+        input_data = self._prepare_input(payload)
+        result = await self._invoke_run(input_data)
+        return self._normalize_output(result)
 
-class ToolManager(Iterable[Any]):
-    """Enhanced tool manager with comprehensive logging, error handling, and validation.
-
-    This class provides an improved replacement for ToolRegistry with:
-    - Proper error handling using ToolRegistryError
-    - Comprehensive logging for debugging and monitoring
-    - Pydantic models for type safety
-    - Enhanced tool registration and execution features
-    - Backward compatibility with existing ToolRegistry interface
-    """
-
-    def __init__(self) -> None:
-        """Initialize the tool manager."""
-        self._tools: list[Any] = []
-        self._by_name: dict[str, Any] = {}
-        self._tool_info: dict[str, ToolInfo] = {}
-        self._execution_stats: dict[str, int] = {}
-
-        logger.info("ToolManager initialized")
-
-    def _instantiate_tool(self, tool: Any) -> tuple[Any, str]:
-        """Instantiate tool if it's a class and get its class name.
-
-        Args:
-            tool: Tool class or instance to instantiate.
-
-        Returns:
-            Tuple of (tool_instance, class_name)
-
-        Raises:
-            ToolRegistryError: If instantiation fails.
-        """
-        if isinstance(tool, type):
-            try:
-                return tool(), tool.__name__
-            except Exception as e:
-                raise ToolRegistryError(
-                    f"Failed to instantiate tool class {tool.__name__}: {e}"
-                ) from e
-        return tool, tool.__class__.__name__
-
-    def _get_tool_name(self, tool_instance: Any, class_name: str) -> str:
-        """Extract and validate the tool name.
-
-        Args:
-            tool_instance: The tool instance.
-            class_name: The tool's class name.
-
-        Returns:
-            The tool name.
-
-        Raises:
-            ToolRegistryError: If the name is invalid.
-        """
-        tool_name = (
-            getattr(tool_instance, "name", None)
-            or getattr(tool_instance, "__name__", None)
-            or class_name
-        )
-
-        if not isinstance(tool_name, str):
+    async def stream(self, payload: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+        """Stream results from the tool if supported."""
+        if self.kind != "tool":
             raise ToolRegistryError(
-                f"Tool name must be a string, got {type(tool_name)}"
+                f"Tool '{self.info.name}' does not support streaming operations"
             )
 
-        return tool_name
-
-    def _check_naming_conflicts(self, tool_name: str) -> None:
-        """Check for duplicate tool names.
-
-        Args:
-            tool_name: Name of the tool to check.
-
-        Raises:
-            ToolRegistryError: If a naming conflict is found.
-        """
-        if tool_name in self._by_name:
-            existing_tool = self._by_name[tool_name]
+        if not self.supports_streaming:
             raise ToolRegistryError(
-                f"Tool '{tool_name}' already registered as {existing_tool.__class__.__name__}"
+                f"Tool '{self.info.name}' does not support streaming"
             )
 
-    def _validate_tool_contract(
-        self, tool_instance: Any, tool_name: str
-    ) -> ToolValidationResult:
-        """Validate that the tool follows the expected contract.
+        input_data = self._prepare_input(payload)
+        async for chunk in self._invoke_stream(input_data):
+            yield self._normalize_output(chunk)
 
-        Args:
-            tool_instance: The tool instance to validate.
-            tool_name: Name of the tool for error messages.
-
-        Returns:
-            ToolValidationResult: Named tuple with validation results.
-
-        Raises:
-            ToolRegistryError: If the tool doesn't meet the contract requirements.
-        """
-        # Early exit for non-Tool callables
-        if not isinstance(tool_instance, Tool):
-            if not callable(tool_instance):
-                raise ToolRegistryError(f"Tool '{tool_name}' is not callable")
-            return ToolValidationResult(False, False)
-
-        # Check for required 'run' method
-        if not hasattr(tool_instance, "run") or not callable(tool_instance.run):
-            raise ToolRegistryError(f"Tool '{tool_name}' missing required 'run' method")
-
-        # Check if 'run' is implemented (not abstract)
-        try:
-            if "raise NotImplementedError" in inspect.getsource(tool_instance.run):
-                raise ToolRegistryError(
-                    f"Tool '{tool_name}' has not implemented the required 'run' method"
-                )
-        except (OSError, TypeError) as e:
-            logger.warning(
-                "Could not inspect source for tool '%s'. Skipping implementation check. Error: %s",
-                tool_name,
-                e,
-            )
-
-        # Check for Input/Output validation
-        input_validation = hasattr(tool_instance, "Input") and isinstance(
-            tool_instance.Input, type
-        )
-        output_validation = hasattr(tool_instance, "Output") and isinstance(
-            tool_instance.Output, type
-        )
-
-        return ToolValidationResult(input_validation, output_validation)
-
-    def _create_tool_info(
-        self,
-        tool_instance: Any,
-        tool_name: str,
-        class_name: str,
-        category: str | None,
-        input_validation: bool,
-        output_validation: bool,
-    ) -> None:
-        """Create and store tool information.
-
-        Args:
-            tool_instance: The tool instance.
-            tool_name: Name of the tool.
-            class_name: Class name of the tool.
-            category: Optional category for the tool.
-            input_validation: Whether the tool has input validation.
-            output_validation: Whether the tool has output validation.
-        """
-        tool_description = getattr(tool_instance, "description", None)
-
-        tool_info = ToolInfo(
-            name=tool_name,
-            class_name=class_name,
-            description=tool_description,
-            category=category,
-            has_input_validation=input_validation,
-            has_output_validation=output_validation,
-        )
-        self._tool_info[tool_name] = tool_info
-        logger.info(
-            f"Registered tool '{tool_name}' ({class_name}) in category '{category or 'default'}'"
-        )
-
-    def register_tool(self, tool: Any, category: str | None = None) -> None:
-        """Register a tool with enhanced validation and logging.
-
-        Args:
-            tool: Tool instance or class to register. If class, will be instantiated.
-            category: Optional category for tool organization.
-
-        Raises:
-            ToolRegistryError: If registration fails due to validation or naming conflicts.
-        """
-        try:
-            # Instantiate tool if it's a class
-            tool_instance, class_name = self._instantiate_tool(tool)
-
-            # Get and validate tool name
-            tool_name = self._get_tool_name(tool_instance, class_name)
-
-            # Check for naming conflicts
-            self._check_naming_conflicts(tool_name)
-
-            # Validate tool contract and get validation info
-            validation_result = self._validate_tool_contract(tool_instance, tool_name)
-
-            # Register the tool
-            self._tools.append(tool_instance)
-            self._by_name[tool_name] = tool_instance
-
-            # Create and store tool information
-            self._create_tool_info(
-                tool_instance=tool_instance,
-                tool_name=tool_name,
-                class_name=class_name,
-                category=category,
-                input_validation=validation_result.has_input_validation,
-                output_validation=validation_result.has_output_validation,
-            )
-
-        except ToolRegistryError as e:
-            logger.error(f"Tool registration failed: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error during tool registration: {e}")
-            raise ToolRegistryError(f"Tool registration failed: {e}") from e
-
-    def run_tool(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Execute a tool with enhanced error handling and performance tracking.
-
-        Args:
-            tool_name: Name of the tool to execute.
-            payload: Input payload for the tool.
-
-        Returns:
-            Tool execution result.
-
-        Raises:
-            ToolRegistryError: If tool execution fails.
-        """
-        start_time = time.time()
-        self._execution_stats[tool_name] = self._execution_stats.get(tool_name, 0) + 1
-
-        try:
-            logger.debug(f"Executing tool '{tool_name}' with payload: {payload}")
-            tool = self._get_tool(tool_name)
-            input_model = self._prepare_input(tool, tool_name, payload)
-            result = self._execute_tool(tool, tool_name, input_model)
-            validated_result = self._validate_output(tool, tool_name, result)
-
-            execution_time = (time.time() - start_time) * 1000
-            logger.info(
-                f"Tool '{tool_name}' executed successfully in {execution_time:.2f} ms"
-            )
-            return validated_result
-
-        except ToolRegistryError:
-            raise
-        except Exception as e:
-            execution_time = (time.time() - start_time) * 1000
-            error_msg = f"Unexpected error executing tool '{tool_name}' after {execution_time:.2f} ms: {e}"
-            logger.exception(error_msg)
-            raise ToolRegistryError(error_msg) from e
-
-    def _get_tool(self, tool_name: str) -> Any:
-        """Get tool by name with validation."""
-        tool = self.get(tool_name)
-        if tool is None:
-            raise ToolRegistryError(f"Unknown tool: {tool_name}")
-        return tool
-
-    def _prepare_input(self, tool: Any, tool_name: str, payload: Any) -> Any:
-        """Prepare and validate input for the tool."""
-        if not (
-            isinstance(tool, Tool) and hasattr(tool, "Input") and tool.Input is not None
-        ):
+    def _transform_payload(self, payload: Any) -> Any:
+        """Transform input payload to match the expected format."""
+        if self.kind != "tool" or not self.has_input_validation:
             return payload
 
         try:
-            if isinstance(payload, tool.Input):
-                return payload
-            if isinstance(payload, dict):
-                return tool.Input.model_validate(payload)
-            if hasattr(payload, "model_dump"):
-                return tool.Input.model_validate(payload.model_dump())
-            if hasattr(payload, "dict"):
-                return tool.Input.model_validate(payload.dict())
-            return tool.Input.model_validate_json(payload)
-        except (ValidationError, ValueError, AttributeError) as e:
-            raise ToolRegistryError(f"Invalid input for tool '{tool_name}': {e}") from e
-
-    def _execute_tool(self, tool: Any, tool_name: str, input_model: Any) -> Any:
-        """Execute the tool with the prepared input."""
-        try:
-            if isinstance(tool, Tool):
-                return tool.run(input_model)
-            if callable(tool):
-                return tool(input_model)
-            raise ToolRegistryError(f"Tool '{tool_name}' is not callable")
+            return ToolInputTransformer.transform(
+                payload, tool_info=self.info, tool_instance=self.instance
+            )
         except Exception as e:
-            raise ToolRegistryError(f"Error executing tool '{tool_name}': {e}") from e
+            logger.warning(
+                "Error transforming input for tool '%s': %s",
+                self.info.name,
+                str(e),
+                exc_info=logger.isEnabledFor(logging.DEBUG),
+            )
+            return payload
 
-    def _validate_output(self, tool: Any, tool_name: str, result: Any) -> Any:
-        """Validate and process the tool's output."""
-        if not (
-            isinstance(tool, Tool)
-            and hasattr(tool, "Output")
-            and tool.Output is not None
-        ):
-            return result
+    def _validate_payload_against_model(
+        self, payload: Any, input_model: type[BaseModel]
+    ) -> Any:
+        """Validate and convert payload against the input model."""
+        if not isinstance(input_model, type):
+            raise ValueError(
+                f"Expected a class/type for input_model, got {type(input_model).__name__}"
+            )
+
+        # If payload is already an instance of the model, return as-is
+        if isinstance(payload, input_model):
+            return payload
+
+        # Convert payload to dict if it's not already
+        if not isinstance(payload, dict):
+            if hasattr(payload, "model_dump"):
+                payload = payload.model_dump()
+            elif hasattr(payload, "dict"):
+                payload = payload.dict()
+            elif isinstance(payload, str | bytes | bytearray):
+                try:
+                    payload = json.loads(payload)
+                except json.JSONDecodeError as err:
+                    raise ValueError(
+                        "Could not parse string/bytes payload as JSON"
+                    ) from err
+
+        # Use Pydantic's model_validate
+        return input_model.model_validate(payload)
+
+    def _format_validation_error(self, exc: ValidationError) -> str:
+        """Format validation error messages into a user-friendly string."""
+        errors = []
+        for error in exc.errors():
+            loc = ".".join(str(loc_part) for loc_part in error["loc"])
+            msg = error["msg"]
+            errors.append(f"{loc}: {msg}")
+        return "\n  - " + "\n  - ".join(errors)
+
+    def _prepare_input(self, payload: Any) -> Any:
+        """Validate and transform tool input."""
+        # Early return for non-tools or tools without input validation
+        if self.kind != "tool" or not self.has_input_validation:
+            return payload
+
+        # Transform the input to match the expected format
+        payload = self._transform_payload(payload)
+
+        # Get the input model if available
+        input_model = getattr(self.instance, "Input", None)
+        if input_model is None:
+            return payload
+
+        # Validate and convert the payload
+        try:
+            return self._validate_payload_against_model(payload, input_model)
+        except ValidationError as exc:
+            error_msg = self._format_validation_error(exc)
+            raise ToolRegistryError(
+                f"Invalid input for tool '{self.info.name}':{error_msg}"
+            ) from exc
+        except (ValueError, AttributeError) as exc:
+            raise ToolRegistryError(
+                f"Invalid input for tool '{self.info.name}': {exc}"
+            ) from exc
+
+    async def _invoke_run(self, input_data: Any) -> Any:
+        """Invoke the underlying tool execution."""
+        if self.kind == "tool":
+            runner = getattr(self.instance, "run", None)
+            if runner is None:
+                raise ToolRegistryError(
+                    f"Tool '{self.info.name}' is missing a run implementation"
+                )
+
+            if self.run_is_async:
+                return await runner(input_data)
+
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, runner, input_data)
+
+        if self.kind == "mcp":
+            if not isinstance(input_data, dict):
+                raise ToolRegistryError(
+                    f"MCP tool '{self.info.name}' expects dictionary payloads"
+                )
+
+            runner = getattr(self.instance, "execute", None)
+            if runner is None:
+                raise ToolRegistryError(
+                    f"MCP tool '{self.info.name}' is missing an execute implementation"
+                )
+
+            if asyncio.iscoroutinefunction(runner):
+                return await runner(**input_data)
+
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, runner, input_data)
+
+        # Fallback for plain callables
+        runner = self.instance
+        if asyncio.iscoroutinefunction(runner):
+            return await runner(input_data)
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, runner, input_data)
+
+    async def _invoke_stream(self, input_data: Any) -> AsyncIterator[Any]:
+        """Invoke the streaming interface on the tool."""
+        stream_method = getattr(self.instance, "stream", None)
+        if stream_method is None:
+            raise ToolRegistryError(
+                f"Tool '{self.info.name}' does not implement streaming"
+            )
+
+        stream_obj = stream_method(input_data)
+
+        if inspect.isawaitable(stream_obj) and not inspect.isasyncgen(stream_obj):
+            stream_obj = await stream_obj
+
+        if hasattr(stream_obj, "__aiter__"):
+            async for chunk in stream_obj:
+                yield chunk
+            return
+
+        if inspect.isasyncgen(stream_obj):
+            async for chunk in stream_obj:
+                yield chunk
+            return
+
+        raise ToolRegistryError(
+            f"Streaming tool '{self.info.name}' must return an async iterator"
+        )
+
+    def _convert_to_dict(self, obj: Any) -> dict:
+        """Convert an object to a dictionary using the appropriate method.
+
+        Args:
+            obj: The object to convert to a dictionary
+
+        Returns:
+            The object converted to a dictionary
+        """
+        if hasattr(obj, "model_dump"):
+            return obj.model_dump()
+        if hasattr(obj, "dict"):
+            return obj.dict()
+        return self._coerce_to_serializable(obj)
+
+    def _validate_with_model(self, output_model: type[BaseModel], result: Any) -> Any:
+        """Validate the result against the output model.
+
+        Args:
+            output_model: The Pydantic model to validate against
+            result: The result to validate
+
+        Returns:
+            The validated result as a dictionary
+        """
+        if result is None:
+            validated = output_model()
+        elif isinstance(result, dict):
+            validated = output_model.model_validate(result)
+        elif hasattr(result, "model_dump"):
+            validated = output_model.model_validate(result.model_dump())
+        elif hasattr(result, "dict"):
+            validated = output_model.model_validate(result.dict())
+        else:
+            # Last resort - try to convert to dict
+            try:
+                validated = output_model.model_validate(dict(result))
+            except (TypeError, ValueError):
+                # If we can't convert to dict, try to create with the raw value
+                validated = output_model.model_validate({"result": result})
+
+        return self._convert_to_dict(validated)
+
+    def _normalize_output(self, result: Any) -> Any:
+        """Normalize tool outputs to dictionaries when appropriate.
+
+        Args:
+            result: The raw result from the tool execution
+
+        Returns:
+            The normalized result (usually a dictionary for Pydantic models)
+
+        Raises:
+            ToolRegistryError: If output validation fails
+        """
+        # If we don't have output validation, or it's not a tool, just make it serializable
+        if self.kind != "tool" or not self.has_output_validation:
+            return self._coerce_to_serializable(result)
+
+        # Get the output model from the tool
+        output_model = getattr(self.instance, "Output", None)
+        if output_model is None:
+            return self._coerce_to_serializable(result)
+
+        # Handle case where result is already the correct model
+        if isinstance(result, output_model):
+            return self._convert_to_dict(result)
 
         try:
-            if isinstance(result, tool.Output):
-                return result.model_dump()
+            return self._validate_with_model(output_model, result)
+        except (ValidationError, ValueError, TypeError) as exc:
+            logger.error(
+                "Output validation failed for tool '%s': %s",
+                self.info.name,
+                str(exc),
+                exc_info=logger.isEnabledFor(logging.DEBUG),
+            )
+            # Return the original result if validation fails
+            return self._coerce_to_serializable(result)
 
-            # Handle callable results
-            if callable(result):
-                result = result()
+    @staticmethod
+    def _coerce_to_serializable(result: Any) -> Any:
+        if hasattr(result, "model_dump"):
+            return result.model_dump()
+        if hasattr(result, "dict"):
+            return result.dict()
+        return result
 
-            # Convert result to output model
-            if isinstance(result, dict):
-                output_model = tool.Output.model_validate(result)
-            elif hasattr(result, "model_dump"):
-                output_model = tool.Output.model_validate(result.model_dump())
-            elif hasattr(result, "dict"):
-                output_model = tool.Output.model_validate(result.dict())
+
+class ToolManager(IToolManager, Iterable[Any]):
+    """Enhanced tool manager with comprehensive logging, error handling, and validation.
+
+    This class provides:
+    - Automatic tool discovery via registry
+    - Async/sync execution support
+    - Permission checking
+    - Backward compatibility
+    """
+
+    def __init__(
+        self,
+        config_manager: "IConfigManager",
+        auto_load: bool = True,
+        *,
+        auto_load_registry: bool | None = None,
+    ) -> None:
+        """Initialize the tool manager.
+
+        Args:
+            config_manager: IConfigManager instance for tool configurations.
+                If not provided, a default one will be created.
+            auto_load: Whether to automatically load tools
+            auto_load_registry: Legacy flag for tests/backwards compatibility
+        """
+        self._tools: dict[str, ToolInfo] = {}
+        self._runtimes: dict[str, ToolRuntime] = {}
+        self._execution_stats: dict[str, dict[str, Any]] = {}
+        self._config_manager: IConfigManager = config_manager
+
+        if auto_load_registry is not None:
+            auto_load = auto_load_registry
+
+        if auto_load:
+            self.load_tools()
+
+        logger.info("ToolManager initialized with %d tools", len(self._tools))
+
+    def _run_sync(self, awaitable: Awaitable[Any]) -> Any:
+        """Safely execute an awaitable from synchronous contexts.
+
+        Args:
+            awaitable: An awaitable object to execute
+
+        Returns:
+            The result of the awaitable
+
+        Raises:
+            RuntimeError: If called from within a running event loop
+        """
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+
+        if running_loop is not None:
+            raise RuntimeError(
+                "Attempted synchronous execution while an event loop is running. "
+                "Use the asynchronous interface instead."
+            )
+
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+
+            if inspect.iscoroutine(awaitable):
+                coroutine = awaitable
             else:
-                output_model = tool.Output.model_validate(dict(result))
 
-            return output_model.model_dump()
+                async def run_awaitable() -> Any:
+                    return await awaitable
 
-        except (ValidationError, ValueError, TypeError) as e:
-            raise ToolRegistryError(
-                f"Invalid output from tool '{tool_name}': {e}"
-            ) from e
+                coroutine = run_awaitable()
+
+            return loop.run_until_complete(coroutine)
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
+
+    def _create_mcp_tool_executor(self, tool_info: ToolInfo) -> Any:
+        """Create a dummy MCP tool executor.
+
+        Args:
+            tool_info: The MCP tool's information
+
+        Returns:
+            An instance of MCPToolExecutor
+
+        Note:
+            This is a temporary implementation that will be replaced with actual MCP client integration.
+        """
+
+        class MCPToolExecutor:
+            def __init__(self, _tool_info: ToolInfo):
+                self.tool_info = _tool_info
+                self.endpoint = _tool_info.endpoint
+                self.provider = _tool_info.provider
+
+            async def execute(self, **kwargs) -> dict[str, Any]:
+                """Execute the MCP tool with the given arguments."""
+                # This is a dummy implementation that will be replaced with actual MCP client calls
+                logger.info(
+                    "[MCP Tool] Executing %s via %s at %s with args: %s",
+                    self.tool_info.name,
+                    self.provider,
+                    self.endpoint,
+                    kwargs,
+                )
+
+                # Simulate network delay
+                await asyncio.sleep(0.5)
+
+                # Return a dummy response
+                return {
+                    "status": "success",
+                    "result": f"MCP tool '{self.tool_info.name}' executed successfully",
+                    "provider": self.provider,
+                    "endpoint": self.endpoint,
+                    "arguments": kwargs,
+                }
+
+        return MCPToolExecutor(tool_info)
+
+    def load_tools(self) -> None:
+        """Load tools using ConfigManager.
+
+        This will:
+        1. Clear any existing tool instances and stats
+        2. Get the latest tool configurations from ConfigManager
+        3. Initialize tool instances, including MCP tools
+
+        Raises:
+            RuntimeError: If there's an error loading tools
+        """
+        self._tools.clear()
+        self._runtimes.clear()
+        self._execution_stats.clear()
+
+        try:
+            # Get tool configs from ConfigManager
+            tool_configs = self._config_manager.get_tools()
+            logger.info("Loaded %d tool configurations", len(tool_configs))
+
+            # Initialize tool instances
+            for tool_id, tool_config in tool_configs.items():
+                try:
+                    # Convert ToolConfig to ToolInfo for runtime use
+                    if hasattr(tool_config, "to_tool_info"):
+                        tool_info = tool_config.to_tool_info()
+                    else:
+                        raise ToolRegistryError(
+                            f"Failed to load tool '{tool_id}': ToolConfig does not have a 'to_tool_info' method"
+                        )
+
+                    # Always store the tool info, even for disabled or unavailable tools
+                    self._tools[tool_id] = tool_info
+
+                    # Skip instance creation for disabled tools
+                    if not tool_config.enabled:
+                        logger.debug(
+                            "Skipping instance creation for disabled tool: %s", tool_id
+                        )
+                        self._execution_stats[tool_id] = self._create_stats_bucket()
+                        continue
+
+                    # Skip instance creation for unavailable tools
+                    if not tool_config.available:
+                        logger.debug(
+                            "Skipping instance creation for unavailable tool: %s",
+                            tool_id,
+                        )
+                        self._execution_stats[tool_id] = self._create_stats_bucket()
+                        continue
+
+                    runtime = self._build_runtime(tool_id, tool_info)
+                    self._runtimes[tool_id] = runtime
+                    self._execution_stats[tool_id] = self._create_stats_bucket()
+                    logger.debug("Successfully initialized tool runtime: %s", tool_id)
+
+                except Exception as e:
+                    logger.error(
+                        "Failed to initialize tool %s: %s",
+                        tool_id,
+                        str(e),
+                        exc_info=True,
+                    )
+
+        except Exception as e:
+            logger.error("Error loading tools: %s", str(e), exc_info=True)
+            raise RuntimeError(f"Failed to load tools: {e}") from e
+
+    def reload_tools(self) -> None:
+        """Reload tools from configuration files.
+
+        This will:
+        1. Tell ConfigManager to reload tool configurations
+        2. Re-initialize all tool instances
+
+        Raises:
+            RuntimeError: If there's an error reloading tools
+        """
+        try:
+            # Reload tools through ConfigManager
+            self._config_manager.reload_tools()
+
+            # Re-initialize tools
+            self.load_tools()
+
+            logger.info("Successfully reloaded %d tools", len(self._tools))
+
+        except Exception as e:
+            logger.error("Error reloading tools: %s", str(e), exc_info=True)
+            raise RuntimeError(f"Failed to reload tools: {e}") from e
+
+    # Tool loading methods have been moved to ToolLoader class
+
+    def __iter__(self) -> Iterator[tuple[str, ToolInfo]]:
+        """Iterate over registered tools.
+
+        Yields:
+            Tuples of (tool_name, tool_info) for each registered tool
+        """
+        yield from self._tools.items()
+
+    def __len__(self) -> int:
+        """Return the number of registered tools.
+
+        Returns:
+            Number of registered tools
+        """
+        return len(self._tools)
+
+    def invoke(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Legacy method for backward compatibility. Same as run_tool.
+
+        Args:
+            tool_name: Name of the tool to execute
+            payload: Input parameters for the tool
+
+        Returns:
+            The tool's execution result
+
+        Raises:
+            ToolRegistryError: If tool execution fails
+        """
+        return self.run_tool(tool_name, payload)
+
+    def execute(self, request: ToolExecutionRequest) -> ToolExecutionResponse:
+        """Execute a tool using a ToolExecutionRequest and return ToolExecutionResponse.
+
+        Args:
+            request: ToolExecutionRequest containing tool name and payload.
+
+        Returns:
+            ToolExecutionResponse with execution results.
+        """
+        tool_name = request.tool_name
+        start_time = time.perf_counter()
+
+        try:
+            runtime = self._get_runtime(tool_name)
+            result = self._run_sync(runtime.execute(request.payload))
+            execution_time_ms = (time.perf_counter() - start_time) * 1000
+            self._record_success(tool_name, execution_time_ms / 1000.0)
+
+            return ToolExecutionResponse(
+                success=True,
+                result=result,
+                tool_name=tool_name,
+                execution_time_ms=execution_time_ms,
+            )
+        except Exception as exc:
+            execution_time_ms = (time.perf_counter() - start_time) * 1000
+            self._record_error(tool_name, execution_time_ms / 1000.0, exc)
+            error_msg = f"Error executing tool '{tool_name}': {exc}"
+            logger.exception(error_msg)
+
+            return ToolExecutionResponse(
+                success=False,
+                tool_name=tool_name,
+                error_message=error_msg,
+                execution_time_ms=execution_time_ms,
+            )
 
     def get_tool_info(self, tool_name: str) -> ToolInfo | None:
         """Get detailed information about a registered tool.
 
         Args:
-            tool_name: Name of the tool.
+            tool_name: Name of the tool to get info for.
 
         Returns:
             ToolInfo object with tool details, or None if not found.
         """
-        return self._tool_info.get(tool_name)
+        return self._tools.get(tool_name)
 
-    def list_tools(self, category: str | None = None) -> list[ToolInfo]:
+    def list_tools(self, category: str | ToolCategory | None = None) -> list[ToolInfo]:
         """List all registered tools, optionally filtered by category.
 
         Args:
-            category: Optional category filter.
+            category: Optional category to filter tools by (can be string or ToolCategory).
+                     If the category doesn't exist, returns an empty list.
 
         Returns:
             List of ToolInfo objects.
         """
         if category is None:
-            return list(self._tool_info.values())
+            return list(self._tools.values())
 
-        return [info for info in self._tool_info.values() if info.category == category]
+        # Convert string category to ToolCategory if needed
+        if isinstance(category, str):
+            try:
+                category = ToolCategory(category)
+            except ValueError:
+                # For unknown categories, return an empty list
+                return []
 
-    def get_execution_stats(self) -> dict[str, int]:
-        """Get execution statistics for all tools.
+        return [info for info in self._tools.values() if info.category == category]
 
-        Returns:
-            Dictionary mapping tool names to execution counts.
-        """
+    def get_execution_stats(self) -> dict[str, dict[str, Any]]:
+        """Get execution statistics for all tools."""
         return self._execution_stats.copy()
 
-    # Backward compatibility methods (matching ToolRegistry interface)
-    def register(self, tool: Any) -> None:
-        """Legacy method for backward compatibility."""
-        self.register_tool(tool)
+    def run_tool(
+        self,
+        tool_name: str,
+        parameters: dict[str, Any],
+        **kwargs: Any,
+    ) -> Any:
+        """Run a tool with the given parameters.
 
-    def get(self, name: str) -> Any | None:
-        """Get a tool by name."""
-        return self._by_name.get(name)
+        Args:
+            tool_name: Name of the tool to run
+            parameters: Parameters to pass to the tool
+            **kwargs: Additional keyword arguments
 
-    def invoke(self, name: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Legacy method for backward compatibility."""
-        return self.run_tool(name, payload)
+        Returns:
+            The result of the tool execution
 
-    def __iter__(self) -> Iterator[Any]:
-        """Iterate over registered tools."""
-        return iter(self._tools)
+        Raises:
+            ToolRegistryError: If the tool is not found, not enabled, not available, or execution fails
+        """
+        return self._run_sync(self.run_tool_async(tool_name, parameters, **kwargs))
 
-    def __len__(self) -> int:
-        """Return number of registered tools."""
-        return len(self._tools)
+    async def run_tool_async(
+        self,
+        tool_name: str,
+        parameters: dict[str, Any],
+        **kwargs: Any,
+    ) -> Any:
+        """Run a tool asynchronously with the given parameters.
+
+        Args:
+            tool_name: Name of the tool to run
+            parameters: Parameters to pass to the tool
+            **kwargs: Additional keyword arguments
+
+        Returns:
+            The result of the tool execution
+
+        Raises:
+            ToolRegistryError: If the tool is not found, not enabled, not available, or execution fails
+        """
+        runtime = self._get_runtime(tool_name)
+
+        start_time = time.perf_counter()
+        try:
+            result = await runtime.execute(parameters)
+            execution_time = time.perf_counter() - start_time
+            self._record_success(tool_name, execution_time)
+            return result
+        except Exception as exc:
+            execution_time = time.perf_counter() - start_time
+            self._record_error(tool_name, execution_time, exc)
+            raise ToolRegistryError(
+                f"Error executing tool '{tool_name}': {exc}"
+            ) from exc
+
+    def _create_stats_bucket(self) -> dict[str, Any]:
+        return {
+            "call_count": 0,
+            "error_count": 0,
+            "last_called": None,
+            "average_duration": 0.0,
+            "last_error": None,
+            "last_error_time": None,
+        }
+
+    def _ensure_stats_bucket(self, tool_name: str) -> dict[str, Any]:
+        return self._execution_stats.setdefault(tool_name, self._create_stats_bucket())
+
+    def _record_invocation(self, stats: dict[str, Any], duration_sec: float) -> None:
+        stats["call_count"] += 1
+        stats["last_called"] = time.time()
+        stats["average_duration"] = (
+            duration_sec
+            if stats["average_duration"] == 0.0
+            else 0.8 * stats["average_duration"] + 0.2 * duration_sec
+        )
+
+    def _record_success(self, tool_name: str, duration_sec: float) -> None:
+        stats = self._ensure_stats_bucket(tool_name)
+        self._record_invocation(stats, duration_sec)
+
+    def _record_error(
+        self, tool_name: str, duration_sec: float, error: Exception
+    ) -> None:
+        stats = self._ensure_stats_bucket(tool_name)
+        self._record_invocation(stats, duration_sec)
+        stats["error_count"] += 1
+        stats["last_error"] = str(error)
+        stats["last_error_time"] = time.time()
+
+        logger.error(
+            "Error in tool '%s': %s",
+            tool_name,
+            str(error),
+            exc_info=logger.isEnabledFor(logging.DEBUG),
+        )
+
+    def _build_runtime(self, tool_id: str, tool_info: "ToolInfo") -> "ToolRuntime":
+        """Build a ToolRuntime instance from a tool configuration.
+
+        Args:
+            tool_id: Unique identifier for the tool
+            tool_info: Tool information
+
+        Returns:
+            A configured ToolRuntime instance
+
+        Raises:
+            ToolRegistryError: If there's an error building the runtime
+        """
+        try:
+            # Determine the tool kind based on source
+            if tool_info.source == ToolSource.MCP:
+                tool_instance = self._create_mcp_tool_executor(tool_info)
+                kind = "mcp"
+            else:
+                # The tool class should already be imported by ToolLoader
+                if not hasattr(tool_info, "tool_class") or tool_info.tool_class is None:
+                    raise ToolRegistryError(
+                        f"Tool '{tool_id}' is missing tool class. "
+                        "Ensure ToolLoader is properly loading the tool class."
+                    )
+
+                try:
+                    tool_instance = tool_info.tool_class()
+                    kind = "tool"
+                except Exception as e:
+                    logger.error(
+                        "Failed to instantiate tool class for '%s': %s",
+                        tool_id,
+                        str(e),
+                        exc_info=logger.isEnabledFor(logging.DEBUG),
+                    )
+                    raise ToolRegistryError(
+                        f"Failed to instantiate tool '{tool_id}': {e!s}"
+                    ) from e
+
+            # Use the pre-computed values from config
+            run_is_async = tool_info.is_async
+            supports_streaming = tool_info.supports_streaming
+
+            # Check for input/output validation models
+            has_input_validation = (
+                hasattr(tool_instance, "Input")
+                and issubclass(tool_instance.Input, BaseModel)
+                if hasattr(tool_instance, "Input")
+                else False
+            )
+
+            has_output_validation = (
+                hasattr(tool_instance, "Output")
+                and issubclass(tool_instance.Output, BaseModel)
+                if hasattr(tool_instance, "Output")
+                else False
+            )
+
+            # Create and return the runtime
+            return ToolRuntime(
+                info=tool_info,
+                instance=tool_instance,
+                kind=kind,
+                run_is_async=run_is_async,
+                supports_streaming=supports_streaming,
+                has_input_validation=has_input_validation,
+                has_output_validation=has_output_validation,
+            )
+
+        except Exception as e:
+            logger.error(
+                "Error building runtime for tool '%s': %s",
+                tool_id,
+                str(e),
+                exc_info=True,
+            )
+            raise ToolRegistryError(
+                f"Failed to build runtime for tool '{tool_id}': {e!s}"
+            ) from e
+
+    def _runtime_from_instance(
+        self, tool_info: "ToolInfo", tool_instance: Any
+    ) -> "ToolRuntime":
+        """Create a ToolRuntime from an existing tool instance.
+
+        Args:
+            tool_info: Tool information
+            tool_instance: The tool instance
+
+        Returns:
+            A configured ToolRuntime instance
+        """
+        # Determine if the tool has async run method
+        run_method = getattr(tool_instance, "run", None)
+        run_is_async = run_method is not None and inspect.iscoroutinefunction(
+            run_method
+        )
+
+        # Check if tool supports streaming
+        stream_method = getattr(tool_instance, "stream", None)
+        supports_streaming = stream_method is not None and (
+            inspect.iscoroutinefunction(stream_method)
+            or inspect.isasyncgenfunction(stream_method)
+        )
+
+        # Check for input/output validation models
+        has_input_validation = (
+            hasattr(tool_instance, "Input")
+            and issubclass(tool_instance.Input, BaseModel)
+            if hasattr(tool_instance, "Input")
+            else False
+        )
+
+        has_output_validation = (
+            hasattr(tool_instance, "Output")
+            and issubclass(tool_instance.Output, BaseModel)
+            if hasattr(tool_instance, "Output")
+            else False
+        )
+
+        # Determine the kind of tool
+        kind = "mcp" if tool_info.source == ToolSource.MCP else "tool"
+
+        return ToolRuntime(
+            info=tool_info,
+            instance=tool_instance,
+            kind=kind,
+            run_is_async=run_is_async,
+            supports_streaming=supports_streaming,
+            has_input_validation=has_input_validation,
+            has_output_validation=has_output_validation,
+        )
+
+    def _get_runtime(self, tool_name: str) -> ToolRuntime:
+        """Get the runtime instance for a tool.
+
+        Args:
+            tool_name: Name of the tool to get runtime for
+
+        Returns:
+            The ToolRuntime instance for the tool
+
+        Raises:
+            ToolRegistryError: If the tool is not found or not available
+        """
+        if tool_name not in self._runtimes:
+            raise ToolRegistryError(f"Tool '{tool_name}' not found")
+
+        runtime = self._runtimes[tool_name]
+
+        # Check if tool is enabled and available
+        tool_info = self._tools.get(tool_name)
+        if tool_info and not tool_info.enabled:
+            raise ToolRegistryError(f"Tool '{tool_name}' is disabled")
+
+        if tool_info and not tool_info.available:
+            raise ToolRegistryError(f"Tool '{tool_name}' is not available")
+
+        return runtime
+
+    def get_tool(self, tool_name: str) -> Tool:
+        """Get a tool instance by name."""
+        runtime = self._get_runtime(tool_name)
+        return runtime.instance
+
+    async def arun_tool(
+        self, tool_name: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Asynchronously execute a tool.
+
+        Args:
+            tool_name: Name of the tool to execute
+            payload: Input parameters for the tool
+
+        Returns:
+            Tool execution result
+
+        Raises:
+            ToolRegistryError: If tool execution fails or tool is not async
+        """
+        start_time = time.time()
+
+        try:
+            runtime = self._get_runtime(tool_name)
+
+            if runtime.supports_streaming:
+                raise ToolRegistryError(
+                    f"Tool '{tool_name}' supports streaming. Use stream_tool() instead."
+                )
+
+            logger.info("Executing async tool: %s", tool_name)
+            result = await runtime.execute(payload)
+
+            # Record success with execution time in ms
+            execution_time = (time.time() - start_time) * 1000
+            self._record_success(tool_name, execution_time)
+            logger.info("Async tool '%s' executed in %.2fms", tool_name, execution_time)
+
+            return result if result is not None else {}
+
+        except Exception as e:
+            execution_time = (time.time() - start_time) * 1000
+            self._record_error(tool_name, execution_time, e)
+            error_msg = f"Error executing async tool '{tool_name}': {e!s}"
+            logger.exception(error_msg)
+            raise ToolRegistryError(error_msg) from e
+
+    async def stream_tool(
+        self, tool_name: str, payload: dict[str, Any]
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream results from a tool that supports streaming.
+
+        Args:
+            tool_name: Name of the tool to execute
+            payload: Input parameters for the tool
+
+        Yields:
+            Chunks of tool output
+
+        Raises:
+            ToolRegistryError: If tool execution fails or tool doesn't support streaming
+        """
+        start_time = time.time()
+
+        try:
+            runtime = self._get_runtime(tool_name)
+
+            if not runtime.supports_streaming:
+                raise ToolRegistryError(
+                    f"Tool '{tool_name}' does not support streaming"
+                )
+
+            if not runtime.run_is_async:
+                raise ToolRegistryError(f"Streaming tool '{tool_name}' must be async")
+
+            logger.info("Starting stream from tool: %s", tool_name)
+
+            # Stream chunks using the runtime
+            async for chunk in runtime.stream(payload):
+                yield chunk
+
+            # Record success with execution time in ms
+            execution_time = (time.time() - start_time) * 1000
+            self._record_success(tool_name, execution_time)
+            logger.info(
+                "Streaming tool '%s' completed in %.2fms", tool_name, execution_time
+            )
+
+        except Exception as e:
+            execution_time = (time.time() - start_time) * 1000
+            self._record_error(tool_name, execution_time, e)
+            error_msg = f"Error streaming from tool '{tool_name}': {e!s}"
+            logger.exception(error_msg)
+            raise ToolRegistryError(error_msg) from e

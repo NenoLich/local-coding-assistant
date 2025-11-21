@@ -4,7 +4,6 @@
 import os
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -87,12 +86,12 @@ def test_bootstrap_integration():
         # Check that configuration loaded properly
         runtime = ctx.get("runtime")
         assert runtime is not None
-        
+
         # Access config through the config_manager
         config = runtime.config_manager.resolve()
         print(f"✓ Runtime manager created with config: {type(config)}")
         assert config is not None
-        
+
         return True
 
     except Exception as e:

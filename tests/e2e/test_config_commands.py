@@ -1,7 +1,6 @@
 """End-to-end tests for config CLI commands."""
 
 import os
-from pathlib import Path
 from unittest.mock import patch
 
 from local_coding_assistant.cli.main import app

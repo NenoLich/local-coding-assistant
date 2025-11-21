@@ -10,40 +10,96 @@ import yaml
 from pydantic import ValidationError
 
 from local_coding_assistant.config.env_manager import EnvManager
-from local_coding_assistant.config.schemas import AppConfig
+from local_coding_assistant.config.schemas import AppConfig, ToolConfig
+from local_coding_assistant.core.exceptions import ConfigError
+from local_coding_assistant.core.protocols import IConfigManager
 from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("config.config_manager")
 
 
-class ConfigManager:
-    """Configuration manager with 3-layer hierarchy support.
-
-    Provides a 3-layer configuration system:
-    1. Global layer: Base configuration from env/YAML/defaults
-    2. Session layer: Runtime-modifiable session overrides
-    3. Call layer: Temporary overrides for individual function calls
-
-    Priority order (highest to lowest): Call → Session → Global
-    """
+class ConfigManager(IConfigManager):
+    """Configuration manager with 3-layer hierarchy support."""
 
     def __init__(
         self,
         config_paths: list[Path] | None = None,
         env_manager: EnvManager | None = None,
+        tool_config_paths: list[Path] | None = None,
     ):
         """Initialize the config manager.
 
         Args:
-            config_paths: Optional list of paths to YAML config files to load
+            config_paths: Optional list of paths to main YAML config files to load
             env_manager: Optional EnvManager instance (creates default if not provided)
+            tool_config_paths: Optional list of paths to tool YAML config files
         """
         self.config_paths = config_paths or []
+        self.tool_config_paths = tool_config_paths or [
+            Path("config/tools.default.yaml"),
+            Path("config/tools.local.yaml"),
+        ]
         self.env_manager = env_manager or EnvManager()
         self._defaults_path = Path(__file__).parent / "defaults.yaml"
         # 3-layer configuration storage
         self._global_config: AppConfig | None = None
         self._session_overrides: dict[str, Any] = {}
+        self._loaded_tools: dict[str, ToolConfig] = {}
+
+    def _load_tools(self) -> dict[str, ToolConfig]:
+        """Internal method to load tools using ToolLoader.
+
+        Returns:
+            Dictionary of loaded tools
+
+        Raises:
+            ConfigError: If there's an error loading tools
+        """
+        try:
+            from local_coding_assistant.config.tool_loader import ToolLoader
+
+            tool_loader = ToolLoader()
+            tools = tool_loader.load_tool_configs()
+            logger.debug("Successfully loaded %d tools", len(tools))
+            return tools
+
+        except Exception as e:
+            logger.error("Failed to load tools: %s", str(e), exc_info=True)
+            raise ConfigError(f"Failed to load tools: {e}") from e
+
+    def get_tools(self) -> dict[str, ToolConfig]:
+        """Get all configured tools.
+
+        Implements IConfigManager.get_tools().
+
+        Returns:
+            Dictionary mapping tool names to their configuration.
+        """
+        if not self._loaded_tools:  # Check if _loaded_tools is empty
+            self._loaded_tools = self._load_tools()
+        tools_config = self._loaded_tools
+        if not isinstance(tools_config, dict):
+            logger.warning("Invalid tools configuration - expected a dictionary")
+            return {}
+        return tools_config
+
+    def reload_tools(self) -> None:
+        """Reload tools configuration from all sources.
+
+        Implements IConfigManager.reload_tools().
+        """
+        logger.info("Reloading tools configuration...")
+        try:
+            # Clear any cached tools
+            if hasattr(self, "_loaded_tools"):
+                del self._loaded_tools
+
+            # Reload tools
+            self._loaded_tools = self._load_tools()
+            logger.info("Successfully reloaded %d tools", len(self._loaded_tools))
+        except Exception as e:
+            logger.error("Failed to reload tools: %s", str(e), exc_info=True)
+            raise ConfigError(f"Failed to reload tools: {e}") from e
 
     def load_global_config(self) -> AppConfig:
         """Load and merge configuration from all sources into global layer.
@@ -61,7 +117,15 @@ class ConfigManager:
 
         # Start with defaults
         config_data = self._load_defaults()
-        logger.debug(f"Loaded defaults: {len(config_data)} keys")
+
+        # Load tool configurations
+        try:
+            tool_configs = self.get_tools()
+            if tool_configs:
+                config_data["tools"] = {"tools": list(tool_configs.values())}
+        except Exception as e:
+            logger.error(f"Failed to load tool configurations: {e}")
+            raise ConfigError(f"Failed to load tool configurations: {e}") from e
 
         # Merge YAML files (in order provided)
         for config_path in self.config_paths:
@@ -79,7 +143,6 @@ class ConfigManager:
         env_data = self.env_manager.get_config_from_env()
         if env_data:
             config_data = self._deep_merge(config_data, env_data)
-            logger.debug(f"Merged {len(env_data)} environment variables")
 
         # Create and validate final config
         try:
@@ -90,8 +153,6 @@ class ConfigManager:
         except ValidationError as e:
             error_msg = f"Invalid global configuration: {e}"
             logger.error(error_msg)
-            from local_coding_assistant.core.exceptions import ConfigError
-
             raise ConfigError(error_msg) from e
 
     def set_session_overrides(self, overrides: dict[str, Any]) -> None:
@@ -144,8 +205,6 @@ class ConfigManager:
                         f"Configuration update validation failed: {e}"
                     ) from e
                 else:
-                    from local_coding_assistant.core.exceptions import ConfigError
-
                     raise ConfigError(error_msg) from e
 
         # Only set overrides if validation passed (or if no overrides provided)
@@ -181,8 +240,6 @@ class ConfigManager:
             ConfigError: If no global config is loaded or resolution fails
         """
         if self._global_config is None:
-            from local_coding_assistant.core.exceptions import ConfigError
-
             raise ConfigError(
                 "Global configuration not loaded. Call load_global_config() first."
             )
@@ -233,8 +290,6 @@ class ConfigManager:
 
                 raise LLMError(f"Configuration update validation failed: {e}") from e
             else:
-                from local_coding_assistant.core.exceptions import ConfigError
-
                 raise ConfigError(error_msg) from e
 
     def _load_defaults(self) -> dict[str, Any]:
@@ -294,13 +349,11 @@ class ConfigManager:
         except UnicodeDecodeError as e:
             error_msg = f"Unicode decode error in {file_path}: {e}. File may not be UTF-8 encoded."
             logger.error(error_msg)
-            from local_coding_assistant.core.exceptions import ConfigError
 
             raise ConfigError(error_msg) from e
         except yaml.YAMLError as e:
             error_msg = f"Invalid YAML in {file_path}: {e}"
             logger.error(error_msg)
-            from local_coding_assistant.core.exceptions import ConfigError
 
             raise ConfigError(error_msg) from e
 
@@ -373,35 +426,3 @@ class ConfigManager:
     def session_overrides(self) -> dict[str, Any]:
         """Get the current session overrides."""
         return deepcopy(self._session_overrides)
-
-
-# Global config manager instance for convenience
-_config_manager: ConfigManager | None = None
-
-
-def get_config_manager(config_paths: list[Path] | None = None) -> ConfigManager:
-    """Get or create a global config manager instance.
-
-    Args:
-        config_paths: Optional list of config file paths
-
-    Returns:
-        ConfigManager instance
-    """
-    global _config_manager
-    if _config_manager is None:
-        _config_manager = ConfigManager(config_paths)
-    return _config_manager
-
-
-def load_config(config_paths: list[Path] | None = None) -> AppConfig:
-    """Load application configuration.
-
-    Args:
-        config_paths: Optional list of config file paths
-
-    Returns:
-        Loaded and merged AppConfig
-    """
-    manager = ConfigManager(config_paths)
-    return manager.load_global_config()

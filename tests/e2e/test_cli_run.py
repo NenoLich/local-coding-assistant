@@ -1,6 +1,6 @@
 """End-to-end tests for the run command functionality."""
 
-from typing import Any, Dict, cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from local_coding_assistant.cli.main import app
@@ -24,7 +24,7 @@ class TestRunCommand:
             mock_tools = [MagicMock(name="test_tool")]
 
             # Create typed mock context
-            mock_ctx: Dict[str, Any] = {
+            mock_ctx: dict[str, Any] = {
                 "runtime": mock_runtime,
                 "llm": mock_llm,
                 "tools": mock_tools,
@@ -68,7 +68,7 @@ class TestRunCommand:
             mock_tools = [MagicMock(name="test_tool")]
 
             # Create typed mock context
-            mock_ctx: Dict[str, Any] = {
+            mock_ctx: dict[str, Any] = {
                 "runtime": mock_runtime,
                 "llm": mock_llm,
                 "tools": mock_tools,
@@ -111,7 +111,7 @@ class TestRunCommand:
             mock_tools = [MagicMock(name="test_tool")]
 
             # Create typed mock context
-            mock_ctx: Dict[str, Any] = {
+            mock_ctx: dict[str, Any] = {
                 "runtime": mock_runtime,
                 "llm": mock_llm,
                 "tools": mock_tools,
@@ -153,7 +153,7 @@ class TestRunCommand:
             mock_tools = [MagicMock(name="test_tool")]
 
             # Create typed mock context
-            mock_ctx: Dict[str, Any] = {
+            mock_ctx: dict[str, Any] = {
                 "runtime": mock_runtime,
                 "llm": mock_llm,
                 "tools": mock_tools,
@@ -224,7 +224,7 @@ class TestRunCommand:
             mock_tools = [MagicMock(name="test_tool")]
 
             # Create typed mock context
-            mock_ctx: Dict[str, Any] = {
+            mock_ctx: dict[str, Any] = {
                 "runtime": mock_runtime,
                 "llm": mock_llm,
                 "tools": mock_tools,
@@ -266,7 +266,7 @@ class TestRunCommand:
             mock_tools = [MagicMock(name="test_tool")]
 
             # Create typed mock context
-            mock_ctx: Dict[str, Any] = {
+            mock_ctx: dict[str, Any] = {
                 "runtime": mock_runtime,
                 "llm": mock_llm,
                 "tools": mock_tools,

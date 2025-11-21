@@ -6,7 +6,8 @@ import abc
 import asyncio
 import os
 from collections.abc import AsyncGenerator
-from typing import Any
+from enum import Enum
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -19,14 +20,20 @@ logger = get_logger("providers.base")
 class OptionalParameters(BaseModel):
     """Optional parameters that need to be validated against model support."""
 
-    stream: bool = False
+    # Required parameters (must be present if any tools are used)
     tools: list[dict[str, Any]] = Field(default_factory=list)
     tool_choice: str | dict[str, Any] | None = None
+
+    # Optional parameters with defaults
+    stream: bool = False
     response_format: dict[str, Any] | None = None
     max_tokens: int | None = Field(None, gt=0)
     top_p: float | None = Field(None, gt=0, le=1)
     presence_penalty: float | None = Field(None, ge=-2, le=2)
     frequency_penalty: float | None = Field(None, ge=-2, le=2)
+
+    # Set of parameter names that are required when tools are used
+    REQUIRED_WITH_TOOLS: ClassVar[frozenset[str]] = frozenset({"tools", "tool_choice"})
 
 
 class ProviderLLMRequest(BaseModel):
@@ -99,18 +106,160 @@ class ProviderLLMRequest(BaseModel):
 
         return data
 
-    def validate_against_model(self, supported_parameters: list[str]) -> None:
-        """Validate that all used parameters are supported by the model."""
-        if not supported_parameters:
+    class ValidationMode(str, Enum):
+        """Defines how to handle unsupported parameters."""
+
+        TRUNCATE = "truncate"  # Remove unsupported parameters (default)
+        VALIDATE = "validate"  # Raise error if any unsupported parameters
+        IGNORE = "ignore"  # Skip validation completely
+
+    def _get_required_parameters(
+        self, required_parameters: set[str] | None
+    ) -> set[str]:
+        """Get the set of required parameters including default and additional ones."""
+        required = set()
+        if hasattr(self.parameters, "REQUIRED_WITH_TOOLS"):
+            required.update(self.parameters.REQUIRED_WITH_TOOLS)
+        if required_parameters:
+            required.update(required_parameters)
+        return required
+
+    def _validate_required_parameters(
+        self, required: set[str], param_types: dict[str, type | tuple[type, ...]]
+    ) -> None:
+        """Validate that all required parameters are present and supported."""
+        # Check for missing required parameters in model support
+        missing_required = required - param_types.keys()
+        if missing_required:
+            raise ValueError(
+                f"Model '{self.model}' is missing required parameters: "
+                f"{', '.join(missing_required)}"
+            )
+
+        # Check if required parameters are actually in the request
+        missing_in_request = required - self.parameters.model_fields_set
+        if missing_in_request:
+            raise ValueError(
+                f"Missing required parameters in request: {', '.join(missing_in_request)}"
+            )
+
+    def _validate_parameter_type(
+        self,
+        field: str,
+        expected_type: type | tuple[type, ...],
+        invalid_types: list[str],
+    ) -> None:
+        """Validate that a parameter's type matches the expected type(s)."""
+        if expected_type is Any:  # Skip type check if Any
             return
 
-        # Check each optional parameter that has a non-default value
-        for field in self.parameters.model_fields_set:
-            if field not in supported_parameters:
-                raise ValueError(
-                    f"Parameter '{field}' is not supported by model '{self.model}'. "
-                    f"Supported parameters: {', '.join(supported_parameters)}"
+        value = getattr(self.parameters, field)
+        if isinstance(expected_type, tuple):
+            if not any(isinstance(value, t) for t in expected_type):
+                type_names = [t.__name__ for t in expected_type]
+                type_str = ", ".join(type_names)
+                invalid_types.append(
+                    f"'{field}' must be one of ({type_str}), got {type(value).__name__}"
                 )
+        elif not isinstance(value, expected_type):
+            invalid_types.append(
+                f"'{field}' must be {expected_type.__name__}, got {type(value).__name__}"
+            )
+
+    def _handle_unsupported_parameters(
+        self,
+        param_types: dict[str, type | tuple[type, ...]],
+        required: set[str],
+        mode: ValidationMode,
+    ) -> set[str]:
+        """Identify and handle unsupported parameters based on the validation mode."""
+        unsupported = set()
+        for field in list(self.parameters.model_fields_set):
+            if field not in param_types:
+                if mode == self.ValidationMode.VALIDATE:
+                    raise ValueError(
+                        f"Parameter '{field}' is not supported by model '{self.model}'. "
+                        f"Supported parameters: {', '.join(param_types.keys())}"
+                    )
+                # Don't remove required parameters even if not in supported_parameters
+                if field not in required:
+                    unsupported.add(field)
+        return unsupported
+
+    def _remove_unsupported_parameters(self, unsupported: set[str]) -> None:
+        """Remove unsupported parameters from the model fields."""
+        for field in unsupported:
+            self.parameters.model_fields_set.discard(field)
+            setattr(self.parameters, field, None)
+
+    def validate_against_model(
+        self,
+        supported_parameters: list[str] | dict[str, type | tuple[type, ...]],
+        *,
+        mode: ValidationMode = ValidationMode.TRUNCATE,
+        required_parameters: set[str] | None = None,
+    ) -> None:
+        """Validate request parameters against model's supported parameters.
+
+        Args:
+            supported_parameters:
+                - List of supported parameter names (legacy)
+                - Or dict mapping parameter names to their expected types
+            mode: How to handle unsupported parameters
+            required_parameters: Additional required parameters beyond the default set
+        """
+        if mode == self.ValidationMode.IGNORE:
+            return
+
+        required = self._get_required_parameters(required_parameters)
+
+        # Early return if no parameters to validate
+        if not self.parameters.model_fields_set:
+            if required:
+                raise ValueError(
+                    f"Model '{self.model}' requires parameters: {', '.join(required)}"
+                )
+            return
+
+        # If no supported parameters are specified, handle based on mode
+        if not supported_parameters:
+            if mode == self.ValidationMode.VALIDATE:
+                raise ValueError(
+                    f"Model '{self.model}' doesn't support any parameters, but got: "
+                    f"{', '.join(self.parameters.model_fields_set)}"
+                )
+            # In TRUNCATE mode with no supported params, clear all parameters
+            self.parameters.model_fields_set.clear()
+            return
+
+        # Convert legacy list to dict if needed
+        param_types = (
+            {name: Any for name in supported_parameters}
+            if isinstance(supported_parameters, list)
+            else supported_parameters
+        )
+
+        # Validate required parameters
+        self._validate_required_parameters(required, param_types)
+
+        # Identify and handle unsupported parameters
+        unsupported = self._handle_unsupported_parameters(param_types, required, mode)
+
+        # Validate parameter types
+        invalid_types = []
+        for field in self.parameters.model_fields_set - unsupported:
+            if field in param_types:  # Skip fields already marked as unsupported
+                self._validate_parameter_type(field, param_types[field], invalid_types)
+
+        # Remove unsupported parameters (except required ones)
+        self._remove_unsupported_parameters(unsupported)
+
+        # Raise all validation errors at once
+        if invalid_types:
+            raise ValueError(
+                f"Invalid parameter types for model '{self.model}':\n"
+                + "\n".join(f"- {msg}" for msg in invalid_types)
+            )
 
 
 class ProviderLLMResponse(BaseModel):
@@ -326,7 +475,7 @@ class BaseProvider(abc.ABC):
 
             # Handle case where all items are strings (model names)
             if all(isinstance(m, str) for m in models):
-                return [ModelConfig(name=m) for m in models]  # type: ignore
+                return [ModelConfig(name=m) for m in models]
 
             # Handle case where items are mixed or invalid types
             if any(not isinstance(m, ModelConfig | str) for m in models):

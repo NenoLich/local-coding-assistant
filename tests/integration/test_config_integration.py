@@ -9,7 +9,7 @@ import pytest
 import yaml
 
 from local_coding_assistant.agent import LLMManager
-from local_coding_assistant.core.exceptions import AgentError, ConfigError
+from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.runtime import RuntimeManager
 
 
@@ -42,9 +42,13 @@ class TestBootstrapIntegration:
                     "health_check_endpoint": "https://api.openai.com/v1/models",
                     "models": {
                         "gpt-4.1": {
-                            "supported_parameters": ["max_tokens", "temperature", "top_p"]
+                            "supported_parameters": [
+                                "max_tokens",
+                                "temperature",
+                                "top_p",
+                            ]
                         }
-                    }
+                    },
                 }
             },
         }
@@ -79,15 +83,24 @@ class TestBootstrapIntegration:
             openai_provider = llm_resolved.providers["openai"]
             assert openai_provider.name == "openai"
             assert openai_provider.driver == "openai_chat"
-            assert openai_provider.base_url == "https://api.openai.com/v1/chat/completions"
+            assert (
+                openai_provider.base_url == "https://api.openai.com/v1/chat/completions"
+            )
             assert openai_provider.api_key_env == "OPENAI_API_KEY"
-            assert openai_provider.health_check_endpoint == "https://api.openai.com/v1/models"
+            assert (
+                openai_provider.health_check_endpoint
+                == "https://api.openai.com/v1/models"
+            )
 
             # Check models
             assert len(openai_provider.models) == 1
             model_config = openai_provider.models[0]
             assert model_config.name == "gpt-4.1"
-            assert set(model_config.supported_parameters) == {"max_tokens", "temperature", "top_p"}
+            assert set(model_config.supported_parameters) == {
+                "max_tokens",
+                "temperature",
+                "top_p",
+            }
 
         finally:
             # Clean up temporary file
@@ -182,21 +195,41 @@ class TestBootstrapIntegration:
 
         try:
             from local_coding_assistant.core.bootstrap import bootstrap
+            from local_coding_assistant.core.exceptions import ConfigError
 
-            # Should raise ConfigError for invalid YAML
-            with pytest.raises(ConfigError):
+            # Should raise RuntimeError with ConfigError as cause for invalid YAML
+            with pytest.raises(RuntimeError) as excinfo:
                 bootstrap(config_path=str(config_path))
+                
+            # The original error should be a ConfigError
+            assert isinstance(excinfo.value.__cause__, ConfigError), \
+                f"Expected ConfigError, got {type(excinfo.value.__cause__).__name__}"
+                
+            # The error message should indicate invalid YAML
+            error_msg = str(excinfo.value.__cause__).lower()
+            assert "invalid yaml" in error_msg or "yaml" in error_msg, \
+                f"Expected YAML error in message, got: {error_msg}"
 
         finally:
-            config_path.unlink()
+            if os.path.exists(config_path):
+                config_path.unlink()
 
     def test_bootstrap_missing_config_file(self):
         """Test bootstrap with missing configuration file."""
         from local_coding_assistant.core.bootstrap import bootstrap
-
-        # Should raise ConfigError for missing file
-        with pytest.raises(ConfigError):
-            bootstrap(config_path="nonexistent.yaml")
+        
+        # Should not raise an error for missing config file
+        # It should use default configuration
+        ctx = bootstrap(config_path="nonexistent.yaml")
+        
+        # Should still get a valid context with default configuration
+        assert ctx is not None
+        assert hasattr(ctx, 'get')
+        
+        # Should have LLM manager initialized with default config
+        llm = ctx.get("llm")
+        assert llm is not None
+        assert hasattr(llm, "config_manager")
 
     def test_configuration_injection_into_services(self, ctx):
         """Test that configuration is properly injected into services."""
@@ -232,25 +265,31 @@ class TestBootstrapIntegration:
 
         try:
             from local_coding_assistant.core.bootstrap import bootstrap
+            from local_coding_assistant.core.exceptions import ConfigError
 
-            # Bootstrap should succeed but LLM should be None due to invalid config
-            # The system is resilient to config errors and continues without LLM functionality
-            ctx = bootstrap(config_path=str(config_path))
-
-            # LLM manager should be None because config validation failed
-            llm = ctx.get("llm")
-            assert llm is None  # System gracefully handles invalid config
-
-            # Runtime manager should also be None since it depends on LLM manager
-            runtime = ctx.get("runtime")
-            assert runtime is None  # Runtime manager requires LLM manager
-
-            # Tool manager should still be available even with invalid LLM config
-            tools = ctx.get("tools")
-            assert tools is not None
-
+            # Bootstrap should raise RuntimeError with ConfigError as cause due to invalid configuration
+            with pytest.raises(RuntimeError) as excinfo:
+                bootstrap(config_path=str(config_path))
+            
+            # The original error should be a ConfigError
+            assert isinstance(excinfo.value.__cause__, ConfigError), \
+                f"Expected ConfigError, got {type(excinfo.value.__cause__).__name__}"
+            
+            # Get the error message from the cause
+            error_msg = str(excinfo.value.__cause__)
+            
+            # Verify the error message contains the validation errors
+            assert "Invalid global configuration" in error_msg, \
+                f"Expected 'Invalid global configuration' in error message, got: {error_msg}"
+            assert "temperature" in error_msg, \
+                f"Expected 'temperature' in error message, got: {error_msg}"
+            assert "max_tokens" in error_msg, \
+                f"Expected 'max_tokens' in error message, got: {error_msg}"
+            
         finally:
-            config_path.unlink()
+            # Clean up the temporary file
+            if os.path.exists(config_path):
+                os.unlink(config_path)
 
     def test_logging_configuration_application(self):
         """Test that logging configuration is properly applied."""

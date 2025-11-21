@@ -33,19 +33,31 @@ class MockAsyncGenerator:
 class TestLLMManagerStreaming:
     """Test LLMManager streaming functionality."""
 
+    @pytest.fixture
+    def mock_config_manager(self):
+        """Create a mock config manager."""
+        mock = MagicMock()
+        mock.global_config = {"providers": {}, "models": {}}
+        return mock
+        
+    @pytest.fixture
+    def mock_provider_manager(self):
+        """Create a mock provider manager."""
+        return MagicMock()
+
     @pytest.mark.asyncio
-    async def test_stream_method_exists(self):
+    async def test_stream_method_exists(self, mock_config_manager):
         """Test that stream method exists and has correct signature."""
-        with patch("local_coding_assistant.config.get_config_manager"):
-            manager = LLMManager()
+        # Initialize with the mock config manager
+        manager = LLMManager(config_manager=mock_config_manager)
 
-            # Verify method exists
-            assert hasattr(manager, "stream")
-            assert callable(manager.stream)
+        # Verify method exists
+        assert hasattr(manager, "stream")
+        assert callable(manager.stream)
 
-            # Test method signature
-            sig = inspect.signature(manager.stream)
-            assert "request" in sig.parameters
+        # Test method signature
+        sig = inspect.signature(manager.stream)
+        assert "request" in sig.parameters
 
     @pytest.mark.asyncio
     async def test_stream_success(self):
@@ -170,48 +182,62 @@ class TestLLMManagerStreaming:
                 pass
 
     @pytest.mark.asyncio
-    async def test_stream_test_mode(self):
+    async def test_stream_test_mode(self, mock_config_manager):
         """Test streaming in test mode."""
-        with patch("local_coding_assistant.config.get_config_manager"):
-            with patch.dict("os.environ", {"LOCCA_TEST_MODE": "true"}):
-                manager = LLMManager()
+        with patch.dict("os.environ", {"LOCCA_TEST_MODE": "true"}):
+            manager = LLMManager(config_manager=mock_config_manager)
 
-                request = LLMRequest(prompt="Test prompt")
-                chunks = []
-                async for chunk in manager.stream(request):
-                    chunks.append(chunk)
+            request = LLMRequest(prompt="Test prompt")
+            chunks = []
+            async for chunk in manager.stream(request):
+                chunks.append(chunk)
 
-                assert len(chunks) == 1
-                assert chunks[0].startswith("[LLMManager] Echo:")
+            assert len(chunks) == 1
+            assert chunks[0].startswith("[LLMManager] Echo:")
 
 
 class TestLLMManagerMethodConsistency:
     """Test consistency between generate and stream methods."""
 
+    @pytest.fixture
+    def mock_config_manager(self):
+        """Create a mock config manager."""
+        mock = MagicMock()
+        mock.global_config = {"providers": {}, "models": {}}
+        return mock
+        
+    @pytest.fixture
+    def mock_provider_manager(self):
+        """Create a mock provider manager."""
+        return MagicMock()
+
     @pytest.mark.asyncio
-    async def test_stream_method_signature_matches_generate(self):
+    async def test_stream_method_signature_matches_generate(self, mock_config_manager):
         """Test that stream method has similar signature to generate."""
-        with patch("local_coding_assistant.config.get_config_manager"):
-            manager = LLMManager()
+        manager = LLMManager(config_manager=mock_config_manager)
 
-            # Get signatures
-            generate_sig = inspect.signature(manager.generate)
-            stream_sig = inspect.signature(manager.stream)
+        # Get method signatures
+        generate_sig = inspect.signature(manager.generate)
+        stream_sig = inspect.signature(manager.stream)
 
-            # Both should have request parameter
-            assert "request" in generate_sig.parameters
-            assert "request" in stream_sig.parameters
+        # Check that they have the same parameters (except for return type)
+        generate_params = [
+            p for p in generate_sig.parameters.values()
+            if p.name != 'return' and p.name != 'self'
+        ]
+        stream_params = [
+            p for p in stream_sig.parameters.values()
+            if p.name != 'return' and p.name != 'self'
+        ]
 
-            # Both should return appropriate types
-            # Handle both direct class reference and string forward reference
-            assert (
-                generate_sig.return_annotation == LLMResponse
-                or str(generate_sig.return_annotation) == "LLMResponse"
-            )
-            assert "AsyncIterator" in str(stream_sig.return_annotation)
+        assert len(generate_params) == len(stream_params)
+        for gp, sp in zip(generate_params, stream_params):
+            assert gp.name == sp.name
+            assert gp.kind == sp.kind
+            assert gp.default == sp.default
 
     @pytest.mark.asyncio
-    async def test_both_methods_use_same_config_resolution(self):
+    async def test_both_methods_use_same_config_resolution(self, mock_config_manager, mock_provider_manager):
         """Test that both methods use the same config resolution."""
         # This test is not applicable to v2 architecture which uses provider system
         # The v2 manager resolves providers differently
@@ -262,69 +288,75 @@ class TestLLMManagerMethodConsistency:
 class TestLLMManagerIntegrationUpdates:
     """Test integration with updated systems."""
 
-    def test_ainvoke_method_exists(self):
+    @pytest.fixture
+    def mock_config_manager(self):
+        """Create a mock config manager."""
+        mock = MagicMock()
+        mock.global_config = {"providers": {}, "models": {}}
+        return mock
+        
+    @pytest.fixture
+    def mock_provider_manager(self):
+        """Create a mock provider manager."""
+        return MagicMock()
+
+    def test_ainvoke_method_exists(self, mock_config_manager):
         """Test that ainvoke method exists as alias."""
-        with patch("local_coding_assistant.config.get_config_manager"):
-            manager = LLMManager()
+        manager = LLMManager(config_manager=mock_config_manager)
+        assert hasattr(manager, "ainvoke")
+        assert callable(manager.ainvoke)
+        
+        # ainvoke should be functionally equivalent to generate
+        # ainvoke provides a simpler interface that calls generate with defaults
+        import inspect
 
-            assert hasattr(manager, "ainvoke")
-            assert callable(manager.ainvoke)
+        # Check that both methods exist and are callable
+        assert callable(manager.ainvoke)
+        assert callable(manager.generate)
 
-            # ainvoke should be functionally equivalent to generate
-            # ainvoke provides a simpler interface that calls generate with defaults
-            import inspect
+        # Check that both methods are async
+        assert inspect.iscoroutinefunction(manager.ainvoke)
+        assert inspect.iscoroutinefunction(manager.generate)
 
-            # Check that both methods exist and are callable
-            assert callable(manager.ainvoke)
-            assert callable(manager.generate)
+        # ainvoke should have a simpler signature (only request parameter)
+        # while generate has additional optional parameters
+        ainvoke_sig = inspect.signature(manager.ainvoke)
+        generate_sig = inspect.signature(manager.generate)
 
-            # Check that both methods are async
-            assert inspect.iscoroutinefunction(manager.ainvoke)
-            assert inspect.iscoroutinefunction(manager.generate)
+        # ainvoke should have exactly one parameter (request)
+        assert len(ainvoke_sig.parameters) == 1
+        assert "request" in ainvoke_sig.parameters
 
-            # ainvoke should have a simpler signature (only request parameter)
-            # while generate has additional optional parameters
-            ainvoke_sig = inspect.signature(manager.ainvoke)
-            generate_sig = inspect.signature(manager.generate)
-
-            # ainvoke should have exactly one parameter (request)
-            assert len(ainvoke_sig.parameters) == 1
-            assert "request" in ainvoke_sig.parameters
-
-            # generate should have the request parameter plus optional parameters
-            assert "request" in generate_sig.parameters
-            assert (
-                len(generate_sig.parameters) > 1
-            )  # Has additional optional parameters
+        # generate should have the request parameter plus optional parameters
+        assert "request" in generate_sig.parameters
+        assert len(generate_sig.parameters) > 1  # Has additional optional parameters
 
     @pytest.mark.asyncio
-    async def test_ainvoke_functionality(self):
+    async def test_ainvoke_functionality(self, mock_config_manager, mock_provider_manager):
         """Test ainvoke method functionality."""
         from local_coding_assistant.providers.base import ProviderLLMResponse
 
-        # Mock provider manager and router
-        mock_provider_manager = MagicMock()
-        mock_config_manager = MagicMock()
-        mock_config_manager.global_config = MagicMock()
-
-        # Mock provider with generation
+        # Mock provider and router
         mock_provider = MagicMock()
-        mock_provider.name = "openai"
+        mock_provider.name = "test_provider"
         mock_provider.generate_with_retry = AsyncMock(
             return_value=ProviderLLMResponse(
-                content="Test response", model="gpt-3.5-turbo", tokens_used=50
+                content="Test response",
+                model="test-model",
+                model_used="test-model",
+                tokens_used=10
             )
         )
-
-        # Mock router
-        mock_router = MagicMock()
-        mock_router.get_provider_for_request = AsyncMock(
-            return_value=(mock_provider, "gpt-3.5-turbo")
-        )
-
+        
+        # Create the manager with mocks
         manager = LLMManager(
-            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+            config_manager=mock_config_manager,
+            provider_manager=mock_provider_manager
         )
+        
+        # Setup router mock
+        mock_router = MagicMock()
+        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "test-model"))
         manager.router = mock_router
 
         request = LLMRequest(prompt="Test")
@@ -333,11 +365,23 @@ class TestLLMManagerIntegrationUpdates:
 
         # Should call generate and return same result
         assert result.content == "Test response"
-        assert result.model_used == "gpt-3.5-turbo"
+        assert result.model_used == "test-model"  # Should match the model we set in the mock
 
 
 class TestLLMManagerBackwardCompatibility:
     """Test backward compatibility with existing code."""
+    
+    @pytest.fixture
+    def mock_config_manager(self):
+        """Create a mock config manager."""
+        mock = MagicMock()
+        mock.global_config = {"providers": {}, "models": {}}
+        return mock
+        
+    @pytest.fixture
+    def mock_provider_manager(self):
+        """Create a mock provider manager."""
+        return MagicMock()
 
     def test_request_response_models_unchanged(self):
         """Test that LLMRequest and LLMResponse models are still compatible."""
@@ -434,18 +478,18 @@ class TestLLMManagerBackwardCompatibility:
         assert len(chunks) == 1
         assert chunks[0] == "Fallback response"
 
-    def test_stream_method_documentation(self):
+    def test_stream_method_documentation(self, mock_config_manager):
         """Test that stream method has proper documentation."""
-        with patch("local_coding_assistant.config.get_config_manager"):
-            manager = LLMManager()
+        manager = LLMManager(config_manager=mock_config_manager)
 
-            # Check method has docstring
-            assert manager.stream.__doc__ is not None
-            assert "stream" in manager.stream.__doc__.lower()
-            assert (
-                "async" in manager.stream.__doc__.lower()
-                or "yield" in manager.stream.__doc__.lower()
-            )
+        # Check that the method has a docstring
+        docstring = manager.stream.__doc__
+        assert docstring is not None
+        
+        # Check for key phrases in the docstring (case-insensitive)
+        docstring_lower = docstring.lower()
+        assert "streaming response" in docstring_lower
+        assert "yield" in docstring_lower
 
 
 class TestLLMManagerParameterConsistency:

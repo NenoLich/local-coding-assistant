@@ -6,15 +6,17 @@ providers:
     health_check_endpoint: "https://openrouter.ai/api/v1/key"
     models:
       qwen/qwen3-coder:free:
-        supported_parameters: ["tool", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty"]
+        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty"]
       qwen/qwen3-235b-a22b:free:
-        supported_parameters: ["tool", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format"]
+        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format"]
       minimax/minimax-m2:free:
-        supported_parameters: ["tool", "tool_choice", "max_tokens", "temperature", "top_p"]
+        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p"]
       meta-llama/llama-3.3-70b-instruct:free:
-        supported_parameters: [ "tool", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty" ]
+        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty" ]
       z-ai/glm-4.5-air:free:
-        supported_parameters: [ "tool", "tool_choice", "max_tokens", "temperature", "top_p" ]
+        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p" ]
+      openrouter/polaris-alpha:
+        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "response_format", "structured outputs", "stream"]
   google_gemini:
     driver: "openai_chat"
     base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -30,6 +32,6 @@ providers:
     health_check_endpoint: "https://models.github.ai/catalog/models"
     models:
       mistral-ai/Codestral-2501:
-        supported_parameters: ["tool", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format"]
+        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format"]
       microsoft/Phi-4-mini-instruct:
-        supported_parameters: ["tool", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty"]
+        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty"]
