@@ -65,7 +65,7 @@ redundant-cast = "ignore"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-python_paths = ["src"]
+pythonpath = ["src"]
 asyncio_mode = "auto"
 # addopts = "-v --cov=local_coding_assistant --cov-report=term-missing"
 filterwarnings = ["ignore::DeprecationWarning"]
@@ -84,10 +84,10 @@ dev = [
     "pytest>=8.0.0",
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.12.0",
-    "pytest-asyncio>=1.2.0",
     "ruff>=0.6.0",
     "ty>=0.0.1a20",
     "pre-commit>=4.3.0",
     "taskipy>=1.14.1",
     "pyupgrade>=3.21.0",
+    "pytest-asyncio>=1.3.0",
 ]

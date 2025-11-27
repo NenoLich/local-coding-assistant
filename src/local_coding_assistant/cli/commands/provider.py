@@ -6,13 +6,13 @@ and the bootstrap system, following the same patterns as other CLI commands.
 """
 
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
 import typer
 import yaml
 
+from local_coding_assistant.config.env_manager import EnvManager
 from local_coding_assistant.core import bootstrap
 from local_coding_assistant.core.error_handler import safe_entrypoint
 from local_coding_assistant.utils.logging import get_logger
@@ -28,43 +28,26 @@ def _extract_value(param_value: Any, default: Any = None) -> Any:
     return param_value if param_value is not None else default
 
 
-def _get_config_path(config_file: str | None = None, dev: bool = False) -> Path:
-    """Get the configuration file path.
+def _get_config_path(
+    config_file: str | None = None, env_manager: EnvManager | None = None
+) -> Path:
+    """Get the configuration file path using PathManager.
 
     Args:
         config_file: Custom config file path if provided
-        dev: If True, use development path in the project directory
+        env_manager: Optional EnvManager instance (will create one if not provided)
 
     Returns:
-        Path to the configuration file
+        Path to the providers configuration file
     """
     if config_file:
         return Path(config_file)
 
-    if dev or os.getenv("LOCCA_DEV_MODE"):
-        # Try to find project root by looking for pyproject.toml
-        current_path = Path(__file__).resolve()
-        for parent in [current_path, *current_path.parents]:
-            if (parent / "pyproject.toml").exists():
-                return (
-                    parent
-                    / "src"
-                    / "local_coding_assistant"
-                    / "config"
-                    / "providers.local.yaml"
-                )
+    # Create or use provided env_manager
+    env_manager = env_manager or EnvManager.create(load_env=True)
 
-        # Fallback to the old method if pyproject.toml not found
-        return (
-            current_path.parents[4]
-            / "src"
-            / "local_coding_assistant"
-            / "config"
-            / "providers.local.yaml"
-        )
-
-    # For production, use the user's home directory
-    return Path.home() / ".local-coding-assistant" / "config" / "providers.local.yaml"
+    # Use PathManager to resolve the config path based on environment
+    return env_manager.path_manager.resolve_path("@config/providers.local.yaml")
 
 
 def _load_config(config_path: Path) -> dict:
@@ -354,7 +337,7 @@ def add(
         )
 
     # Save the configuration
-    config_path = _get_config_path(actual_config_file, dev)
+    config_path = _get_config_path(actual_config_file)
     _save_config(
         config_path=config_path,
         provider_name=name,

@@ -31,7 +31,6 @@ class TestConfigManagerIntegration:
         llm_config_with_override = resolved_config_with_override.llm
         assert isinstance(llm_config_with_override, LLMConfig)
 
-    @patch.dict("os.environ", {"LOCCA_TEST_MODE": "true"})
     def test_llm_manager_mock_response(self):
         """Test that LLMManager returns mock responses in test mode."""
         from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest

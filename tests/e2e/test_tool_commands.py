@@ -1,7 +1,6 @@
 """End-to-end tests for the tool CLI commands."""
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -24,7 +23,7 @@ class DummyToolManager:
             raise KeyError(tool_id)
         return object()
 
-    def list_tools(self) -> list:
+    def list_tools(self, available_only: bool = False) -> list:
         return []
 
     def execute(self, request):
@@ -41,7 +40,7 @@ class TestToolCommands:
     def test_tool_add_creates_config_and_confirms_load(
         self,
         cli_runner,
-        temp_tool_config_path: Path,
+        test_configs,
         patch_tool_bootstrap,
     ) -> None:
         tool_manager = DummyToolManager(tool_ids={"sample_tool"})
@@ -58,14 +57,14 @@ class TestToolCommands:
                 "--path",
                 "tests/mock_tools/sample_tool.py",
                 "--config-file",
-                str(temp_tool_config_path),
+                str(test_configs["local"]),
             ],
         )
 
         assert result.exit_code == 0, result.stdout
         assert "Successfully added tool" in result.stdout
 
-        config = yaml.safe_load(temp_tool_config_path.read_text(encoding="utf-8"))
+        config = yaml.safe_load(test_configs["local"].read_text(encoding="utf-8"))
         assert config["tools"][0]["id"] == "sample_tool"
         assert config["tools"][0]["path"] == "tests/mock_tools/sample_tool.py"
 
@@ -105,17 +104,17 @@ class TestToolCommands:
     def test_tool_remove_updates_configuration(
         self,
         cli_runner,
-        temp_tool_config_path: Path,
+        test_configs,
         patch_tool_bootstrap,
     ) -> None:
-        temp_tool_config_path.write_text(
+        test_configs["local"].write_text(
             yaml.safe_dump(
                 {
                     "tools": [
                         {
                             "id": "obsolete_tool",
-                            "description": "To be removed",
                             "path": "tests/mock_tools/obsolete.py",
+                            "description": "This tool should be removed",
                         }
                     ]
                 }
@@ -133,22 +132,22 @@ class TestToolCommands:
                 "remove",
                 "obsolete_tool",
                 "--config-file",
-                str(temp_tool_config_path),
+                str(test_configs["local"]),
             ],
         )
 
         assert result.exit_code == 0, result.stdout
         assert "Successfully removed tool" in result.stdout
 
-        config = yaml.safe_load(temp_tool_config_path.read_text(encoding="utf-8"))
+        config = yaml.safe_load(test_configs["local"].read_text(encoding="utf-8"))
         assert config["tools"] == []
 
     def test_tool_validate_reports_errors(
         self,
         cli_runner,
-        temp_tool_config_path: Path,
+        test_configs,
     ) -> None:
-        temp_tool_config_path.write_text(
+        test_configs["local"].write_text(
             yaml.safe_dump({"invalid": "structure"}),
             encoding="utf-8",
         )
@@ -159,7 +158,7 @@ class TestToolCommands:
                 "tool",
                 "validate",
                 "--config-file",
-                str(temp_tool_config_path),
+                str(test_configs["local"]),
             ],
         )
 

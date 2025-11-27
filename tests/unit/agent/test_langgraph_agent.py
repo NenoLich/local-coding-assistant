@@ -126,17 +126,20 @@ class TestLangGraphAgent:
         # Create a mock LLM manager
         mock_llm_manager = MagicMock()
 
-        # Create a mock tool manager
-        mock_tool_manager = MagicMock()
-
-        # Configure the mock tool manager's __iter__ to return mock tools
+        # Create mock tools
         mock_tool1 = MagicMock()
         mock_tool1.name = "tool1"
         mock_tool1.description = "First tool"
+        mock_tool1.available = True
         mock_tool2 = MagicMock()
         mock_tool2.name = "tool2"
         mock_tool2.description = "Second tool"
-        mock_tool_manager.__iter__.return_value = [mock_tool1, mock_tool2]
+        mock_tool2.available = True
+
+        # Create a mock tool manager
+        mock_tool_manager = MagicMock()
+        # Configure the mock tool manager's list_tools method
+        mock_tool_manager.list_tools.return_value = [mock_tool1, mock_tool2]
 
         # Create the LangGraphAgent with the mock managers
         agent = LangGraphAgent(
@@ -147,12 +150,19 @@ class TestLangGraphAgent:
 
         # Test _get_available_tools
         tools = agent._get_available_tools()
+        # Verify list_tools was called with available_only=True
+        mock_tool_manager.list_tools.assert_called_with(available_only=True)
         assert len(tools) == 2
         assert tools[0]["name"] == "tool1"
         assert tools[1]["name"] == "tool2"
 
+        # Reset the mock call count
+        mock_tool_manager.list_tools.reset_mock()
+
         # Test _get_tools_description
         description = agent._get_tools_description()
+        # Verify list_tools was called with available_only=True
+        mock_tool_manager.list_tools.assert_called_once_with(available_only=True)
         assert "tool1: First tool" in description
         assert "tool2: Second tool" in description
 

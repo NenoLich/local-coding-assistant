@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from local_coding_assistant.config.path_manager import PathManager
 from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("config.env_manager")
@@ -12,18 +13,67 @@ logger = get_logger("config.env_manager")
 class EnvManager:
     """Manages loading and parsing environment variables for configuration."""
 
-    def __init__(self, env_prefix: str = "LOCCA_", env_paths: list[Path] | None = None):
+    @classmethod
+    def create(cls, *, load_env: bool = True, **kwargs) -> "EnvManager":
+        """Factory method to create and initialize an EnvManager.
+
+        Args:
+            load_env: If True, automatically load environment files
+            **kwargs: Additional arguments to pass to __init__
+
+        Returns:
+            Initialized EnvManager instance
+        """
+        instance = cls(**kwargs)
+        if load_env:
+            try:
+                instance.load_env_files()
+            except Exception as e:
+                logger.warning("Failed to load environment files: %s", e)
+        return instance
+
+    def __init__(
+        self,
+        env_prefix: str = "LOCCA_",
+        env_paths: list[Path | str] | None = None,
+        path_manager: PathManager | None = None,
+    ):
         """Initialize the environment manager.
 
         Args:
             env_prefix: Prefix for environment variables to load (default: "LOCCA_")
             env_paths: Optional list of .env file paths to load (default: auto-detect)
+            path_manager: Optional PathManager instance for path resolution
         """
         self.env_prefix = env_prefix
-        self.env_paths = env_paths or self._get_default_env_paths()
+
+        # Initialize PathManager with current environment state
+        self.path_manager = path_manager or PathManager(
+            is_development=self.is_development(),
+            is_testing=self.is_testing(),
+            is_production=self.is_production(),
+        )
+        self.env_paths: list[Path] = (
+            [Path(p) for p in env_paths] if env_paths else self._get_default_env_paths()
+        )
+
+    def _resolve_env_paths(self) -> None:
+        """Resolve all environment file paths using PathManager."""
+        resolved_paths = []
+        for path in self.env_paths:
+            if isinstance(path, str) and ("@" in path or "~" in str(path)):
+                try:
+                    resolved = self.path_manager.resolve_path(path)
+                    resolved_paths.append(resolved)
+                    continue
+                except (ValueError, OSError) as e:
+                    logger.warning(f"Failed to resolve path {path}: {e}")
+            resolved_paths.append(Path(path) if isinstance(path, str) else path)
+        self.env_paths = resolved_paths
 
     def with_prefix(self, key: str) -> str:
         """Add the environment prefix to a key if not already present."""
+        key = key.upper()
         return key if key.startswith(self.env_prefix) else f"{self.env_prefix}{key}"
 
     def without_prefix(self, key: str) -> str:
@@ -33,17 +83,63 @@ class EnvManager:
         return key
 
     def _get_default_env_paths(self) -> list[Path]:
-        """Get default .env file paths to check."""
-        # Try to find project root by looking for pyproject.toml
-        current_path = Path(__file__).parent
-        for parent in [current_path, *list(current_path.parents)]:
-            if (parent / "pyproject.toml").exists():
-                return [parent / ".env", parent / ".env.local"]
-        # Fallback to current working directory
-        return [Path.cwd() / ".env", Path.cwd() / ".env.local"]
+        """Get default .env file paths to check based on environment.
+
+        Loading order (first takes precedence):
+        1. .env - Base settings (committed to VCS)
+        2. .env.<env> - Environment-specific settings (e.g., .env.development)
+        3. .env.local - Local overrides (ignored by VCS, for sensitive data)
+
+        Environment is determined by the PathManager or LOCCA_ENV env var.
+        """
+        env = self.get_environment()
+
+        # Use PathManager to get project root if available
+        root_dir = self.path_manager.get_project_root()
+        if not root_dir:
+            # Fallback to finding project root by looking for pyproject.toml
+            current_path = Path(__file__).parent
+            root_dir = None
+            for parent in [current_path, *list(current_path.parents)]:
+                if (parent / "pyproject.toml").exists():
+                    root_dir = parent
+                    break
+            root_dir = root_dir or Path.cwd()
+
+        # Define the loading order (from lowest to highest priority)
+        env_files = [
+            "@project/.env",  # Base settings
+            f"@project/.env.{env}",  # Environment-specific settings
+            "@project/.env.local",  # Local overrides (highest priority)
+        ]
+
+        # Resolve paths using PathManager
+        resolved_paths = []
+        for env_file in env_files:
+            try:
+                resolved = self.path_manager.resolve_path(env_file)
+                if resolved.exists():
+                    resolved_paths.append(resolved)
+            except (ValueError, OSError) as e:
+                logger.debug(f"Skipping env file {env_file}: {e}")
+                continue
+
+        # Always include the root .env file if it exists, even if empty
+        root_env = root_dir / ".env"
+        if root_env.exists() and root_env not in resolved_paths:
+            resolved_paths.insert(0, root_env)
+
+        return resolved_paths or [root_env]
 
     def load_env_files(self) -> None:
         """Load .env files if python-dotenv is available.
+
+        Files are loaded in the following order (later files override earlier ones):
+        1. .env - Base settings
+        2. .env.<env> - Environment-specific settings
+        3. .env.local - Local overrides (highest priority)
+
+        Environment is determined by LOCCA_ENV env var (defaults to 'development').
 
         Raises:
             ConfigError: If .env file exists but cannot be loaded
@@ -51,27 +147,39 @@ class EnvManager:
         try:
             from dotenv import load_dotenv
         except ImportError:
-            logger.debug("python-dotenv not installed, skipping .env file loading")
+            logger.warning(
+                "python-dotenv not installed, skipping .env file loading. "
+                "Install with `pip install python-dotenv` for .env file support."
+            )
             return
 
-        loaded_any = True
-        for env_path in self.env_paths:
-            if env_path.exists():
-                try:
-                    load_dotenv(
-                        env_path, override=loaded_any
-                    )  # Later files override earlier ones
-                    logger.info(f"Loaded environment variables from {env_path}")
-                    loaded_any = True
-                except Exception as e:
-                    from local_coding_assistant.core.exceptions import ConfigError
+        env = os.getenv("LOCCA_ENV", "development").lower()
+        logger.debug("Loading environment files for '%s' environment", env)
 
-                    raise ConfigError(
-                        f"Failed to load .env file {env_path}: {e}"
-                    ) from e
+        loaded_any = False
+        for env_path in self.env_paths:
+            try:
+                # Resolve path using PathManager if it's a string with special prefixes
+                if isinstance(env_path, str) and (
+                    "@" in env_path or "~" in str(env_path)
+                ):
+                    env_path = self.path_manager.resolve_path(env_path)
+
+                if env_path.exists():
+                    load_dotenv(env_path, override=True)
+                    loaded_any = True
+                    logger.debug("Loaded environment from %s", env_path)
+            except Exception as e:
+                from local_coding_assistant.core.exceptions import ConfigError
+
+                raise ConfigError(
+                    f"Failed to load environment from {env_path}: {e!s}"
+                ) from e
 
         if not loaded_any:
-            logger.debug("No .env files found to load")
+            logger.warning(
+                "No .env files found. Using system environment variables only."
+            )
 
     def get_all_env_vars(self) -> dict[str, str]:
         """Get all environment variables with the configured prefix.
@@ -255,14 +363,82 @@ class EnvManager:
         """
         os.environ.pop(self.with_prefix(key), None)
 
-    def get_env(self, key: str, default: Any = None) -> str | None:
-        """Get an environment variable from the current process.
+    def get_env(
+        self, name: str, default: Any = None, prefix: str | None = None
+    ) -> str | None:
+        """Get an environment variable, optionally with a prefix.
 
         Args:
-            key: Environment variable name (without prefix)
-            default: Default value if not found
+            name: The name of the environment variable
+            default: Default value if the variable is not found
+            prefix: Optional prefix to try before the bare variable name
 
         Returns:
-            The environment variable value or default if not found
+            The value of the environment variable if found, otherwise the default value
         """
-        return os.environ.get(self.with_prefix(key), default)
+        key = name.upper()
+        # First try with prefix if provided
+        if prefix:
+            prefixed_name = f"{prefix.upper()}_{key}"
+            value = os.environ.get(prefixed_name)
+            if value is not None:
+                return value
+
+        # If not found with provided prefix (or no prefix), try with default prefix
+        prefixed_name = f"{self.with_prefix(key)}"
+        value = os.environ.get(prefixed_name, default)
+        if value is not None:
+            return value
+
+        # If not found with prefix (or no prefix), try without prefix
+        value = os.environ.get(key, default)
+        if value is not None:
+            return value
+
+        return default
+
+    def get_environment(self) -> str:
+        """Get the current environment name.
+
+        Returns:
+            The current environment name (e.g., 'development', 'test', 'production').
+            Defaults to 'development' if not set.
+        """
+        return os.getenv("LOCCA_ENV", "development").lower()
+
+    def is_development(self) -> bool:
+        """Check if running in development environment.
+
+        Returns:
+            True if LOCCA_ENV is 'development' or not set (default).
+        """
+        return self.get_environment() in ("", "dev", "development")
+
+    def is_testing(self) -> bool:
+        """Check if running in test environment.
+
+        Returns:
+            True if LOCCA_ENV is 'test' or 'testing'.
+        """
+        return self.get_environment() in ("test", "testing")
+
+    def is_production(self) -> bool:
+        """Check if running in production environment.
+
+        Returns:
+            True if LOCCA_ENV is 'prod' or 'production'.
+        """
+        return self.get_environment() in ("prod", "production")
+
+    def is_environment(self, env_name: str) -> bool:
+        """Check if running in a specific environment.
+
+        Args:
+            env_name: The environment name to check against (case-insensitive).
+
+        Returns:
+            True if the current environment matches the given name.
+        """
+        if not isinstance(env_name, str):
+            return False
+        return self.get_environment() == env_name.lower()

@@ -19,13 +19,19 @@ if TYPE_CHECKING:
 logger = get_logger("core.bootstrap")
 
 
-def _setup_environment() -> None:
-    """Load environment variables and perform environment setup."""
-    env_manager = EnvManager()
+def _setup_environment() -> EnvManager:
+    """Load environment variables and perform environment setup.
+
+    Returns:
+        Initialized EnvManager instance
+    """
     try:
-        env_manager.load_env_files()
+        env_manager = EnvManager.create(load_env=True)
+        return env_manager
     except Exception as e:
         logger.warning("Failed to load .env files: %s", e, exc_info=True)
+        # Return a minimal EnvManager instance even if loading fails
+        return EnvManager()
 
 
 def bootstrap(
@@ -56,11 +62,13 @@ def bootstrap(
         logger.debug("Starting application bootstrap")
 
         # 2. Setup environment
-        _setup_environment()
+        env_manager = _setup_environment()
         logger.debug("Environment setup completed")
 
         # 3. Initialize configuration
-        config, config_manager = _initialize_config(config_path, config_manager)
+        config, config_manager = _initialize_config(
+            config_path, config_manager, env_manager
+        )
         logger.debug("Configuration loaded successfully")
 
         # 4. Now setup full logging with the loaded config
@@ -107,7 +115,9 @@ def bootstrap(
 
 
 def _initialize_config(
-    config_path: str | None, config_manager: IConfigManager | None = None
+    config_path: str | None,
+    config_manager: IConfigManager | None = None,
+    env_manager: EnvManager | None = None,
 ) -> tuple[Any, IConfigManager]:
     """Initialize configuration and config manager.
 
@@ -124,14 +134,16 @@ def _initialize_config(
     # Use provided config manager or create a new one
     if config_manager is None:
         config_paths = [Path(config_path)] if config_path else []
-        config_manager = ConfigManager(config_paths=config_paths)
+        config_manager = ConfigManager(
+            config_paths=config_paths, env_manager=env_manager
+        )
 
     # Load config if not already loaded
     if not hasattr(config_manager, "_config"):
         config = config_manager.load_global_config()
     else:
         # Access the config directly from the instance if it's a ConfigManager
-        config = getattr(config_manager, "_config", None)
+        config = getattr(config_manager, "get_global_config", None)
 
     if config is None:
         raise RuntimeError("Failed to load configuration")

@@ -299,6 +299,38 @@ class ToolRuntime:
         async for chunk in self._invoke_stream(input_data):
             yield self._normalize_output(chunk)
 
+    def _get_parameters_schema(self) -> dict[str, Any] | None:
+        schema = getattr(self.info, "parameters", None)
+        return schema or None
+
+    def _ensure_mapping(self, payload: Any) -> dict[str, Any]:
+        """Coerce the payload into a dictionary-like structure."""
+        if isinstance(payload, dict):
+            return dict(payload)
+
+        if hasattr(payload, "model_dump") and callable(payload.model_dump):
+            return dict(payload.model_dump())
+
+        if hasattr(payload, "dict") and callable(payload.dict):
+            return dict(payload.dict())
+
+        if isinstance(payload, str | bytes | bytearray):
+            try:
+                decoded = json.loads(payload)
+            except json.JSONDecodeError as err:
+                raise ValueError(
+                    "Could not parse string/bytes payload as JSON"
+                ) from err
+
+            if isinstance(decoded, dict):
+                return decoded
+            raise ValueError("JSON payload must decode to an object")
+
+        try:
+            return dict(payload)
+        except (TypeError, ValueError) as err:
+            raise ValueError(f"Cannot convert payload to dict: {err}") from err
+
     def _transform_payload(self, payload: Any) -> Any:
         """Transform input payload to match the expected format."""
         if self.kind != "tool" or not self.has_input_validation:
@@ -320,68 +352,193 @@ class ToolRuntime:
     def _validate_payload_against_model(
         self, payload: Any, input_model: type[BaseModel]
     ) -> Any:
-        """Validate and convert payload against the input model."""
+        """Validate and convert payload using the tool's input model."""
         if not isinstance(input_model, type):
             raise ValueError(
                 f"Expected a class/type for input_model, got {type(input_model).__name__}"
             )
 
-        # If payload is already an instance of the model, return as-is
         if isinstance(payload, input_model):
             return payload
 
-        # Convert payload to dict if it's not already
-        if not isinstance(payload, dict):
-            if hasattr(payload, "model_dump"):
-                payload = payload.model_dump()
-            elif hasattr(payload, "dict"):
-                payload = payload.dict()
-            elif isinstance(payload, str | bytes | bytearray):
-                try:
-                    payload = json.loads(payload)
-                except json.JSONDecodeError as err:
-                    raise ValueError(
-                        "Could not parse string/bytes payload as JSON"
-                    ) from err
+        payload_dict = self._ensure_mapping(payload)
 
-        # Use Pydantic's model_validate
-        return input_model.model_validate(payload)
+        try:
+            return input_model.model_validate(payload_dict)
+        except ValidationError as model_error:
+            schema = self._get_parameters_schema()
+            if schema:
+                try:
+                    return self._validate_with_parameters_schema(payload_dict, schema)
+                except Exception as schema_error:
+                    logger.debug(
+                        "Falling back to parameters schema validation failed: %s",
+                        str(schema_error),
+                    )
+
+            raise model_error
+
+    def _validate_field_type(
+        self, value: Any, field_type: str, field_schema: dict
+    ) -> bool:
+        """Validate a field value against its declared type in the schema."""
+        if value is None:
+            return field_schema.get("nullable", False)
+
+        type_checkers = {
+            "string": lambda x: isinstance(x, str),
+            "number": lambda x: isinstance(x, int | float) and not isinstance(x, bool),
+            "integer": lambda x: isinstance(x, int) and not isinstance(x, bool),
+            "boolean": lambda x: isinstance(x, bool),
+            "array": lambda x: isinstance(x, list | tuple),
+            "object": lambda x: isinstance(x, dict),
+        }
+
+        # Handle union types (e.g., "string|null")
+        if "|" in field_type:
+            return any(
+                self._validate_field_type(value, t.strip(), field_schema)
+                for t in field_type.split("|")
+            )
+
+        # Handle array type with items schema
+        if field_type == "array" and "items" in field_schema:
+            if not isinstance(value, list | tuple):
+                return False
+
+            item_schema = field_schema["items"]
+            item_type = item_schema.get("type", "any")
+
+            return all(
+                self._validate_field_type(item, item_type, item_schema)
+                for item in value
+            )
+
+        # Handle standard types
+        checker = type_checkers.get(field_type, lambda x: True)
+        return checker(value)
+
+    def _validate_with_parameters_schema(self, payload: Any, schema: dict) -> dict:
+        """
+        Validate the payload against the parameters schema.
+
+        Args:
+            payload: The input payload to validate
+            schema: The parameters schema to validate against
+
+        Returns:
+            The validated payload as a dictionary
+
+        Raises:
+            ValueError: If validation fails
+        """
+        payload_dict = self._ensure_mapping(payload)
+
+        properties = schema.get("properties", {})
+        required_fields = schema.get("required", [])
+
+        missing_fields = [
+            field
+            for field in required_fields
+            if field not in payload_dict or payload_dict[field] is None
+        ]
+
+        if missing_fields:
+            raise ValueError(f"Missing required fields: {', '.join(missing_fields)}")
+
+        for field_name, field_schema in properties.items():
+            if field_name not in payload_dict:
+                continue
+
+            value = payload_dict[field_name]
+            if value is None:
+                continue
+
+            field_type = field_schema.get("type")
+            if field_type and not self._validate_field_type(
+                value, field_type, field_schema
+            ):
+                raise ValueError(
+                    f"Field '{field_name}' has invalid type. "
+                    f"Expected {field_type}, got {type(value).__name__}"
+                )
+
+            if "enum" in field_schema and value not in field_schema["enum"]:
+                raise ValueError(
+                    f"Field '{field_name}' must be one of {field_schema['enum']}"
+                )
+
+        return payload_dict
 
     def _format_validation_error(self, exc: ValidationError) -> str:
-        """Format validation error messages into a user-friendly string."""
+        """
+        Format validation error messages into a user-friendly string.
+
+        Args:
+            exc: The ValidationError to format
+
+        Returns:
+            A formatted error message string
+        """
         errors = []
         for error in exc.errors():
-            loc = ".".join(str(loc_part) for loc_part in error["loc"])
-            msg = error["msg"]
-            errors.append(f"{loc}: {msg}")
+            loc = ".".join(str(loc_part) for loc_part in error.get("loc", []))
+            msg = error.get("msg", "Validation error")
+            if loc:
+                errors.append(f"{loc}: {msg}")
+            else:
+                errors.append(msg)
+
+        if not errors:
+            return "Unknown validation error"
+
         return "\n  - " + "\n  - ".join(errors)
 
     def _prepare_input(self, payload: Any) -> Any:
         """Validate and transform tool input."""
-        # Early return for non-tools or tools without input validation
-        if self.kind != "tool" or not self.has_input_validation:
+        # Early return for non-tools
+        if self.kind != "tool":
             return payload
 
         # Transform the input to match the expected format
-        payload = self._transform_payload(payload)
-
-        # Get the input model if available
-        input_model = getattr(self.instance, "Input", None)
-        if input_model is None:
-            return payload
-
-        # Validate and convert the payload
         try:
-            return self._validate_payload_against_model(payload, input_model)
-        except ValidationError as exc:
-            error_msg = self._format_validation_error(exc)
-            raise ToolRegistryError(
-                f"Invalid input for tool '{self.info.name}':{error_msg}"
-            ) from exc
-        except (ValueError, AttributeError) as exc:
-            raise ToolRegistryError(
-                f"Invalid input for tool '{self.info.name}': {exc}"
-            ) from exc
+            payload = self._transform_payload(payload)
+        except Exception as e:
+            logger.warning(
+                "Error transforming input for tool '%s': %s",
+                self.info.name,
+                str(e),
+                exc_info=logger.isEnabledFor(logging.DEBUG),
+            )
+            # Continue with the original payload if transformation fails
+            pass
+
+        schema = self._get_parameters_schema()
+
+        input_model = getattr(self.instance, "Input", None)
+        if input_model is not None and issubclass(input_model, BaseModel):
+            try:
+                return self._validate_payload_against_model(payload, input_model)
+            except ValidationError as model_error:
+                error_msg = self._format_validation_error(model_error)
+                raise ToolRegistryError(
+                    f"Invalid input for tool '{self.info.name}':{error_msg}"
+                ) from model_error
+            except (ValueError, AttributeError) as exc:
+                raise ToolRegistryError(
+                    f"Invalid input for tool '{self.info.name}': {exc}"
+                ) from exc
+
+        if schema:
+            try:
+                return self._validate_with_parameters_schema(payload, schema)
+            except Exception as exc:
+                raise ToolRegistryError(
+                    f"Input validation failed for tool '{self.info.name}': {exc}"
+                ) from exc
+
+        # No validation to perform
+        return payload
 
     async def _invoke_run(self, input_data: Any) -> Any:
         """Invoke the underlying tool execution."""
@@ -824,6 +981,45 @@ class ToolManager(IToolManager, Iterable[Any]):
                 execution_time_ms=execution_time_ms,
             )
 
+    async def execute_async(
+        self, request: ToolExecutionRequest
+    ) -> ToolExecutionResponse:
+        """Asynchronously execute a tool using a ToolExecutionRequest and return ToolExecutionResponse.
+
+        Args:
+            request: ToolExecutionRequest containing tool name and payload.
+
+        Returns:
+            ToolExecutionResponse with execution results.
+        """
+        tool_name = request.tool_name
+        start_time = time.perf_counter()
+
+        try:
+            runtime = self._get_runtime(tool_name)
+            result = await runtime.execute(request.payload)
+            execution_time_ms = (time.perf_counter() - start_time) * 1000
+            self._record_success(tool_name, execution_time_ms / 1000.0)
+
+            return ToolExecutionResponse(
+                success=True,
+                result=result,
+                tool_name=tool_name,
+                execution_time_ms=execution_time_ms,
+            )
+        except Exception as exc:
+            execution_time_ms = (time.perf_counter() - start_time) * 1000
+            self._record_error(tool_name, execution_time_ms / 1000.0, exc)
+            error_msg = f"Error executing tool '{tool_name}': {exc}"
+            logger.exception(error_msg)
+
+            return ToolExecutionResponse(
+                success=False,
+                tool_name=tool_name,
+                error_message=error_msg,
+                execution_time_ms=execution_time_ms,
+            )
+
     def get_tool_info(self, tool_name: str) -> ToolInfo | None:
         """Get detailed information about a registered tool.
 
@@ -835,18 +1031,25 @@ class ToolManager(IToolManager, Iterable[Any]):
         """
         return self._tools.get(tool_name)
 
-    def list_tools(self, category: str | ToolCategory | None = None) -> list[ToolInfo]:
+    def list_tools(
+        self, available_only: bool = False, category: str | ToolCategory | None = None
+    ) -> list[ToolInfo]:
         """List all registered tools, optionally filtered by category.
 
         Args:
+            available_only: If True, only returns tools that are available.
             category: Optional category to filter tools by (can be string or ToolCategory).
                      If the category doesn't exist, returns an empty list.
 
         Returns:
             List of ToolInfo objects.
         """
+        filtered_tools = list(self._tools.values())
+        if available_only:
+            filtered_tools = [tool for tool in filtered_tools if tool.available]
+
         if category is None:
-            return list(self._tools.values())
+            return filtered_tools
 
         # Convert string category to ToolCategory if needed
         if isinstance(category, str):
@@ -856,7 +1059,7 @@ class ToolManager(IToolManager, Iterable[Any]):
                 # For unknown categories, return an empty list
                 return []
 
-        return [info for info in self._tools.values() if info.category == category]
+        return [info for info in filtered_tools if info.category == category]
 
     def get_execution_stats(self) -> dict[str, dict[str, Any]]:
         """Get execution statistics for all tools."""
@@ -865,14 +1068,14 @@ class ToolManager(IToolManager, Iterable[Any]):
     def run_tool(
         self,
         tool_name: str,
-        parameters: dict[str, Any],
+        payload: dict[str, Any],
         **kwargs: Any,
     ) -> Any:
         """Run a tool with the given parameters.
 
         Args:
             tool_name: Name of the tool to run
-            parameters: Parameters to pass to the tool
+            payload: Payload to pass to the tool
             **kwargs: Additional keyword arguments
 
         Returns:
@@ -881,7 +1084,7 @@ class ToolManager(IToolManager, Iterable[Any]):
         Raises:
             ToolRegistryError: If the tool is not found, not enabled, not available, or execution fails
         """
-        return self._run_sync(self.run_tool_async(tool_name, parameters, **kwargs))
+        return self._run_sync(self.run_tool_async(tool_name, payload, **kwargs))
 
     async def run_tool_async(
         self,

@@ -16,6 +16,11 @@ wheels/
 .continue/
 .windsurf/
 tmp/
+.cache/
+logs/
+tests/logs/
+tests/cache/
+
 
 # IDE specific
 .idea/
@@ -23,9 +28,14 @@ vscode/
 *.swp
 *.swo
 
+# Local config overrides
+config/*.local.yaml
+config/*.local.yml
+config/*.local.json
+config/*.local.toml
+
 # Local development
 .env.local
-src/local_coding_assistant/config/providers.local.yaml
 
 # Logs
 *.log

@@ -48,17 +48,23 @@ class TestAgentLoopInitialization:
         """Test that AgentLoop caches tools during initialization."""
         llm_manager = MagicMock(spec=LLMManager)
 
-        # Create a mock tool manager with some tools
+        # Create a mock tool
         mock_tool = MagicMock()
         mock_tool.name = "test_tool"
         mock_tool.description = "A test tool"
+        mock_tool.available = True
 
+        # Mock the tool manager's list_tools method
         tool_manager = MagicMock(spec=ToolManager)
-        tool_manager.__iter__ = MagicMock(return_value=iter([mock_tool]))
+        tool_manager.list_tools.return_value = [mock_tool]
 
         agent_loop = AgentLoop(
             llm_manager=llm_manager, tool_manager=tool_manager, name="test_agent"
         )
+
+        # Verify list_tools was called with available_only=True
+        tool_manager.list_tools.assert_called_once_with(available_only=True)
+
         # Check that tools are cached
         assert hasattr(agent_loop, "_cached_tools")
         assert len(agent_loop._cached_tools) == 1

@@ -151,7 +151,7 @@ class LangGraphAgent:
             return []
 
         available_tools = []
-        for tool in self.tool_manager:
+        for tool in self.tool_manager.list_tools(available_only=True):
             if hasattr(tool, "name") and hasattr(tool, "description"):
                 available_tools.append(
                     {
@@ -168,7 +168,7 @@ class LangGraphAgent:
             return "No tools available"
 
         descriptions = []
-        for tool in self.tool_manager:
+        for tool in self.tool_manager.list_tools(available_only=True):
             if hasattr(tool, "name") and hasattr(tool, "description"):
                 descriptions.append(f"- {tool.name}: {tool.name}: {tool.description}")
         return "\n".join(descriptions) if descriptions else "No tools available"
@@ -448,7 +448,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
 
         return response_content
 
-    def _process_tool_calls(
+    async def _process_tool_calls(
         self, tool_calls: list[dict[str, Any]], plan: dict[str, Any], state: AgentState
     ) -> dict[str, Any] | None:
         """Process tool calls and return action result.
@@ -466,11 +466,11 @@ Please provide a plan with specific actions to take. Respond in JSON format with
 
         for tool_call in tool_calls:
             if "function" in tool_call:
-                return self._handle_tool_call(tool_call, plan, state)
+                await self._handle_tool_call(tool_call, plan, state)
 
         return None
 
-    def _handle_tool_call(
+    async def _handle_tool_call(
         self, tool_call: dict[str, Any], plan: dict[str, Any], state: AgentState
     ) -> dict[str, Any]:
         """Handle execution of a single tool call."""
@@ -485,7 +485,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
             else:
                 try:
                     request = ToolExecutionRequest(tool_name=func_name, payload=args)
-                    response = self.tool_manager.execute(request)
+                    response = await self.tool_manager.execute_async(request)
                     if not response.success:
                         tool_result = f"Error: {response.error_message}"
                     else:
@@ -565,7 +565,7 @@ Please describe what actions were taken and their results.
             )
 
             # Process tool calls if any
-            action_result = self._process_tool_calls(tool_calls, plan, state)
+            action_result = await self._process_tool_calls(tool_calls, plan, state)
 
             # If no tool calls were processed, create default action result
             if action_result is None:

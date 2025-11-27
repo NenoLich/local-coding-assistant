@@ -23,9 +23,9 @@ class ConfigManager(IConfigManager):
 
     def __init__(
         self,
-        config_paths: list[Path] | None = None,
+        config_paths: list[Path | str] | None = None,
         env_manager: EnvManager | None = None,
-        tool_config_paths: list[Path] | None = None,
+        tool_config_paths: list[Path | str] | None = None,
     ):
         """Initialize the config manager.
 
@@ -34,14 +34,27 @@ class ConfigManager(IConfigManager):
             env_manager: Optional EnvManager instance (creates default if not provided)
             tool_config_paths: Optional list of paths to tool YAML config files
         """
-        self.config_paths = config_paths or []
-        self.tool_config_paths = tool_config_paths or [
-            Path("config/tools.default.yaml"),
-            Path("config/tools.local.yaml"),
+        self.env_manager: EnvManager = env_manager or EnvManager()
+        self.path_manager = self.env_manager.path_manager
+
+        # Resolve config paths
+        self.config_paths = [
+            self.path_manager.resolve_path(p) for p in (config_paths or [])
         ]
-        self.env_manager = env_manager or EnvManager()
-        self._defaults_path = Path(__file__).parent / "defaults.yaml"
+
+        # Default tool config paths if none provided
+        if tool_config_paths is None:
+            self.tool_config_paths = [
+                self.path_manager.resolve_path("@config/tools.default.yaml"),
+                self.path_manager.resolve_path("@config/tools.local.yaml"),
+            ]
+        else:
+            self.tool_config_paths = [
+                self.path_manager.resolve_path(p) for p in tool_config_paths
+            ]
+
         # 3-layer configuration storage
+        self._defaults_path = self.path_manager.resolve_path("@config/defaults.yaml")
         self._global_config: AppConfig | None = None
         self._session_overrides: dict[str, Any] = {}
         self._loaded_tools: dict[str, ToolConfig] = {}
@@ -58,7 +71,9 @@ class ConfigManager(IConfigManager):
         try:
             from local_coding_assistant.config.tool_loader import ToolLoader
 
-            tool_loader = ToolLoader()
+            tool_loader = ToolLoader(
+                env_manager=self.env_manager, tool_config_paths=self.tool_config_paths
+            )
             tools = tool_loader.load_tool_configs()
             logger.debug("Successfully loaded %d tools", len(tools))
             return tools
@@ -292,14 +307,39 @@ class ConfigManager(IConfigManager):
             else:
                 raise ConfigError(error_msg) from e
 
+    def _load_config_file(self, path: Path | str) -> dict[str, Any]:
+        """Load configuration from a YAML file.
+
+        Args:
+            path: Path to the YAML file (can be relative or use @ prefixes)
+
+        Returns:
+            Dictionary with the loaded configuration
+
+        Raises:
+            ConfigError: If the file cannot be loaded or parsed
+        """
+        # Resolve path using PathManager
+        resolved_path = self.path_manager.resolve_path(path)
+        try:
+            with open(resolved_path, encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+                if config is None:
+                    logger.warning(f"Config file {resolved_path} is empty")
+                    return {}
+                if not isinstance(config, dict):
+                    logger.warning(f"Config file {resolved_path} is not a dictionary")
+                    return {}
+                return config
+        except (yaml.YAMLError, OSError) as e:
+            raise ConfigError(
+                f"Failed to load config from {path} (resolved to: {resolved_path}): {e}"
+            ) from e
+
     def _load_defaults(self) -> dict[str, Any]:
         """Load default configuration values."""
         if self._defaults_path.exists():
-            config_data = self._load_yaml_file(self._defaults_path)
-            # Handle case where _load_yaml_file returns None
-            if config_data is None:
-                logger.warning("_load_yaml_file returned None, using empty dict")
-                config_data = {}
+            config_data = self._load_config_file(self._defaults_path)
             logger.debug(f"Loaded default config: {len(config_data)} keys")
             return config_data
         else:
@@ -310,7 +350,7 @@ class ConfigManager(IConfigManager):
         """Load YAML file and return as dictionary.
 
         Args:
-            file_path: Path to the YAML file
+            file_path: Path to the YAML file (can be relative or use @ prefixes)
 
         Returns:
             Configuration dictionary or None if file doesn't exist
@@ -319,43 +359,14 @@ class ConfigManager(IConfigManager):
             ConfigError: If file exists but is invalid YAML
         """
         logger.debug(f"Loading YAML file: {file_path}")
-        logger.debug(f"File exists: {file_path.exists()}")
-
-        if not file_path.exists():
-            logger.debug(f"YAML file {file_path} does not exist, skipping")
-            return None
 
         try:
-            with open(file_path, encoding="utf-8") as file:
-                raw_content = file.read()
-                logger.debug(f"File content length: {len(raw_content)} characters")
-                # Ensure we always return a dict, never None
-                config_data = yaml.safe_load(raw_content)
-                if config_data is None:
-                    logger.warning(
-                        f"YAML file {file_path} loaded as None, using empty dict"
-                    )
-                    config_data = {}
-                elif not isinstance(config_data, dict):
-                    logger.warning(
-                        f"YAML file {file_path} did not load as dict, got {type(config_data)}, using empty dict"
-                    )
-                    config_data = {}
-
-                logger.debug(
-                    f"Loaded YAML config from {file_path}: {len(config_data)} keys"
-                )
-                return config_data
-        except UnicodeDecodeError as e:
-            error_msg = f"Unicode decode error in {file_path}: {e}. File may not be UTF-8 encoded."
-            logger.error(error_msg)
-
-            raise ConfigError(error_msg) from e
-        except yaml.YAMLError as e:
-            error_msg = f"Invalid YAML in {file_path}: {e}"
-            logger.error(error_msg)
-
-            raise ConfigError(error_msg) from e
+            return self._load_config_file(file_path)
+        except ConfigError as e:
+            if "No such file or directory" in str(e):
+                logger.debug(f"YAML file {file_path} does not exist, skipping")
+                return None
+            raise  # Re-raise other ConfigError exceptions
 
     def _apply_overrides_to_dict(
         self, base_dict: dict[str, Any], overrides: dict[str, Any]
@@ -421,6 +432,47 @@ class ConfigManager(IConfigManager):
     def global_config(self) -> AppConfig | None:
         """Get the current global configuration."""
         return self._global_config
+
+    def save_config(self, path: Path | str | None = None) -> None:
+        """Save the current configuration to a file.
+
+        Args:
+            path: Path to save the config to (can be relative or use @ prefixes).
+                  If None, saves to the first config path.
+
+        Raises:
+            ConfigError: If no config paths are configured or save fails
+        """
+        if path is None:
+            if not self.config_paths:
+                raise ConfigError("No config paths configured to save to")
+            path = self.config_paths[0]
+
+        try:
+            # Resolve path using PathManager and ensure parent directory exists
+            resolved_path = self.path_manager.resolve_path(path, ensure_parent=True)
+
+            # Ensure global config is loaded
+            if self._global_config is None:
+                raise ConfigError(
+                    "No configuration loaded. Call load_global_config() first."
+                )
+
+            # Get the current config
+            config_data = self._global_config.model_dump(
+                exclude_unset=True, exclude_defaults=True, exclude_none=True
+            )
+
+            # Save to file
+            with open(resolved_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(config_data, f, sort_keys=False)
+
+            logger.info("Configuration saved to %s", resolved_path)
+
+        except (OSError, yaml.YAMLError) as e:
+            error_msg = f"Failed to save configuration to {path}: {e}"
+            logger.error(error_msg)
+            raise ConfigError(error_msg) from e
 
     @property
     def session_overrides(self) -> dict[str, Any]:

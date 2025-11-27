@@ -18,7 +18,7 @@ from local_coding_assistant.providers.base import (
 )
 from local_coding_assistant.providers.provider_manager import ProviderManager
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
-from local_coding_assistant.tools.builtin import SumTool
+from local_coding_assistant.tools.builtin_tools.math_tools import SumTool
 from local_coding_assistant.tools.tool_manager import ToolManager
 
 # Test configuration constants
@@ -57,13 +57,24 @@ class MockTestProvider(BaseProvider):
         api_key_env: str | None = None,
         models: list[str] | None = None,
         driver: str | None = "test",
+        env_manager: Any | None = None,
+        allow_test_requests: bool = False,
         **kwargs,
     ):
+        # Create a mock environment manager if none provided
+        if env_manager is None:
+            env_manager = MagicMock()
+            env_manager.get_env.return_value = api_key
+            env_manager.is_testing.return_value = False
+
         super().__init__(
             name=name or "test",
             base_url=base_url or "https://api.test.com",
             models=models or ["test-model", "gpt-4", "gpt-3.5"],
-            api_key=api_key or "test_key",  # Provide API key for testing
+            api_key=api_key or "test_key",
+            env_manager=env_manager,
+            allow_test_requests=allow_test_requests,
+            **kwargs
         )
         self.call_count = 0
         self.calls: list[dict[str, Any]] = []
@@ -294,15 +305,46 @@ class MockConfigManager(IConfigManager):
 @pytest.fixture(scope="session")
 def test_provider() -> MockTestProvider:
     """Session-scoped test provider instance."""
-    return MockTestProvider(name="test")
+    # Create a mock environment manager
+    mock_env = MagicMock()
+    mock_env.get_env.return_value = "test_key"
+    mock_env.is_testing.return_value = False
+    
+    return MockTestProvider(
+        name="test",
+        env_manager=mock_env,
+        allow_test_requests=True
+    )
 
 
 @pytest.fixture(scope="session")
 def provider_manager() -> Generator[ProviderManager, None, None]:
     """Session-scoped provider manager with test provider registered."""
-    manager = ProviderManager()
+    # Create a mock environment manager
+    mock_env = MagicMock()
+    mock_env.get_env.return_value = "test_key"
+    mock_env.is_testing.return_value = False
+    
+    manager = ProviderManager(env_manager=mock_env, allow_test_requests=True)
     manager._providers["test"] = MockTestProvider
     manager._provider_sources["test"] = "test"
+    
+    # Initialize the provider manager with test configuration
+    manager._provider_configs = {
+        "test": {
+            "name": "test",
+            "driver": "test",
+            "base_url": "https://api.test.com",
+            "models": ["test-model", "gpt-4", "gpt-3.5"],
+            "api_key": "test_key",
+            "env_manager": mock_env,
+            "allow_test_requests": True
+        }
+    }
+    
+    # Initialize the providers
+    manager._instantiate_providers()
+    
     yield manager
     # Cleanup if needed
 
@@ -330,7 +372,6 @@ def llm_manager(
 def tool_manager(base_config_manager: MockConfigManager) -> ToolManagerHelper:
     """Session-scoped tool manager with test tools."""
     manager = ToolManagerHelper(config_manager=base_config_manager)
-    manager.register_tool(SumTool())
     return manager
 
 
@@ -352,7 +393,6 @@ def runtime_manager(
 
 @pytest.fixture
 def persistent_runtime_manager(
-    llm_manager: LLMManager,
     tool_manager: ToolManagerHelper,
     base_config_manager: MockConfigManager,
 ) -> Generator[RuntimeManager, None, None]:
@@ -361,10 +401,27 @@ def persistent_runtime_manager(
     config = deepcopy(base_config_manager)
     config.set_session_overrides({"runtime.persistent_sessions": True})
     
-    # Create a new provider manager with the test provider
-    provider_manager = ProviderManager()
-    test_provider = MockTestProvider()
+    # Create a mock environment manager
+    mock_env = MagicMock()
+    mock_env.get_env.return_value = "test_key"
+    mock_env.is_testing.return_value = False
+    
+    # Create a new provider manager with the test provider and mock environment
+    provider_manager = ProviderManager(env_manager=mock_env, allow_test_requests=True)
+    test_provider = MockTestProvider(env_manager=mock_env, allow_test_requests=True)
     provider_manager._providers = {"test": test_provider}
+    
+    # Initialize provider configs
+    provider_manager._provider_configs = {
+        "test": {
+            "name": "test",
+            "driver": "test",
+            "base_url": "https://api.test.com",
+            "models": ["test-model", "gpt-4", "gpt-3.5"],
+            "api_key": "test_key",
+            "env_manager": mock_env
+        }
+    }
     
     # Create a new LLM manager with the new config and provider manager
     llm_manager = LLMManager(
@@ -513,6 +570,7 @@ async def test_directive_success_invokes_tool_and_passes_outputs_to_llm(runtime_
     class TestTool:
         name = "test_tool"
         description = "A test tool"
+        available = True  # Add the required 'available' attribute
         
         def execute(self, arg1: str) -> str:
             return f"Processed: {arg1}"
@@ -632,10 +690,6 @@ async def test_directive_invalid_payload_validation_raises(runtime_manager: Runt
     runtime_manager._llm_manager = mock_llm_manager
     
     try:
-        # Register the sum tool
-        from local_coding_assistant.tools.builtin import SumTool
-        tool_manager.register_tool(SumTool())
-
         # Test with invalid payload (None instead of a dictionary)
         result = await runtime_manager.orchestrate("tool:sum null")
 
@@ -815,9 +869,14 @@ def test_get_available_tools_returns_function_specs_for_iterable_entries(runtime
 
 def test_get_available_tools_returns_none_when_no_valid_tools(runtime_manager: RuntimeManager):
     """If the tool manager has no usable entries, None should be returned."""
-    # Replace the tool manager with an empty list
+    # Create a mock tool manager that returns an empty list
+    class MockToolManager:
+        def list_tools(self, available_only: bool = False, category: str | None = None) -> list:
+            return []
+    
+    # Replace the tool manager with our mock
     original_tool_manager = runtime_manager._tool_manager
-    runtime_manager._tool_manager = []  # No tools available
+    runtime_manager._tool_manager = MockToolManager()
     
     try:
         assert runtime_manager._get_available_tools() is None

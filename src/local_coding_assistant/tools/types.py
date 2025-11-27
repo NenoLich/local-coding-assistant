@@ -63,7 +63,7 @@ class ToolInfo:
 
     Attributes:
         name: Unique identifier for the tool
-        class_name: Name of the tool's class (set during registration)
+        tool_class: Name of the tool's class (set during registration)
         description: Human-readable description of the tool
         category: Category the tool belongs to
         source: Source of the tool (builtin, external, mcp, etc.)
@@ -96,6 +96,9 @@ class ToolInfo:
     endpoint: str | None = None
     provider: str | None = None
     config: dict[str, Any] = field(default_factory=dict)
+    parameters: dict[str, Any] = field(
+        default_factory=lambda: {"type": "object", "properties": {}, "required": []}
+    )
 
     def __post_init__(self):
         """Convert string enums to proper enum types."""

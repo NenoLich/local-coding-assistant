@@ -33,6 +33,7 @@ A sophisticated local-first Python project for building an advanced AI coding as
   - `config_manager.py`: Three-layer hierarchy (global/session/call) with deep merge + validation.
   - `providers.default.yaml` / `providers.local.yaml`: Declarative provider definitions; CLI writes to local file.
   - `schemas.py`: Pydantic models (`AppConfig`, `ProviderConfig`, `LLMConfig`, `AgentConfig`).
+  - `path_manager.py`: Environment-aware path resolution utility.
 
 - **`runtime/`**
   - `runtime_manager.py`: Session orchestration, per-call overrides, streaming response assembly.
@@ -44,6 +45,7 @@ A sophisticated local-first Python project for building an advanced AI coding as
 - **`cli/`**
   - `commands/provider.py`: `add|list|remove|validate|reload` provider management.
   - `commands/run.py`: `locca run query` entry point, supports `--provider`, `--model`, `--streaming`.
+  - `commands/tool.py`: Tool management (list, add, remove, run, validate, reload)
   - `commands/config.py`: Config inspection and mutation via Typer.
 
 - **`tests/`**
@@ -62,7 +64,7 @@ A sophisticated local-first Python project for building an advanced AI coding as
 - **`main.py`**: Enhanced Typer application with comprehensive commands
 - **`commands/`**:
   - `run.py`: Advanced query execution with agent loop
-  - `list_tools.py`: Tool discovery and management
+  - `tool.py`: Tool management (list, add, remove, run, validate, reload)
   - `config.py`: Configuration management interface
   - `serve.py`: Development server with hot reload
 
@@ -263,10 +265,54 @@ uv run locca config set LLM__TEMPERATURE 0.6
 ## Extension Points
 
 ### Tool Development
-- Implement `ToolBase` for custom tools
-- Define JSON schemas for input/output validation
-- Register tools with the tool registry
-- Handle errors gracefully
+- **Registration**: Add tool configuration to `config/tools.local.yaml`
+  ```yaml
+  tools:
+    - name: my_tool
+      module: my_tools.package.module  # Python import path
+      # OR
+      path: path/to/tool_implementation.py  # Path to Python file
+      enabled: true
+      config:  # Optional tool-specific configuration
+        param1: value1
+  ```
+
+- **Implementation Requirements**:
+  - Implement a class with a `run` method (optionally async)
+  - Define input/output schemas using Pydantic models
+  - Support streaming by yielding results (optional)
+  - Handle errors with appropriate exceptions
+
+- **Example Tool**:
+  ```python
+  from pydantic import BaseModel
+  from typing import Any, AsyncIterator, Optional
+
+  class ToolInput(BaseModel):
+      query: str
+      max_results: int = 5
+
+  class ToolOutput(BaseModel):
+      results: list[dict[str, Any]]
+      count: int
+
+  class MyTool:
+      name = "my_tool"
+      description = "My custom tool description"
+      
+      async def run(self, input_data: dict) -> dict:
+          # Process input and return results
+          return {"results": [...], "count": 0}
+          
+      # Optional: For streaming support
+      async def stream(self, input_data: dict) -> AsyncIterator[dict]:
+          yield {"partial": "result"}
+  ```
+
+- **Validation**:
+  - Tools are validated on registration
+  - Input/output schemas are automatically generated from type hints
+  - Configuration is type-checked against tool's expected schema
 
 ### LLM Provider Integration
 - Implement `LLMManager` interface

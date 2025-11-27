@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
+from typing import Any, List, Dict, Union, Optional
 
 import pytest
 import yaml
+from pydantic import BaseModel
 
 from local_coding_assistant.config.schemas import ToolConfig
 from local_coding_assistant.config.tool_loader import (
@@ -49,13 +51,14 @@ def test_deep_merge_dicts_merges_nested_maps_without_mutating_inputs():
     assert "y" not in base["nested"]
 
 
-def test_tool_config_loader_merges_default_and_local_configs(tmp_path, monkeypatch):
+def test_tool_config_loader_merges_default_and_local_configs(test_configs):
+    # Test data
     default_payload = {
         "tools": [
             {
                 "id": "echo",
                 "description": "default description",
-                "path": "tools/echo_tool.py",
+                "path": "modules/echo_tool.py",
                 "config": {"nested": {"a": 1}},
             }
         ]
@@ -77,26 +80,23 @@ def test_tool_config_loader_merges_default_and_local_configs(tmp_path, monkeypat
         ]
     }
 
-    default_path = tmp_path / "tools.default.yaml"
-    local_path = tmp_path / "tools.local.yaml"
-    default_path.write_text(yaml.safe_dump(default_payload), encoding="utf-8")
-    local_path.write_text(yaml.safe_dump(local_payload), encoding="utf-8")
+    # Write test configs using the fixture
+    test_configs["default"].write_text(yaml.safe_dump(default_payload), encoding="utf-8")
+    test_configs["local"].write_text(yaml.safe_dump(local_payload), encoding="utf-8")
 
-    path_map: dict[str, Path] = {"default": default_path, "local": local_path}
+    # Create a test echo module file
+    echo_module = test_configs["modules_dir"] / "echo_tool.py"
+    echo_module.write_text("""
+class EchoTool:
+    def run(self, *args, **kwargs):
+        return {"result": "echo"}
+""", encoding="utf-8")
 
-    def fake_get_config_path(self, config_type: str) -> Path | None:  # noqa: D401
-        return path_map.get(config_type)
-
-    monkeypatch.setattr(
-        ToolConfigLoader,
-        "_get_config_path",
-        fake_get_config_path,
-        raising=False,
-    )
-
-    loader = ToolConfigLoader()
+    # Create the loader with our test path manager
+    loader = ToolConfigLoader(env_manager=test_configs["env_manager"])
     raw_configs = loader.load()
 
+    # Verify results
     assert sorted(raw_configs) == ["echo", "new_tool"]
 
     echo_data = raw_configs["echo"]
@@ -104,15 +104,14 @@ def test_tool_config_loader_merges_default_and_local_configs(tmp_path, monkeypat
     assert echo_data["config"]["config"]["nested"] == {"a": 1, "b": 2}
     assert echo_data["config"]["config"]["extra"] is True
     assert echo_data["config"]["source"] == "external"
-    assert echo_data["base_dir"] == local_path.parent
+    assert echo_data["base_dir"] == test_configs["config_dir"]
     assert echo_data["_source"]["config_type"] == "local"
-    assert echo_data["_source"]["file"] == str(local_path)
+    assert str(Path(echo_data["_source"]["file"]).resolve()) == str(test_configs["local"].resolve())
 
     new_tool_data = raw_configs["new_tool"]
     assert new_tool_data["config"]["enabled"] is False
-    assert new_tool_data["base_dir"] == local_path.parent
+    assert new_tool_data["base_dir"] == test_configs["config_dir"]
     assert new_tool_data["_source"]["config_type"] == "local"
-
 
 def test_tool_loader_load_tool_configs_invokes_subcomponents(monkeypatch):
     template_raw_configs = {
@@ -128,10 +127,12 @@ def test_tool_loader_load_tool_configs_invokes_subcomponents(monkeypatch):
 
     raw_calls: list[dict[str, dict[str, object]]] = []
     enrich_calls: list[dict[str, dict[str, object]]] = []
+    tool_config_paths_used = []
 
-    def fake_load(self):  # noqa: D401
+    def fake_load(self, tool_config_paths=None):  # noqa: D401
         data = copy.deepcopy(template_raw_configs)
         raw_calls.append(data)
+        tool_config_paths_used.append(tool_config_paths)
         return data
 
     class DummyTool:
@@ -199,3 +200,215 @@ def test_tool_config_converter_convert_mcp_tool_validates_required_fields():
     assert result.provider == "test"
     assert result.is_async is True
     assert result.available is True
+
+
+def test_retrieve_parameters_from_input_model():
+    """Test extracting parameters from Input model using model_json_schema."""
+    from pydantic import BaseModel
+    
+    class TestInputModel(BaseModel):
+        """Test input model with various field types."""
+        name: str
+        age: int
+        is_active: bool = True
+        tags: list[str] = []
+        metadata: dict[str, Any] | None = None
+    
+    class TestTool:
+        """Test tool with Input model."""
+        Input = TestInputModel
+        
+        def run(self, **kwargs):
+            pass
+    
+    loader = ToolModuleLoader()
+    parameters = loader._retrieve_parameters(TestTool)
+    
+    assert parameters["type"] == "object"
+    assert set(parameters["required"]) == {"name", "age"}
+    assert parameters["properties"]["name"]["type"] == "string"
+    assert parameters["properties"]["age"]["type"] == "integer"
+    assert parameters["properties"]["is_active"]["type"] == "boolean"
+    assert parameters["properties"]["tags"]["type"] == "array"
+    assert parameters["properties"]["metadata"]["type"] == "object"
+
+
+class TestNormalizeType:
+    """Tests for ToolModuleLoader.normalize_type method."""
+    
+    @pytest.fixture
+    def loader(self):
+        return ToolModuleLoader()
+    
+    def test_primitive_types(self, loader):
+        """Test primitive type normalization."""
+        assert loader.normalize_type(str) == {"type": "string"}
+        assert loader.normalize_type(int) == {"type": "integer"}
+        assert loader.normalize_type(float) == {"type": "number"}
+        assert loader.normalize_type(bool) == {"type": "boolean"}
+    
+    def test_optional_types(self, loader):
+        """Test Optional/Union with None types."""
+        # Using Optional
+        assert loader.normalize_type(Optional[str]) == {
+            "type": "string",
+            "nullable": True
+        }
+        
+        # Using Union with None
+        assert loader.normalize_type(Union[str, None]) == {
+            "type": "string",
+            "nullable": True
+        }
+        
+        # Using | operator (Python 3.10+)
+        assert loader.normalize_type(str | None) == {
+            "type": "string",
+            "nullable": True
+        }
+    
+    def test_collection_types(self, loader):
+        """Test list and dict types."""
+        # List with type parameter
+        assert loader.normalize_type(List[str]) == {
+            "type": "array",
+            "items": {"type": "string"}
+        }
+        
+        # Dict with type parameters
+        assert loader.normalize_type(Dict[str, int]) == {"type": "object"}
+        
+        # Nested collections
+        assert loader.normalize_type(List[Dict[str, int]]) == {
+            "type": "array",
+            "items": {"type": "object"}
+        }
+    
+    def test_union_types(self, loader):
+        """Test Union types (non-None)."""
+        # Union of primitives
+        result = loader.normalize_type(Union[str, int])
+        assert result["type"] == "string"  # First non-null type
+        
+        # Union with multiple types
+        result = loader.normalize_type(Union[str, int, bool])
+        assert result["type"] == "string"  # First non-null type
+    
+    def test_pydantic_model(self, loader):
+        """Test with Pydantic model types."""
+        class TestModel(BaseModel):
+            name: str
+            age: int
+            
+        result = loader.normalize_type(TestModel)
+        # Check for required schema fields
+        assert result["type"] == "object"
+        assert "properties" in result
+        assert "name" in result["properties"]
+        assert "age" in result["properties"]
+        assert "required" in result
+        assert set(result["required"]) == {"name", "age"}
+    
+    def test_any_type(self, loader):
+        """Test Any type handling."""
+        assert loader.normalize_type(Any) == {"type": "string"}
+    
+    def test_unknown_type(self, loader):
+        """Test fallback for unknown types."""
+        class CustomType:
+            pass
+            
+        assert loader.normalize_type(CustomType) == {"type": "string"}
+    
+    def test_nested_optional(self, loader):
+        """Test nested optional types."""
+        # Optional list of strings
+        result = loader.normalize_type(Optional[List[str]])
+        assert result == {
+            "type": "array",
+            "items": {"type": "string"},
+            "nullable": True
+        }
+        
+        # List of optional strings
+        result = loader.normalize_type(List[Optional[str]])
+        assert result == {
+            "type": "array",
+            "items": {"type": "string", "nullable": True}
+        }
+
+
+
+
+def test_retrieve_parameters_from_run_method():
+    """Test extracting parameters from run method signature."""
+    class TestTool:
+        """Test tool with run method parameters."""
+        def run(self, name: str, age: int, is_active: bool = True, tags: list[str] = None):
+            pass
+    
+    loader = ToolModuleLoader()
+    parameters = loader._retrieve_parameters(TestTool)
+    
+    assert parameters["type"] == "object"
+    assert set(parameters["required"]) == {"name", "age"}
+    assert parameters["properties"]["name"]["type"] == "string"
+    assert parameters["properties"]["age"]["type"] == "integer"
+    assert parameters["properties"]["is_active"]["type"] == "boolean"
+    assert parameters["properties"]["tags"]["type"] == "array"
+
+
+def test_retrieve_parameters_no_input_or_run():
+    """Test behavior when neither Input model nor run method is present."""
+    class EmptyTool:
+        pass
+    
+    loader = ToolModuleLoader()
+    parameters = loader._retrieve_parameters(EmptyTool)
+    
+    assert parameters == {
+        "type": "object",
+        "properties": {},
+        "required": []
+    }
+
+
+def test_retrieve_parameters_with_invalid_input_model():
+    """Test behavior when Input model exists but has no model_json_schema."""
+    class TestTool:
+        class Input:
+            """Invalid input model without model_json_schema."""
+            pass
+            
+        def run(self):
+            pass
+    
+    loader = ToolModuleLoader()
+    parameters = loader._retrieve_parameters(TestTool)
+    
+    # Should fall back to run method parameters (none in this case)
+    assert parameters == {
+        "type": "object",
+        "properties": {},
+        "required": []
+    }
+
+
+def test_retrieve_parameters_with_coroutine_run():
+    """Test with an async run method."""
+    import asyncio
+    
+    class AsyncTestTool:
+        """Test tool with async run method."""
+        async def run(self, name: str, count: int = 1):
+            await asyncio.sleep(0)
+            return {"result": f"Hello {name}" * count}
+    
+    loader = ToolModuleLoader()
+    parameters = loader._retrieve_parameters(AsyncTestTool)
+    
+    assert parameters["type"] == "object"
+    assert set(parameters["required"]) == {"name"}
+    assert parameters["properties"]["name"]["type"] == "string"
+    assert parameters["properties"]["count"]["type"] == "integer"
+

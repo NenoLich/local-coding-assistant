@@ -111,12 +111,14 @@ class RuntimeManager:
             runtime_config = config.get("runtime", {})
 
         # Check if persistent_sessions is False or not set (default to False)
-        if not runtime_config.get("persistent_sessions", False):
+        if not runtime_config.persistent_sessions:
             session.reset()
 
         return session
 
-    def _handle_direct_tool_call(self, text: str) -> tuple[dict[str, Any] | None, str]:
+    async def _handle_direct_tool_call(
+        self, text: str
+    ) -> tuple[dict[str, Any] | None, str]:
         """Handle direct tool invocation from user input.
 
         Args:
@@ -141,7 +143,7 @@ class RuntimeManager:
 
                 # Use ToolExecutionRequest for better error handling
                 request = ToolExecutionRequest(tool_name=name, payload=payload)
-                response = self._tool_manager.execute(request)
+                response = await self._tool_manager.execute_async(request)
 
                 if not response.success:
                     error_msg = (
@@ -175,7 +177,7 @@ class RuntimeManager:
 
         return None, text
 
-    def _prepare_llm_request(
+    async def _prepare_llm_request(
         self,
         text: str,
         session: SessionState,
@@ -221,7 +223,7 @@ class RuntimeManager:
             "history": [m.model_dump() for m in session.history],
         }
 
-    def _handle_llm_tool_calls(
+    async def _handle_llm_tool_calls(
         self, session: SessionState, response: LLMResponse
     ) -> None:
         """Handle tool calls initiated by the LLM."""
@@ -229,14 +231,14 @@ class RuntimeManager:
             return
 
         if self._tool_manager is None:
-            self._handle_missing_tool_manager(session, response.tool_calls)
+            await self._handle_missing_tool_manager(session, response.tool_calls)
             return
 
         for tool_call in response.tool_calls:
             if "function" in tool_call:
-                self._process_single_tool_call(tool_call, session)
+                await self._process_single_tool_call(tool_call, session)
 
-    def _handle_missing_tool_manager(
+    async def _handle_missing_tool_manager(
         self, session: SessionState, tool_calls: list[dict[str, Any]]
     ) -> None:
         """Handle tool calls when tool manager is not available."""
@@ -258,7 +260,7 @@ class RuntimeManager:
                     "Tool call '%s' ignored: Tool manager not available", func_name
                 )
 
-    def _process_single_tool_call(
+    async def _process_single_tool_call(
         self, tool_call: dict[str, Any], session: SessionState
     ) -> None:
         """Process a single tool call from the LLM response."""
@@ -267,24 +269,26 @@ class RuntimeManager:
 
         try:
             args = json.loads(tool_call["function"]["arguments"])
-            tool_result = self._execute_tool(func_name, args)
+            tool_result = await self._execute_tool(func_name, args)
             self._log_tool_success(func_name, tool_result)
         except json.JSONDecodeError as e:
-            self._handle_json_decode_error(e, tool_call, func_name, session)
+            await self._handle_json_decode_error(e, tool_call, func_name, session)
             return
         except Exception as e:
-            self._handle_tool_error(e, func_name, args, session)
+            await self._handle_tool_error(e, func_name, args, session)
             return
 
         session.add_tool_message(name=func_name, args=args, result=tool_result)
 
-    def _execute_tool(self, func_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    async def _execute_tool(
+        self, func_name: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
         """Execute a single tool and return its result."""
         request = ToolExecutionRequest(tool_name=func_name, payload=args)
         if self._tool_manager is None:
             return {"error": "Tool functionality is not available"}
 
-        response = self._tool_manager.execute(request)
+        response = await self._tool_manager.execute_async(request)
         exec_time = (
             f"{response.execution_time_ms:.2f}ms"
             if response.execution_time_ms
@@ -304,7 +308,7 @@ class RuntimeManager:
             )
             return {"error": error_msg}
 
-    def _handle_json_decode_error(
+    async def _handle_json_decode_error(
         self,
         error: json.JSONDecodeError,
         tool_call: dict[str, Any],
@@ -316,7 +320,7 @@ class RuntimeManager:
         self._log.error("%s: %s", error_msg, tool_call["function"]["arguments"])
         session.add_tool_message(name=func_name, args={}, result={"error": error_msg})
 
-    def _handle_tool_error(
+    async def _handle_tool_error(
         self,
         error: Exception,
         func_name: str,
@@ -346,9 +350,9 @@ class RuntimeManager:
         """Run a single query in regular mode."""
         session = self._setup_session()
 
-        user_message, tool_outputs = self._record_user_message(text, session)
+        user_message, tool_outputs = await self._record_user_message(text, session)
 
-        request, overrides = self._prepare_llm_request(
+        request, overrides = await self._prepare_llm_request(
             user_message,
             session,
             tool_outputs,
@@ -368,7 +372,7 @@ class RuntimeManager:
 
         # Handle LLM-initiated tool calls and build result
         result = self._build_result(session, response)
-        self._handle_llm_tool_calls(session, response)
+        await self._handle_llm_tool_calls(session, response)
 
         self._log.info("Runtime finished query; session_id=%s", session.id)
         return result
@@ -504,7 +508,7 @@ class RuntimeManager:
 
         tool_specs: list[dict[str, Any]] = []
 
-        for entry in self._tool_manager:
+        for entry in self._tool_manager.list_tools(available_only=True):
             resolved = self._resolve_tool_entry(entry)
             if resolved is None:
                 continue
@@ -516,11 +520,11 @@ class RuntimeManager:
 
         return tool_specs or None
 
-    def _record_user_message(
+    async def _record_user_message(
         self, text: str, session: SessionState
     ) -> tuple[str, dict[str, Any] | None]:
         """Handle direct tool calls and record the effective user message."""
-        tool_outputs, processed_text = self._handle_direct_tool_call(text)
+        tool_outputs, processed_text = await self._handle_direct_tool_call(text)
 
         if tool_outputs:
             for tool_name, result in tool_outputs.items():
@@ -607,41 +611,31 @@ class RuntimeManager:
             },
         }
 
-    def _extract_tool_parameters(self, tool_obj: Any) -> dict[str, Any]:
-        """Extract JSON schema parameters from registered tools."""
-        parameters: dict[str, Any] = {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        }
+    def _extract_tool_parameters(self, tool_obj: Any) -> dict:
+        """Extract parameters from a tool object.
 
-        schema_sources: list[dict[str, Any]] = []
+        Args:
+            tool_obj: The tool object to extract parameters from.
+                     Can be a ToolInfo instance or any object with a 'parameters' attribute.
 
-        if hasattr(tool_obj, "Input"):
-            try:
-                schema = tool_obj.Input.model_json_schema()
-                if isinstance(schema, dict):
-                    schema_sources.append(schema)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                self._log.warning("Failed to derive schema from Input: %s", exc)
+        Returns:
+            Dictionary with parameter schema in OpenAI format:
+            {
+                "type": "object",
+                "properties": {
+                    "param1": {"type": "string", "description": "..."},
+                    "param2": {"type": "number", "description": "..."}
+                },
+                "required": ["param1"]
+            }
+        """
+        # If tool_obj has a 'parameters' attribute, use that directly
+        if hasattr(tool_obj, "parameters") and tool_obj.parameters is not None:
+            return tool_obj.parameters
 
-        input_schema = getattr(tool_obj, "input_schema", None)
-        if input_schema:
-            try:
-                schema = (
-                    input_schema.schema()
-                    if hasattr(input_schema, "schema")
-                    else input_schema
-                )
-                if isinstance(schema, dict):
-                    schema_sources.append(schema)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                self._log.warning("Failed to derive schema from input_schema: %s", exc)
-
-        for schema in schema_sources:
-            for key in ("properties", "required"):
-                value = schema.get(key)
-                if isinstance(value, dict | list):
-                    parameters[key] = value
-
-        return parameters
+        # Fallback to empty schema if no parameters found
+        self._log.debug(
+            "No parameters found for tool: %s, using empty schema",
+            getattr(tool_obj, "__name__", str(tool_obj)),
+        )
+        return {"type": "object", "properties": {}, "required": []}

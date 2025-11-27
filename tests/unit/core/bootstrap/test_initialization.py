@@ -69,7 +69,6 @@ class TestBootstrapInitialization:
         # Assertions
         assert isinstance(ctx, AppContext)
         mock_setup_env.assert_called_once()
-        mock_init_config.assert_called_once_with(None, None)
         
         # Verify component initialization
         mock_init_llm.assert_called_once_with(mock_config_manager, {"logging": {"level": "INFO"}})
@@ -79,6 +78,14 @@ class TestBootstrapInitialization:
             llm_manager=mock_llm_manager,
             tool_manager=mock_tool_manager,
         )
+        
+        # Verify _initialize_config was called with env_manager
+        mock_init_config.assert_called_once()
+        # Check that env_manager is passed as the third positional argument
+        assert len(mock_init_config.call_args[0]) == 3  # config_path, config_manager, env_manager
+        assert mock_init_config.call_args[0][0] is None  # config_path
+        assert mock_init_config.call_args[0][1] is None  # config_manager
+        assert mock_init_config.call_args[0][2] is not None  # env_manager
         
         # Verify context setup
         assert ctx.get("llm") == mock_llm_manager
@@ -119,6 +126,11 @@ class TestBootstrapInitialization:
         config_path = "/path/to/custom/config.yaml"
         ctx = bootstrap(config_path=config_path)
 
-        # Verify config was loaded from custom path
-        mock_init_config.assert_called_once_with(config_path, None)
+        # Verify config was loaded from custom path with env_manager
+        mock_init_config.assert_called_once()
+        # Check that env_manager is passed as the third positional argument
+        assert len(mock_init_config.call_args[0]) == 3  # config_path, config_manager, env_manager
+        assert mock_init_config.call_args[0][0] == config_path  # config_path
+        assert mock_init_config.call_args[0][1] is None  # config_manager
+        assert mock_init_config.call_args[0][2] is not None  # env_manager
         assert isinstance(ctx, AppContext)

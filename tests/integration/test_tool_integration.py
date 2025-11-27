@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import textwrap
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -16,14 +16,52 @@ from local_coding_assistant.tools.tool_manager import ToolManager
 from local_coding_assistant.tools.types import ToolExecutionRequest
 
 
+@pytest.fixture
+def tool_test_env(test_configs):
+    """Create an isolated tool configuration environment using test_configs."""
+    # Create a tool module creator function
+    def create_tool_module(tool_id: str, multiplier: int = 2) -> Path:
+        class_name = "".join(part.capitalize() for part in tool_id.split("_"))
+        module_path = test_configs["modules_dir"] / f"{tool_id}.py"
+        module_path.write_text(
+            textwrap.dedent(
+                f"""
+                from pydantic import BaseModel
+                from local_coding_assistant.tools.base import Tool
+
+                class {class_name}(Tool):
+                    class Input(BaseModel):
+                        value: int
+
+                    class Output(BaseModel):
+                        result: int
+
+                    def run(self, input_data: Input) -> Output:
+                        return self.Output(result=input_data.value * {multiplier})
+                """
+            ),
+            encoding="utf-8",
+        )
+        return module_path
+
+    # Return a namespace with the same interface as before
+    return SimpleNamespace(
+        config_dir=test_configs["config_dir"],
+        default_config=test_configs["default"],
+        local_config=test_configs["local"],
+        create_tool_module=create_tool_module
+    )
 
 
-def test_tool_manager_loads_tools_from_config_and_executes(tool_test_env):
+
+
+def test_tool_manager_loads_tools_from_config_and_executes(tool_test_env, test_configs):
     """Ensure ToolManager loads YAML-defined tools and executes them."""
 
     module_path = tool_test_env.create_tool_module("sample_tool", multiplier=3)
     disabled_module = tool_test_env.create_tool_module("disabled_tool")
 
+    # Write tool configurations to the default config
     tool_test_env.default_config.write_text(
         yaml.safe_dump(
             {
@@ -45,9 +83,8 @@ def test_tool_manager_loads_tools_from_config_and_executes(tool_test_env):
         ),
         encoding="utf-8",
     )
-    tool_test_env.local_config.write_text(yaml.safe_dump({"tools": []}), encoding="utf-8")
-
-    # Explicitly provide the test's config paths to the ConfigManager
+    
+    # Use the config manager with test configs
     config_manager = ConfigManager(
         tool_config_paths=[tool_test_env.default_config, tool_test_env.local_config]
     )
@@ -91,9 +128,12 @@ def test_tool_manager_execute_reports_success_and_errors(tool_test_env):
         ),
         encoding="utf-8",
     )
-    tool_test_env.local_config.write_text(yaml.safe_dump({"tools": []}), encoding="utf-8")
-
-    manager = ToolManager(config_manager=ConfigManager(), auto_load=True)
+    
+    # Use the config manager with the test config files
+    config_manager = ConfigManager(
+        tool_config_paths=[tool_test_env.default_config, tool_test_env.local_config]
+    )
+    manager = ToolManager(config_manager=config_manager, auto_load=True)
 
     success = manager.execute(
         ToolExecutionRequest(tool_name="exec_tool", payload={"value": 5})
@@ -127,11 +167,14 @@ def test_cli_tool_run_executes_registered_tool(tool_test_env, cli_runner, monkey
         ),
         encoding="utf-8",
     )
-    tool_test_env.local_config.write_text(yaml.safe_dump({"tools": []}), encoding="utf-8")
 
     def fake_bootstrap(**_: object) -> dict[str, object]:
+        # Create a config manager with the test config files
+        config_manager = ConfigManager(
+            tool_config_paths=[tool_test_env.default_config, tool_test_env.local_config]
+        )
         return {
-            "tools": ToolManager(config_manager=ConfigManager(), auto_load=True),
+            "tools": ToolManager(config_manager=config_manager, auto_load=True),
         }
 
     monkeypatch.setattr(tool_cli, "bootstrap", fake_bootstrap)
@@ -144,16 +187,19 @@ def test_cli_tool_run_executes_registered_tool(tool_test_env, cli_runner, monkey
     assert "result: 12" in result.stdout.replace("\r", "")
 
 
-def test_cli_tool_add_persists_configuration(tool_test_env, cli_runner, monkeypatch):
+def test_cli_tool_add_persists_configuration(tool_test_env, cli_runner, monkeypatch, test_configs):
     """The `tool add` CLI command should persist new tools and load them."""
 
     module_path = tool_test_env.create_tool_module("added_cli_tool", multiplier=6)
     tool_test_env.default_config.write_text(yaml.safe_dump({"tools": []}), encoding="utf-8")
-    tool_test_env.local_config.write_text(yaml.safe_dump({"tools": []}), encoding="utf-8")
 
     def fake_bootstrap(**_: object) -> dict[str, object]:
+        # Create a config manager with the test config files
+        config_manager = ConfigManager(
+            tool_config_paths=[tool_test_env.default_config, tool_test_env.local_config]
+        )
         return {
-            "tools": ToolManager(config_manager=ConfigManager(), auto_load=True),
+            "tools": ToolManager(config_manager=config_manager, auto_load=True),
         }
 
     monkeypatch.setattr(tool_cli, "bootstrap", fake_bootstrap)
@@ -168,7 +214,7 @@ def test_cli_tool_add_persists_configuration(tool_test_env, cli_runner, monkeypa
             "--path",
             str(module_path),
             "--config-file",
-            str(tool_test_env.local_config),
+            str(test_configs["local"]),
         ],
         catch_exceptions=False,
     )
@@ -176,9 +222,12 @@ def test_cli_tool_add_persists_configuration(tool_test_env, cli_runner, monkeypa
     assert result.exit_code == 0
     assert "Successfully" in result.stdout
 
-    config = yaml.safe_load(tool_test_env.local_config.read_text(encoding="utf-8"))
+    config = yaml.safe_load(test_configs["local"].read_text(encoding="utf-8"))
     assert any(entry["id"] == "added_cli_tool" for entry in config.get("tools", []))
 
-    tool_manager = ToolManager(config_manager=ConfigManager(), auto_load=True)
+    config_manager = ConfigManager(
+        tool_config_paths=[test_configs["default"], test_configs["local"]]
+    )
+    tool_manager = ToolManager(config_manager=config_manager, auto_load=True)
     run_result = tool_manager.run_tool("added_cli_tool", {"value": 2})
     assert run_result == {"result": 12}

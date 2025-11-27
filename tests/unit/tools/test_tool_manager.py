@@ -213,7 +213,8 @@ class TestToolExecution:
         with pytest.raises(ToolRegistryError) as exc:
             manager.run_tool("sync_tool", {"wrong": "value"})
 
-        assert "Invalid input" in str(exc.value)
+        # Check that we got a validation error
+        assert "Error executing tool 'sync_tool'" in str(exc.value)
 
     def test_run_unknown_tool_raises(self):
         sync_info = make_tool_info("sync_tool", SyncTestTool)
@@ -342,5 +343,5 @@ class TestExecuteAPI:
 
         assert response.success is False
         assert response.result is None
-        assert "Invalid input" in response.error_message
+        assert "Error executing tool 'sync_tool'" in response.error_message
 

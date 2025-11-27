@@ -1,0 +1,26 @@
+tools:
+- category: math
+  description: Perform basic arithmetic operations (add, subtract, multiply, divide)
+  id: math_operations
+  path: '@module\external_tool_example.py'
+  permissions:
+  - local
+  tags:
+  - math
+  - utility
+- category: utility
+  description: Summarize large documents using remote MCP tool.
+  enabled: true
+  endpoint: https://example-mcp.com/tools/doc_summarizer
+  id: doc_summarizer
+  name: doc_summarizer
+  provider: example-mcp
+  source: mcp
+- category: utility
+  description: This is disabled
+  enabled: false
+  id: disabled_tool
+  module: example.tool
+  name: Disabled Tool
+  source: external
+

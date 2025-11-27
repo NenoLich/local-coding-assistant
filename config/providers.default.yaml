@@ -24,7 +24,7 @@ providers:
     health_check_endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/models"
     models:
       gemini-2.5-flash:
-        supported_parameters: ["reasoning_effort", "max_tokens", "stream", "tools", "tool_choice", "response_format", "extra_body.thinking_config"]
+        supported_parameters: ["tools", "reasoning_effort", "max_tokens", "stream", "tool_choice", "response_format", "extra_body.thinking_config"]
   github_models:
     driver: "openai_chat"
     base_url: "https://models.github.ai/inference"

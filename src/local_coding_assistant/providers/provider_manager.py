@@ -4,11 +4,11 @@ Provider manager for dynamic provider loading and registration
 
 import importlib
 import importlib.util
-import os
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from local_coding_assistant.config import EnvManager
 from local_coding_assistant.providers.base import BaseProvider
 from local_coding_assistant.providers.generic_provider import GenericProvider
 from local_coding_assistant.utils.logging import get_logger
@@ -45,7 +45,7 @@ _provider_sources: dict[str, str] = {}
 class ProviderManager:
     """Manages dynamic loading and registration of LLM providers"""
 
-    def __init__(self):
+    def __init__(self, env_manager: EnvManager, allow_test_requests: bool = False):
         self._providers: dict[str, type[BaseProvider]] = {}
         self._instances: dict[str, BaseProvider] = {}
         self._provider_configs: dict[
@@ -54,6 +54,8 @@ class ProviderManager:
         self._auto_discovery_paths = [
             Path(__file__).parent,  # Current providers directory
         ]
+        self._env_manager = env_manager
+        self._allow_test_requests = allow_test_requests
 
         # Reference the module-level registry
         self._providers = _provider_registry
@@ -265,42 +267,25 @@ class ProviderManager:
         Raises:
             ValueError: If an invalid config_type is provided
         """
-        if os.getenv("LOCCA_DEV_MODE"):
-            return self._get_config_path_from_src(config_type)
-        return (
-            Path.home()
-            / ".local-coding-assistant"
-            / "config"
-            / f"providers.{config_type}.yaml"
-        )
+        # Use PathManager to get the config directory and construct the path
+        config_dir = self._env_manager.path_manager.get_config_dir()
+        return config_dir / f"providers.{config_type}.yaml"
 
     def _get_config_path_from_src(self, config_type: str) -> Path:
-        """Get the path to a configuration file from the src directory."""
-        current_file = Path(__file__).resolve()
-        path_str = str(current_file)
+        """Get the path to a configuration file from the project source directory.
 
-        # Find the src directory in the path
-        src_marker = "src" + os.sep + "local_coding_assistant"
-        src_index = path_str.find(src_marker)
+        This is primarily used in development mode to load configurations
+        directly from the source tree.
 
-        if src_index != -1:
-            base_path = path_str[:src_index]
-            return (
-                Path(base_path)
-                / "src"
-                / "local_coding_assistant"
-                / "config"
-                / f"providers.{config_type}.yaml"
-            )
+        Args:
+            config_type: Type of config to get path for ('local' or 'global')
 
-        # Fallback to the old method if the path doesn't contain src/local_coding_assistant
-        return (
-            current_file.parents[3]
-            / "src"
-            / "local_coding_assistant"
-            / "config"
-            / f"providers.{config_type}.yaml"
-        )
+        Returns:
+            Path: Path to the requested configuration file in the source tree
+        """
+        # In development mode, look for configs in the project's config directory
+        project_root = self._env_manager.path_manager.get_project_root()
+        return project_root / "config" / f"providers.{config_type}.yaml"
 
     def _load_yaml_config(self, path: Path) -> dict:
         """Load and parse YAML config file."""
@@ -374,26 +359,26 @@ class ProviderManager:
 
                 # Convert models to ModelConfig objects if needed
                 if "models" in config:
-                    models = config["models"]
-                    model_configs = []
-
-                    if isinstance(models, list):
-                        for model in models:
-                            if isinstance(model, str):
-                                model_configs.append(ModelConfig(name=model))
-                            elif isinstance(model, dict):
-                                model_configs.append(ModelConfig(**model))
-                            elif isinstance(model, ModelConfig):
-                                model_configs.append(model)
-
-                        config["models"] = model_configs
+                    config["models"] = [
+                        ModelConfig(name=m) if isinstance(m, str) else ModelConfig(**m)
+                        for m in config["models"]
+                    ]
 
                 # Get provider class (use GenericProvider if not explicitly registered)
                 provider_class = self._providers.get(name, GenericProvider)
 
+                # Add env_manager and allow_test_requests to config
+                provider_config = config.copy()
+
+                provider_config["env_manager"] = self._env_manager
+                provider_config["allow_test_requests"] = self._allow_test_requests
+
                 # Create provider instance
-                self._instances[name] = provider_class(**config)
-                logger.debug(f"Created instance for provider: {name}")
+                self._instances[name] = provider_class(**provider_config)
+                logger.debug(
+                    f"Created instance for provider: {name} "
+                    f"(test_requests_allowed={self._allow_test_requests})"
+                )
 
             except Exception as e:
                 logger.error(
@@ -404,7 +389,7 @@ class ProviderManager:
 
 
 # Global provider manager instance
-provider_manager = ProviderManager()
+provider_manager = ProviderManager(EnvManager.create(load_env=True))
 
 
 def register_provider(name: str):

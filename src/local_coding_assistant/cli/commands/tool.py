@@ -8,7 +8,6 @@ and the bootstrap system, following the same patterns as other CLI commands.
 import ast
 import json
 import logging
-import os
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -19,6 +18,7 @@ import yaml
 from rich.console import Console
 from rich.table import Table
 
+from local_coding_assistant.config import EnvManager
 from local_coding_assistant.core import bootstrap
 from local_coding_assistant.core.error_handler import safe_entrypoint
 from local_coding_assistant.core.exceptions import CLIError
@@ -129,13 +129,11 @@ def _collect_tool_rows(tool_manager: Any, available_only: bool) -> list[ToolDisp
     Returns:
         List of tool display rows, sorted by tool name
     """
-    tool_infos = tool_manager.list_tools()
     rows = []
-    for info in tool_infos:
+    for info in tool_manager.list_tools(available_only=available_only):
         row = _normalize_tool_info(info)
-        if available_only and not row.available:
-            continue
         rows.append(row)
+
     return sorted(rows, key=lambda _row: _row.name.lower())
 
 
@@ -592,34 +590,26 @@ def _extract_value(param_value: Any, default: Any = None) -> Any:
     return param_value if param_value is not None else default
 
 
-def _get_config_path(config_file: str | None = None, dev: bool = False) -> Path:
-    """Get the configuration file path.
+def _get_config_path(
+    config_file: str | None = None, env_manager: EnvManager | None = None
+) -> Path:
+    """Get the configuration file path using PathManager.
 
     Args:
         config_file: Custom config file path if provided
-        dev: If True, use development path in the project directory
+        env_manager: Optional EnvManager instance (will create one if not provided)
 
     Returns:
-        Path to the configuration file
+        Path to the tools configuration file
     """
     if config_file:
         return Path(config_file)
 
-    if dev or os.getenv("LOCCA_DEV_MODE"):
-        # Try to find project root by looking for pyproject.toml
-        current_path = Path(__file__).resolve()
-        for parent in [current_path, *current_path.parents]:
-            if (parent / "pyproject.toml").exists():
-                return (
-                    parent
-                    / "src"
-                    / "local_coding_assistant"
-                    / "config"
-                    / "tools.local.yaml"
-                )
+    # Create or use provided env_manager
+    env_manager = env_manager or EnvManager.create(load_env=True)
 
-    # Default path for non-dev mode
-    return Path.home() / ".local_coding_assistant" / "config" / "tools.yaml"
+    # Use PathManager to resolve the config path based on environment
+    return env_manager.path_manager.resolve_path("@config/tools.local.yaml")
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:

@@ -1,8 +1,6 @@
 """Pytest configuration and fixtures for e2e CLI tests."""
 
 import os
-import tempfile
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,17 +14,11 @@ def cli_runner():
     return CliRunner()
 
 
-@pytest.fixture
-def temp_config_dir():
-    """Create a temporary directory for configuration files."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        yield Path(temp_dir)
-
 
 @pytest.fixture
-def temp_providers_config(temp_config_dir):
+def temp_providers_config(test_configs):
     """Create a temporary providers configuration file."""
-    config_dir = temp_config_dir / ".local-coding-assistant" / "config"
+    config_dir = test_configs["config_dir"]
     config_dir.mkdir(parents=True, exist_ok=True)
 
     providers_file = config_dir / "providers.local.yaml"
@@ -66,14 +58,6 @@ def mock_env_vars():
 
 from typing import Any, cast
 
-
-@pytest.fixture
-def temp_tool_config_path(temp_config_dir):
-    """Provide a temporary tools configuration path."""
-
-    config_file = temp_config_dir / "tools.local.yaml"
-    config_file.parent.mkdir(parents=True, exist_ok=True)
-    return config_file
 
 
 @pytest.fixture

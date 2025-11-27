@@ -358,6 +358,14 @@ class ToolConfig(BaseModel):
     config: dict[str, Any] = Field(
         default_factory=dict, description="Tool-specific configuration options"
     )
+    parameters: dict[str, Any] = Field(
+        default_factory=lambda: {"type": "object", "properties": {}, "required": []},
+        description=(
+            "OpenAI-compatible parameter schema for the tool. "
+            "Defines the expected input parameters in the format: "
+            '{"type": "object", "properties": {"param": {"type": "string"}}, "required": ["param"]}'
+        ),
+    )
 
     @field_validator("source", mode="before")
     @classmethod
@@ -397,6 +405,24 @@ class ToolConfig(BaseModel):
             return [t.strip() for t in v.split(",") if t.strip()]
         return v
 
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def validate_parameters(cls, v):
+        if v is None:
+            return {"type": "object", "properties": {}, "required": []}
+        if not isinstance(v, dict):
+            return {"type": "object", "properties": {}, "required": []}
+
+        # Ensure required fields exist
+        if "type" not in v:
+            v["type"] = "object"
+        if "properties" not in v:
+            v["properties"] = {}
+        if "required" not in v:
+            v["required"] = []
+
+        return v
+
     @field_validator("available", mode="before")
     @classmethod
     def validate_available(cls, v, info):
@@ -423,6 +449,19 @@ class ToolConfig(BaseModel):
             else self.category
         )
 
+        # Ensure parameters has the correct structure
+        parameters = self.parameters or {}
+        if not isinstance(parameters, dict):
+            parameters = {}
+
+        # Ensure required fields exist in parameters
+        if "type" not in parameters:
+            parameters["type"] = "object"
+        if "properties" not in parameters:
+            parameters["properties"] = {}
+        if "required" not in parameters:
+            parameters["required"] = []
+
         return ToolInfo(
             name=self.id,
             tool_class=tool_class,
@@ -438,6 +477,7 @@ class ToolConfig(BaseModel):
             endpoint=self.endpoint,
             provider=self.provider,
             config=self.config,
+            parameters=parameters,
         )
 
     def model_dump(self, *args, **kwargs):

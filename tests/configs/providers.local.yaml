@@ -1,0 +1,31 @@
+providers:
+  test_provider:
+    api_key: test-key
+    base_url: https://custom.api.com/v1
+    driver: openai_chat
+    models:
+      gpt-4:
+        supported_parameters:
+        - max_tokens
+        - temperature
+        - top_p
+  test_provider_-2376049910613587673:
+    api_key: test-key
+    base_url: https://api.openai.com/v1
+    driver: openai_chat
+    models:
+      gpt-4:
+        supported_parameters:
+        - max_tokens
+        - temperature
+        - top_p
+  test_provider_remove_-2376049910613587673:
+    api_key: test-key
+    base_url: https://api.openai.com/v1
+    driver: openai_chat
+    models:
+      gpt-4:
+        supported_parameters:
+        - max_tokens
+        - temperature
+        - top_p

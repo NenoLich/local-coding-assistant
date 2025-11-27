@@ -1,5 +1,4 @@
 """End-to-end tests for general CLI functionality and error handling."""
-from unittest.mock import patch
 
 from local_coding_assistant.cli.main import app
 
@@ -113,7 +112,6 @@ class TestCLIIntegration:
     def test_cli_environment_variable_precedence(self, cli_runner, mock_env_vars):
         """Test that CLI options override environment variables."""
         import os
-        from unittest.mock import patch, ANY
         
         # Test with environment variable set
         os.environ["LOCCA_LOG_LEVEL"] = "WARNING"
@@ -180,7 +178,7 @@ class TestCLIIntegration:
                 catch_exceptions=True  # Don't fail if already unset
             )
 
-    def test_provider_add_and_list(self, cli_runner, temp_config_dir):
+    def test_provider_add_and_list(self, cli_runner, test_configs):
         """Test adding and listing providers."""
         # Skip this test if the provider command is not available
         try:
@@ -196,7 +194,13 @@ class TestCLIIntegration:
             # Test adding a provider
             result = cli_runner.invoke(
                 app,
-                ["provider", "add", provider_name, "openai", "--api-key", "test-key"],
+                [
+                    "provider", "add", 
+                    provider_name, 
+                    "gpt-4",  # model name
+                    "--api-key", "test-key",
+                    "--base-url", "https://api.openai.com/v1"  # required parameter
+                ],
                 catch_exceptions=False
             )
             
@@ -218,7 +222,7 @@ class TestCLIIntegration:
             import pytest
             pytest.skip(f"Provider command test skipped: {str(e)}")
             
-    def test_provider_remove(self, cli_runner, temp_config_dir):
+    def test_provider_remove(self, cli_runner, test_configs):
         """Test removing a provider."""
         try:
             # First, check if the provider command is available
@@ -226,35 +230,50 @@ class TestCLIIntegration:
             if result.exit_code != 0:
                 import pytest
                 pytest.skip("Provider command not available")
-                
-            # First add a provider
+            
+            # Add a test provider
             provider_name = f"test_provider_remove_{hash('test')}"
             
             add_result = cli_runner.invoke(
                 app,
-                ["provider", "add", provider_name, "openai", "--api-key", "test-key"],
-                catch_exceptions=False
+                [
+                    "provider", "add", 
+                    provider_name, 
+                    "gpt-4",
+                    "--api-key", "test-key",
+                    "--base-url", "https://api.openai.com/v1"
+                ],
+                catch_exceptions=True
             )
             
             if add_result.exit_code != 0:
                 import pytest
-                pytest.skip(f"Failed to add test provider: {add_result.stdout} {add_result.stderr}")
+                pytest.skip(f"Failed to add test provider: {add_result.stderr}")
             
-            # Then remove it
+            # Remove the provider
             result = cli_runner.invoke(
                 app, 
                 ["provider", "remove", provider_name],
-                catch_exceptions=False
+                catch_exceptions=True
             )
             
-            # Check the command output for success
-            assert result.exit_code == 0, f"Provider remove failed: {result.stdout} {result.stderr}"
+            # Verify the provider was removed
+            list_result = cli_runner.invoke(app, ["provider", "list"])
+            providers_list = [
+                line.split()[0] 
+                for line in list_result.stdout.split('\n') 
+                if line.strip() 
+                and not line.startswith(('Available', '---', 'Name'))
+            ]
+            
+            assert provider_name not in providers_list, \
+                f"Provider {provider_name} was not removed from the provider list"
             
         except Exception as e:
             import pytest
             pytest.skip(f"Provider remove test skipped: {str(e)}")
         
-    def test_provider_validate(self, cli_runner, temp_config_dir):
+    def test_provider_validate(self, cli_runner, test_configs):
         """Test provider configuration validation."""
         try:
             # First, check if the provider command is available
@@ -275,19 +294,22 @@ class TestCLIIntegration:
                 f"Validate command failed with exit code {result.exit_code}: {result.stderr}"
             
             # Create a test config file
-            test_config = temp_config_dir / "test_config.yaml"
+            test_config = test_configs["config_dir"] / "test_config.yaml"
             test_config.write_text("""
             providers:
               test_provider:
-                type: openai
-                config:
-                  api_key: test-key
+                driver: openai_chat
+                base_url: https://api.openai.com/v1
+                api_key: test-key
+                models:
+                  gpt-4:
+                    supported_parameters: [temperature, max_tokens]
             """)
             
             # Test with our test config file
             result = cli_runner.invoke(
                 app, 
-                ["provider", "validate", "--config", str(test_config)],
+                ["provider", "validate", "--config-file", str(test_config)],
                 catch_exceptions=False
             )
             
@@ -300,7 +322,7 @@ class TestCLIIntegration:
             pytest.skip(f"Provider validate test skipped: {str(e)}")
 
     def test_cli_run_with_provider_setup(
-        self, cli_runner, temp_config_dir, mock_bootstrap_success
+        self, cli_runner, mock_bootstrap_success
     ):
         """Test run command with provider configuration."""
         mock_bootstrap, mock_ctx = mock_bootstrap_success

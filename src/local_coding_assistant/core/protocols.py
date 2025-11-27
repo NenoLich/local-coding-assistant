@@ -113,18 +113,17 @@ class IToolManager(Iterable[Any], Protocol):
     iteration over available tools.
     """
 
-    def register_tool(self, tool: Tool) -> None:
-        """Register a tool with the manager."""
-        ...
-
-    def get_tool(self, name: str) -> Tool:
+    def get_tool(self, tool_name: str) -> Tool:
         """Get a tool by name."""
         ...
 
-    def list_tools(self, category: str | ToolCategory | None = None) -> list[ToolInfo]:
+    def list_tools(
+        self, available_only: bool = False, category: str | ToolCategory | None = None
+    ) -> list[ToolInfo]:
         """List all registered tools, optionally filtered by category.
 
         Args:
+            available_only: If True, only returns tools that are available.
             category: Optional category to filter tools by (can be string or ToolCategory).
                      If the category doesn't exist, returns an empty list.
 
@@ -135,6 +134,19 @@ class IToolManager(Iterable[Any], Protocol):
 
     def execute(self, request: ToolExecutionRequest) -> ToolExecutionResponse:
         """Execute a tool using a ToolExecutionRequest.
+
+        Args:
+            request: ToolExecutionRequest containing tool name and payload.
+
+        Returns:
+            ToolExecutionResponse with execution results.
+        """
+        ...
+
+    async def execute_async(
+        self, request: ToolExecutionRequest
+    ) -> ToolExecutionResponse:
+        """Asynchronously execute a tool using a ToolExecutionRequest and return ToolExecutionResponse.
 
         Args:
             request: ToolExecutionRequest containing tool name and payload.

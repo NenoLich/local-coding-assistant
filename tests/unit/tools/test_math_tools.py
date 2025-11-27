@@ -1,6 +1,6 @@
 """Tests for math tools."""
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 from pydantic import ValidationError

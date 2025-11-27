@@ -2,6 +2,7 @@
 
 from .config_manager import ConfigManager
 from .env_manager import EnvManager
+from .path_manager import PathManager
 from .schemas import AppConfig, LLMConfig, RuntimeConfig
 
 __all__ = [
@@ -9,5 +10,6 @@ __all__ = [
     "ConfigManager",
     "EnvManager",
     "LLMConfig",
+    "PathManager",
     "RuntimeConfig",
 ]

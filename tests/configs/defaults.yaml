@@ -1,0 +1,53 @@
+# Default configuration for Local Coding Assistant
+# This file provides fallback values when no other configuration is specified
+
+# Environment variables can override these defaults using the LOCCA_ prefix:
+# LOCCA_LLM__TEMPERATURE, LOCCA_LLM__MAX_TOKENS, etc.
+
+llm:
+  # LLM generation settings
+  temperature: 0.7
+  max_tokens: 1000
+  max_retries: 3
+  retry_delay: 1.0
+  # Providers will be dynamically managed at runtime
+  providers: []
+
+runtime:
+  # Default runtime behavior
+  persistent_sessions: false
+  max_session_history: 100
+  enable_logging: true
+  log_level: "INFO"
+  use_graph_mode: True
+  stream: true
+
+providers: {}
+
+agent:
+  # Agent role-based model policies
+  policies: {}
+
+  # Default fallback policies for different agent roles
+  planner:
+    models:
+      - "openrouter:qwen/qwen3-coder:free"
+      - "google_gemini:gemini-2.5-flash"
+      - "fallback:any"
+
+  researcher:
+    models:
+      - "google_gemini:gemini-2.5-flash"
+      - "openrouter:qwen/qwen3-235b-a22b:free"
+      - "fallback:any"
+
+  analyzer:
+    models:
+      - "openrouter:moonshotai/kimi-dev-72b:free"
+      - "google_gemini:gemini-2.5-flash"
+      - "fallback:any"
+
+  general:
+    models:
+      - "google_gemini:gemini-2.5-flash"
+      - "fallback:any"

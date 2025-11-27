@@ -1,7 +1,7 @@
 tools:
   - id: sum
     source: builtin
-    path: src/local_coding_assistant/tools/builtin_tools/math_tools.py
+    path: '@project/src/local_coding_assistant/tools/builtin_tools/math_tools.py'
     description: "Adds two or more numbers together"
     permissions: [compute]
     tags: [math, utility]
@@ -9,7 +9,7 @@ tools:
 
   - id: multiply
     source: builtin
-    path: src/local_coding_assistant/tools/builtin_tools/math_tools.py
+    path: '@project/src/local_coding_assistant/tools/builtin_tools/math_tools.py'
     description: "Multiplies two or more numbers together"
     permissions: [compute]
     tags: [math, utility]

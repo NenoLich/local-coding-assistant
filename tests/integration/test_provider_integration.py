@@ -8,7 +8,6 @@ This module tests the complete provider lifecycle including:
 - Integration between CLI, provider manager, and LLM manager
 """
 
-import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -31,13 +30,6 @@ from local_coding_assistant.providers.base import BaseProvider
 class TestProviderCLIIntegration:
     """Test CLI provider management commands integration."""
 
-    @pytest.fixture
-    def temp_config_dir(self):
-        """Create temporary configuration directory."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config_dir = Path(temp_dir) / ".local-coding-assistant" / "config"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            yield config_dir
 
     @pytest.fixture
     def sample_provider_config(self):
@@ -52,12 +44,12 @@ class TestProviderCLIIntegration:
             },
         }
 
-    def test_add_provider_via_cli(self, temp_config_dir, sample_provider_config):
+    def test_add_provider_via_cli(self, test_configs, sample_provider_config):
         """Test adding provider via CLI command."""
-        config_file = temp_config_dir / "providers.local.yaml"
+        config_file = test_configs["config_dir"] / "providers.local.yaml"
 
         # Create the config directory if it doesn't exist
-        temp_config_dir.mkdir(parents=True, exist_ok=True)
+        test_configs["config_dir"].mkdir(parents=True, exist_ok=True)
 
         with (
             patch(
@@ -147,9 +139,9 @@ class TestProviderCLIIntegration:
                 "✅ Successfully added and verified provider 'test_provider'. Available models: gpt-4, gpt-3.5-turbo"
             )
 
-    def test_list_providers_via_cli(self, temp_config_dir):
+    def test_list_providers_via_cli(self, test_configs):
         """Test listing providers via CLI command."""
-        config_file = temp_config_dir / "providers.local.yaml"
+        config_file = test_configs["config_dir"] / "providers.local.yaml"
         test_config = {
             "openai": {
                 "driver": "openai_chat",
@@ -163,7 +155,7 @@ class TestProviderCLIIntegration:
         _save_config(config_file, test_config)
 
         with patch("pathlib.Path.home") as mock_home:
-            mock_home.return_value = temp_config_dir.parent.parent
+            mock_home.return_value = test_configs["config_dir"].parent.parent
 
             with patch(
                 "local_coding_assistant.cli.commands.provider.bootstrap"
@@ -206,9 +198,9 @@ class TestProviderCLIIntegration:
                 mock_bootstrap.assert_called_once()
                 mock_llm.get_provider_status_list.assert_called_once()
 
-    def test_remove_provider_via_cli(self, temp_config_dir):
+    def test_remove_provider_via_cli(self, test_configs):
         """Test removing provider via CLI command."""
-        config_file = temp_config_dir / "providers.local.yaml"
+        config_file = test_configs["config_dir"] / "providers.local.yaml"
         test_config = {
             "providers": {
                 "openai": {"driver": "openai_chat", "models": {"gpt-4": {}}},
@@ -222,7 +214,7 @@ class TestProviderCLIIntegration:
              patch("local_coding_assistant.cli.commands.provider.typer.echo") as mock_echo:
             
             # Mock home directory
-            mock_home.return_value = temp_config_dir.parent.parent
+            mock_home.return_value = test_configs["config_dir"].parent.parent
             
             # Create a mock LLM manager with a side effect for get_provider
             mock_llm = MagicMock()
@@ -265,9 +257,9 @@ class TestProviderCLIIntegration:
             with pytest.raises(ValueError, match="Provider 'openai' not found"):
                 mock_llm.get_provider("openai")
 
-    def test_validate_provider_config(self, temp_config_dir):
+    def test_validate_provider_config(self, test_configs):
         """Test validating provider configuration via CLI."""
-        config_file = temp_config_dir / "providers.local.yaml"
+        config_file = test_configs["config_dir"] / "providers.local.yaml"
 
         # Test with valid config that includes all required fields
         valid_config = {
@@ -297,7 +289,7 @@ class TestProviderCLIIntegration:
         }
         _save_config(config_file, valid_config)
         with patch("pathlib.Path.home") as mock_home:
-            mock_home.return_value = temp_config_dir.parent.parent
+            mock_home.return_value = test_configs["config_dir"].parent.parent
             # Mock typer.echo to capture output
             with patch("typer.echo") as mock_echo:
                 # Should not raise any exceptions
@@ -313,7 +305,7 @@ class TestProviderCLIIntegration:
         }
         _save_config(config_file, invalid_config)
         with patch("pathlib.Path.home") as mock_home, patch("typer.echo") as mock_echo:
-            mock_home.return_value = temp_config_dir.parent.parent
+            mock_home.return_value = test_configs["config_dir"].parent.parent
 
             # Should raise typer.Exit with code 1
             try:
@@ -330,16 +322,16 @@ class TestProviderCLIIntegration:
                 )
                 mock_echo.assert_any_call("❌ Validation failed with errors")
 
-    def test_reload_providers_via_cli(self, temp_config_dir):
+    def test_reload_providers_via_cli(self, test_configs):
         """Test reloading providers via CLI command."""
-        config_file = temp_config_dir / "providers.local.yaml"
+        config_file = test_configs["config_dir"] / "providers.local.yaml"
         test_config = {
             "openai": {"driver": "openai_chat", "models": {"gpt-4": {}}},
         }
         _save_config(config_file, test_config)
 
         with patch("pathlib.Path.home") as mock_home:
-            mock_home.return_value = temp_config_dir.parent.parent
+            mock_home.return_value = test_configs["config_dir"].parent.parent
 
             with patch(
                 "local_coding_assistant.cli.commands.provider.bootstrap"
@@ -363,20 +355,14 @@ class TestProviderYAMLConfiguration:
     """Test provider configuration loading from YAML files."""
 
     @pytest.fixture
-    def global_config_dir(self):
-        """Create temporary global configuration directory."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config_dir = Path(temp_dir) / "config"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            yield config_dir
+    def global_config_dir(self, test_configs):
+        """Get temporary global configuration directory from test_configs fixture."""
+        return test_configs["config_dir"]
 
     @pytest.fixture
-    def local_config_dir(self):
-        """Create temporary local configuration directory."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config_dir = Path(temp_dir) / ".local-coding-assistant" / "config"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            yield config_dir
+    def local_config_dir(self, test_configs):
+        """Get temporary local configuration directory from test_configs fixture."""
+        return test_configs["config_dir"]
 
     def test_load_providers_from_global_yaml(
         self, global_config_dir, mock_provider_manager
@@ -527,16 +513,16 @@ class TestProviderPythonModuleIntegration:
                     f"Provider {provider} should be builtin or global"
                 )
 
-    def test_custom_provider_module_loading(self, mock_provider_manager):
+    def test_custom_provider_module_loading(self, mock_provider_manager, test_configs):
         """Test loading providers from custom Python modules."""
-        # Create a temporary Python module with a custom provider
-        import importlib.util
-        import sys
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            provider_file = Path(temp_dir) / "custom_provider.py"
-            provider_code = '''
+        # Create a custom provider module in the test config directory
+        modules_dir = test_configs["modules_dir"]
+        provider_file = modules_dir / "custom_provider.py"
+        
+        # Ensure the modules directory exists
+        modules_dir.mkdir(parents=True, exist_ok=True)
+        
+        provider_code = '''
 from local_coding_assistant.providers.base import BaseProvider
 
 class CustomProvider(BaseProvider):
@@ -558,42 +544,42 @@ class CustomProvider(BaseProvider):
         return generate_chunks()
 '''
 
-            with open(provider_file, "w") as f:
-                f.write(provider_code)
+        with open(provider_file, "w") as f:
+            f.write(provider_code)
 
-            # Add temp directory to Python path
-            sys.path.insert(0, temp_dir)
 
-            try:
-                # Use importlib to load the module from the specific path
-                spec = importlib.util.spec_from_file_location(
-                    "custom_provider", provider_file
-                )
-                if spec and spec.loader:
-                    custom_provider = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(custom_provider)
+        try:
+            # Use importlib to load the module from the specific path
+            import importlib.util
+            spec = importlib.util.spec_from_file_location(
+                "custom_provider", provider_file
+            )
+            if spec and spec.loader:
+                custom_provider = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(custom_provider)
 
-                    # Add the temp directory to auto-discovery paths
-                    mock_provider_manager._auto_discovery_paths = [Path(temp_dir)]
+                # Add the modules directory to auto-discovery paths
+                mock_provider_manager._auto_discovery_paths = [modules_dir]
 
-                    # Try to reload to discover the new provider
-                    mock_provider_manager.reload()
+                # Try to reload to discover the new provider
+                mock_provider_manager.reload()
 
-                    # Check if custom provider was discovered
-                    providers = mock_provider_manager.list_providers()
-                    if "custom" in providers:
-                        source = mock_provider_manager.get_provider_source("custom")
-                        assert (
-                            source == "builtin"
-                        )  # Should be marked as builtin when auto-discovered
+                # Check if custom provider was discovered
+                providers = mock_provider_manager.list_providers()
+                if "custom" in providers:
+                    source = mock_provider_manager.get_provider_source("custom")
+                    assert (
+                        source == "builtin"
+                    )  # Should be marked as builtin when auto-discovered
 
-            finally:
-                # Clean up
-                if temp_dir in sys.path:
-                    sys.path.remove(temp_dir)
-                # Remove from sys.modules if it exists
-                if "custom_provider" in sys.modules:
-                    del sys.modules["custom_provider"]
+        finally:
+            # Clean up
+            import sys
+            if str(modules_dir) in sys.path:
+                sys.path.remove(str(modules_dir))
+            # Remove from sys.modules if it exists
+            if "custom_provider" in sys.modules:
+                del sys.modules["custom_provider"]
 
 
     """Test provider manager integration with LLM manager and CLI."""
@@ -680,148 +666,150 @@ class CustomProvider(BaseProvider):
 class TestProviderEndToEndIntegration:
     """Test complete end-to-end provider workflows."""
 
+    @pytest.fixture
+    def temp_config_dir(self, test_configs):
+        """Get temporary configuration directory from test_configs fixture."""
+        return test_configs["config_dir"]
+
     @pytest.mark.asyncio
-    async def test_cli_to_llm_manager_workflow(self):
+    async def test_cli_to_llm_manager_workflow(self, temp_config_dir):
         """Test complete workflow from CLI provider addition to LLM generation."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config_dir = Path(temp_dir) / ".local-coding-assistant" / "config"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            config_file = config_dir / "providers.local.yaml"
+        config_dir = temp_config_dir
+        config_file = config_dir / "providers.local.yaml"
 
-            # Create an empty config file
-            config_file.write_text("providers: {}\n")
+        # Create an empty config file
+        config_file.write_text("providers: {}\n")
 
-            with (
-                patch("pathlib.Path.home") as mock_home,
-                patch(
-                    "local_coding_assistant.cli.commands.provider.bootstrap"
-                ) as mock_bootstrap,
-                patch(
-                    "local_coding_assistant.cli.commands.provider.typer.echo"
-                ) as mock_echo,
-            ):
-                mock_home.return_value = config_dir.parent.parent
+        with (
+            patch("pathlib.Path.home") as mock_home,
+            patch(
+                "local_coding_assistant.cli.commands.provider.bootstrap"
+            ) as mock_bootstrap,
+            patch(
+                "local_coding_assistant.cli.commands.provider.typer.echo"
+            ) as mock_echo,
+        ):
+            mock_home.return_value = config_dir.parent.parent
 
-                # Mock bootstrap context with LLM manager
-                mock_llm_manager = MagicMock()
+            # Mock bootstrap context with LLM manager
+            mock_llm_manager = MagicMock()
 
-                # Mock provider manager with test provider
-                mock_provider_manager = MagicMock()
-                mock_provider_manager.list_providers.return_value = ["test_provider"]
+            # Mock provider manager with test provider
+            mock_provider_manager = MagicMock()
+            mock_provider_manager.list_providers.return_value = ["test_provider"]
 
-                mock_provider_instance = AsyncMock(spec=BaseProvider)
-                mock_provider_instance.name = "test_provider"
-                mock_provider_instance.generate_with_retry = AsyncMock(
-                    return_value=MagicMock(
-                        content="Test response from CLI-configured provider",
-                        model="test-model",
-                        tokens_used=50,
-                        tool_calls=None,
-                        finish_reason="stop",
-                    )
+            mock_provider_instance = AsyncMock(spec=BaseProvider)
+            mock_provider_instance.name = "test_provider"
+            mock_provider_instance.generate_with_retry = AsyncMock(
+                return_value=MagicMock(
+                    content="Test response from CLI-configured provider",
+                    model="test-model",
+                    tokens_used=50,
+                    tool_calls=None,
+                    finish_reason="stop",
                 )
-                mock_provider_manager.get_provider.return_value = mock_provider_instance
+            )
+            mock_provider_manager.get_provider.return_value = mock_provider_instance
 
-                # Mock the get_provider_status_list method to return the test provider as available
+            # Mock the get_provider_status_list method to return the test provider as available
+            mock_llm_manager.get_provider_status_list.return_value = [
+                {"name": "test_provider", "status": "available"}
+            ]
+            mock_llm_manager.provider_manager = mock_provider_manager
+
+            # Create a side effect for reload_providers to update the status list
+            def reload_providers_side_effect():
                 mock_llm_manager.get_provider_status_list.return_value = [
                     {"name": "test_provider", "status": "available"}
                 ]
-                mock_llm_manager.provider_manager = mock_provider_manager
 
-                # Create a side effect for reload_providers to update the status list
-                def reload_providers_side_effect():
-                    mock_llm_manager.get_provider_status_list.return_value = [
-                        {"name": "test_provider", "status": "available"}
-                    ]
+            # Create the reload_providers mock with side effect and call tracking
+            reload_mock = MagicMock(side_effect=reload_providers_side_effect)
+            mock_llm_manager.reload_providers = reload_mock
 
-                # Create the reload_providers mock with side effect and call tracking
-                reload_mock = MagicMock(side_effect=reload_providers_side_effect)
-                mock_llm_manager.reload_providers = reload_mock
+            # Mock the bootstrap function to call reload_providers
+            def mock_bootstrap_side_effect(*args, **kwargs):
+                # Call reload_providers when bootstrap is called
+                reload_mock()
+                return {"llm": mock_llm_manager}
 
-                # Mock the bootstrap function to call reload_providers
-                def mock_bootstrap_side_effect(*args, **kwargs):
-                    # Call reload_providers when bootstrap is called
-                    reload_mock()
-                    return {"llm": mock_llm_manager}
+            mock_bootstrap.side_effect = mock_bootstrap_side_effect
 
-                mock_bootstrap.side_effect = mock_bootstrap_side_effect
+            # Step 1: Add provider via CLI with all required parameters
+            add(
+                "test_provider",
+                "test-model",
+                api_key="test-key",
+                config_file=str(config_file),
+                base_url="https://api.example.com",
+                driver="openai_chat",
+            )
 
-                # Step 1: Add provider via CLI with all required parameters
-                add(
-                    "test_provider",
-                    "test-model",
-                    api_key="test-key",
-                    config_file=str(config_file),
-                    base_url="https://api.example.com",
-                    driver="openai_chat",
-                )
+            # Verify provider was added to config
+            assert config_file.exists()
+            with open(config_file) as f:
+                config = yaml.safe_load(f)
+            assert "providers" in config
+            assert "test_provider" in config["providers"]
 
-                # Verify provider was added to config
-                assert config_file.exists()
-                with open(config_file) as f:
-                    config = yaml.safe_load(f)
-                assert "providers" in config
-                assert "test_provider" in config["providers"]
+            # Step 2: Bootstrap and verify provider is available
+            mock_bootstrap.assert_called_once()
+            mock_llm_manager.reload_providers.assert_called_once()
 
-                # Step 2: Bootstrap and verify provider is available
-                mock_bootstrap.assert_called_once()
-                mock_llm_manager.reload_providers.assert_called_once()
+            # Verify provider is listed
+            providers = mock_llm_manager.provider_manager.list_providers()
+            assert "test_provider" in providers
 
-                # Verify provider is listed
-                providers = mock_llm_manager.provider_manager.list_providers()
-                assert "test_provider" in providers
+            # Step 3: Test LLM generation with the provider
+            from local_coding_assistant.agent.llm_manager import LLMRequest
 
-                # Step 3: Test LLM generation with the provider
-                from local_coding_assistant.agent.llm_manager import LLMRequest
+            request = LLMRequest(prompt="Test prompt")
+            # This would normally go through the full LLM manager flow
+            # but we're mocking the provider response
+            response = await mock_provider_instance.generate_with_retry(request)
 
-                request = LLMRequest(prompt="Test prompt")
-                # This would normally go through the full LLM manager flow
-                # but we're mocking the provider response
-                response = await mock_provider_instance.generate_with_retry(request)
+            assert response.content == "Test response from CLI-configured provider"
+            mock_provider_instance.generate_with_retry.assert_called_once()
 
-                assert response.content == "Test response from CLI-configured provider"
-                mock_provider_instance.generate_with_retry.assert_called_once()
-
-    def test_provider_config_validation_workflow(self):
+    def test_provider_config_validation_workflow(self, temp_config_dir):
         """Test provider configuration validation workflow."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            config_dir = Path(temp_dir) / ".local-coding-assistant" / "config"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            config_file = config_dir / "providers.local.yaml"
+        config_dir = temp_config_dir
+        config_file = config_dir / "providers.local.yaml"
 
-            with patch("pathlib.Path.home") as mock_home:
-                mock_home.return_value = config_dir.parent.parent
+        with patch("pathlib.Path.home") as mock_home:
+            mock_home.return_value = config_dir.parent.parent
 
-                # Test validation of various provider configurations
-                test_configs = [
-                    # Valid minimal config
-                    {
-                        "minimal_provider": {
-                            "driver": "openai_chat",
-                            "models": {"gpt-4": {}},
-                        }
-                    },
-                    # Valid full config
-                    {
-                        "full_provider": {
-                            "driver": "openai_chat",
-                            "api_key_env": "TEST_API_KEY",
-                            "base_url": "https://api.test.com",
-                            "models": {"gpt-4": {}, "gpt-3.5": {}},
-                        }
-                    },
-                    # Invalid config (missing driver)
-                    {
-                        "invalid_provider": {
-                            "models": {"gpt-4": {}},
-                        }
-                    },
-                ]
+            # Test validation of various provider configurations
+            test_configs = [
+                # Valid minimal config
+                {
+                    "minimal_provider": {
+                        "driver": "openai_chat",
+                        "models": {"gpt-4": {}},
+                    }
+                },
+                # Valid full config
+                {
+                    "full_provider": {
+                        "driver": "openai_chat",
+                        "api_key_env": "TEST_API_KEY",
+                        "base_url": "https://api.test.com",
+                        "models": {"gpt-4": {}, "gpt-3.5": {}},
+                    }
+                },
+                # Invalid config (missing driver)
+                {
+                    "invalid_provider": {
+                        "models": {"gpt-4": {}},
+                    }
+                },
+            ]
 
-                for i, config in enumerate(test_configs):
-                    test_config_file = config_dir / f"test_config_{i}.yaml"
-                    with open(test_config_file, "w") as f:
-                        yaml.dump(config, f)
 
-                    # Validation should complete (warnings are acceptable)
-                    validate(config_file=str(test_config_file))
+            for i, config in enumerate(test_configs):
+                test_config_file = config_dir / f"test_config_{i}.yaml"
+                with open(test_config_file, "w") as f:
+                    yaml.dump(config, f)
+
+                # Validation should complete (warnings are acceptable)
+                validate(config_file=str(test_config_file))

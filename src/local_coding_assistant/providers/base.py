@@ -4,13 +4,13 @@ Base classes for LLM providers
 
 import abc
 import asyncio
-import os
 from collections.abc import AsyncGenerator
 from enum import Enum
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from local_coding_assistant.config import EnvManager
 from local_coding_assistant.config.schemas import ModelConfig
 from local_coding_assistant.utils.logging import get_logger
 
@@ -411,6 +411,7 @@ class BaseProvider(abc.ABC):
         self,
         name: str,
         base_url: str,
+        env_manager: EnvManager,
         api_key: str | None = None,
         api_key_env: str | None = None,
         models: list[ModelConfig] | list[str] | dict[str, dict] | None = None,
@@ -418,6 +419,7 @@ class BaseProvider(abc.ABC):
         health_check_endpoint: str | None = None,
         health_check_method: str = "GET",
         health_check_timeout: float = 5.0,
+        allow_test_requests: bool = False,
         **kwargs,
     ):
         self.name = name
@@ -427,6 +429,8 @@ class BaseProvider(abc.ABC):
         self.health_check_endpoint = health_check_endpoint
         self.health_check_method = health_check_method.upper()
         self.health_check_timeout = health_check_timeout
+        self.env_manager = env_manager
+        self.allow_test_requests = allow_test_requests
         self.kwargs = kwargs
 
         # Convert models to list of ModelConfig
@@ -475,7 +479,7 @@ class BaseProvider(abc.ABC):
 
             # Handle case where all items are strings (model names)
             if all(isinstance(m, str) for m in models):
-                return [ModelConfig(name=m) for m in models]
+                return [ModelConfig(name=str(m)) for m in models]
 
             # Handle case where items are mixed or invalid types
             if any(not isinstance(m, ModelConfig | str) for m in models):
@@ -506,9 +510,7 @@ class BaseProvider(abc.ABC):
     def _get_api_key(self) -> str | None:
         """Get API key from environment variable if specified"""
         if self.api_key_env:
-            import os
-
-            return os.getenv(self.api_key_env)
+            return self.env_manager.get_env(self.api_key_env)
         return None
 
     async def _handle_auth_error(self, error: Exception) -> None:
@@ -586,7 +588,21 @@ class BaseProvider(abc.ABC):
         )
 
     async def generate(self, request: ProviderLLMRequest) -> ProviderLLMResponse:
-        """Generate a response using this provider"""
+        """Generate a response using this provider
+
+        Raises:
+            RuntimeError: If running in test environment and test requests are not allowed
+        """
+        if (
+            self.env_manager
+            and self.env_manager.is_testing()
+            and not self.allow_test_requests
+        ):
+            raise RuntimeError(
+                "API calls are disabled in test environment. "
+                "Set allow_test_requests=True to enable API calls in tests"
+            )
+
         try:
             return await self.driver_instance.generate(request)
         except Exception as e:
@@ -618,7 +634,21 @@ class BaseProvider(abc.ABC):
     async def stream(
         self, request: ProviderLLMRequest
     ) -> AsyncGenerator[ProviderLLMResponseDelta, None]:
-        """Generate a streaming response using this provider"""
+        """Generate a streaming response using this provider
+
+        Raises:
+            RuntimeError: If running in test environment and test requests are not allowed
+        """
+        if (
+            self.env_manager
+            and self.env_manager.is_testing()
+            and not self.allow_test_requests
+        ):
+            raise RuntimeError(
+                "API calls are disabled in test environment. "
+                "Set allow_test_requests=True to enable API calls in tests"
+            )
+
         try:
             if self.driver_instance:
                 async for delta in self.driver_instance.stream(request):
@@ -718,7 +748,7 @@ class BaseProvider(abc.ABC):
         """Try using API key from environment variable if available."""
         if not (
             self.api_key_env
-            and (env_key := os.getenv(self.api_key_env))
+            and (env_key := self.env_manager.get_env(self.api_key_env))
             and env_key != self.api_key
         ):
             raise original_error

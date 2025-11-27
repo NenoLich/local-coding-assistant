@@ -361,27 +361,6 @@ class TestLLMManagerGenerate:
         if hasattr(mock_router, 'mark_provider_success'):
             assert mock_router.mark_provider_success.call_count >= 1
 
-    @pytest.mark.asyncio
-    async def test_generate_test_mode(self, mock_config_manager):
-        """Test generate method in test mode."""
-        # Set up test mode
-        with patch.dict(os.environ, {"LOCCA_TEST_MODE": "true"}):
-            # Create manager with mock config
-            manager = LLMManager(config_manager=mock_config_manager)
-
-            request = LLMRequest(
-                prompt="Test prompt",
-                system_prompt="System prompt",
-                context={}
-            )
-            response = await manager.generate(request, model="test-model-1")
-
-            # In test mode, should return a mock response
-            if hasattr(response, 'content'):
-                assert "test response" in response.content.lower() or "test prompt" in response.content.lower()
-            else:
-                response_str = str(response).lower()
-                assert "test response" in response_str or "test prompt" in response_str
 
     @pytest.mark.asyncio
     async def test_generate_with_tool_calls(self, mock_config_manager, mock_router, mock_provider):
@@ -553,33 +532,6 @@ class TestLLMManagerStream:
         assert any("hello" in chunk.lower() for chunk in chunks)
         assert any("world" in chunk.lower() for chunk in chunks)
 
-    @pytest.mark.asyncio
-    async def test_stream_test_mode(self, mock_config_manager):
-        """Test stream method in test mode."""
-        # Set up test mode
-        with patch.dict(os.environ, {"LOCCA_TEST_MODE": "true"}):
-            # Create manager with mock config
-            manager = LLMManager(config_manager=mock_config_manager)
-
-            # Test streaming
-            request = LLMRequest(
-                prompt="Test prompt",
-                system_prompt="System prompt",
-                context={}
-            )
-            chunks = []
-            async for chunk in manager.stream(request, model="test-model-1"):
-                if hasattr(chunk, 'content'):
-                    chunks.append(chunk.content)
-                else:
-                    chunks.append(str(chunk))
-
-            # In test mode, should return an echo of the prompt
-            assert len(chunks) > 0
-            chunks_combined = "".join(chunks).lower()
-            assert any(keyword in chunks_combined 
-                      for keyword in ["echo", "test", "prompt", "llmmanager"])
-            assert any(chunk.strip().startswith(("[", "{")) for chunk in chunks)
 
     @pytest.mark.asyncio
     async def test_stream_with_provider_error(self, mock_config_manager, mock_router):

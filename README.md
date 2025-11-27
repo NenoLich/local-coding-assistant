@@ -49,38 +49,67 @@ LOCCA ships with a three-layer configuration system managed by `ConfigManager`:
 
 Higher layers override lower layers. The default bootstrap loads `.env`, optional `providers.default.yaml`, then merges user overrides from the home directory (`~/.local-coding-assistant/config/providers.local.yaml`).
 
-### Environment Variables
 
-Environment variables use the `LOCCA_` prefix and can target nested keys using double underscores. For example:
+### Path Management
 
-```bash
-export LOCCA_LLM__MODEL_NAME=gpt-4
-export LOCCA_LLM__TEMPERATURE=0.8
-export LOCCA_RUNTIME__PERSISTENT_SESSIONS=true
-export LOCCA_RUNTIME__MAX_SESSION_HISTORY=100
+The `path_manager` utility provides a unified way to handle file paths throughout the application. It resolves paths using the following aliases:
+
+- `@root`: Project root directory
+- `@config`: Configuration directory (from `LOCCA_CONFIG_DIR`)
+- `@data`: Data directory (from `LOCCA_DATA_DIR`)
+- `@cache`: Cache directory (from `LOCCA_CACHE_DIR`)
+- `@logs`: Logs directory (from `LOCCA_LOGS_DIR`)
+
+Example usage:
+```python
+from local_coding_assistant.config.path_manager import PathManager
+
+# Resolve a path relative to config directory
+config_path = path_manager.resolve("@config/providers/default.yaml")
+
+# Join paths using the path manager
+log_file = path_manager.join("@logs", "app.log")
 ```
 
 ### .env Files
 
-Create a `.env` file in the project root for local development:
+Environment variables are loaded from multiple `.env` files in the following order (with later files overriding earlier ones):
 
-```bash
-# Copy from .env and modify as needed
-cp .env .env.local
+1. `.env` - Base configuration (always loaded first)
+2. `.env.${LOCCA_ENV}` - Environment-specific settings (e.g., `.env.development`)
+3. `.env.local` - Local environment overrides (gitignored)
+
+Example structure:
+```
+.env                    # Base configuration (required)
+.env.development        # Development-specific overrides
+.env.test              # Test-specific overrides
+.env.production        # Production-specific overrides
+.env.local # Local overrides (gitignored)
 ```
 
-The application automatically loads:
-- `.env` - Base environment variables
-- `.env.local` - Local overrides (loaded after .env, takes precedence)
+Environment variables can reference each other using `${VARIABLE_NAME}` syntax within the same file or in files loaded later in the chain.
 
 ### YAML Configuration Files
 
-Place additional YAML files anywhere and pass them via `bootstrap(config_path=...)` or CLI `--config-file` flags. Provider definitions live in:
+Configuration is loaded from multiple YAML files with the following precedence (higher overrides lower):
 
-- `src/local_coding_assistant/config/providers.default.yaml` – Built-in provider templates.
-- `~/.local-coding-assistant/config/providers.local.yaml` – User-managed overrides created automatically by CLI commands.
+1. Core configuration:
+   - `config/defaults.yaml` - Default configuration (base settings)
+   - `config/${LOCCA_ENV}.yaml` - Environment-specific overrides
+   - `config/${LOCCA_ENV}.local.yaml` - Local overrides (gitignored)
 
-Each provider entry follows the schema validated by `ProviderConfig` and can define drivers, base URLs, API keys, and model metadata.
+2. Provider configuration:
+   - `config/providers.default.yaml` - Default provider configurations
+   - `config/providers.${LOCCA_ENV}.yaml` - Environment-specific providers
+   - `config/providers.${LOCCA_ENV}.local.yaml` - Local provider overrides (gitignored)
+
+3. Tool configuration:
+   - `config/tools.default.yaml` - Default tool configurations
+   - `config/tools.${LOCCA_ENV}.yaml` - Environment-specific tool configurations
+   - `config/tools.${LOCCA_ENV}.local.yaml` - Local tool overrides (gitignored)
+
+All paths in configuration files can use the `@` aliases (e.g., `@data/models`) which will be resolved by the `path_manager`.
 
 ## Development Setup
 
@@ -108,29 +137,56 @@ Each provider entry follows the schema validated by `ProviderConfig` and can def
 
 ```
 .
-├── .github/           # GitHub Actions workflows
-├── .journal/          # Development journal and decisions
-├── src/               # Source code
-│   └── local_coding_assistant/  # Main package
-│       ├── agent/              # Agent loop and LLM management
-│       │   ├── agent_loop.py   # Observe-Plan-Act-Reflect implementation
-│       │   ├── langgraph_agent.py # LangGraph opar-agent implementation
-│       │   └── llm_manager.py  # LLM interface with streaming & provider routing
-│       ├── tools/              # Tool system
-│       │   ├── base/           # Base tool classes and schemas
+# Root directory
+├── .github/                  # GitHub Actions workflows
+├── config/                   # Configuration files
+│   ├── modules/              # External tool modules
+│   ├── auto_model_policies.yaml  # Auto-model configuration
+│   ├── defaults.yaml         # Default configuration
+│   ├── providers.default.yaml # Default provider configurations
+│   ├── providers.local.yaml  # Local provider overrides (gitignored)
+│   ├── tools.default.yaml    # Default tool configurations
+│   └── tools.local.yaml      # Local tool overrides (gitignored)
+├── data/                     # Persistent data storage (created at runtime)
+├── logs/                     # Application logs (created at runtime)
+├── src/                      # Source code
+│   └── local_coding_assistant/
+│       ├── agent/            # Agent loop and LLM management
+│       │   ├── agent_loop.py # Observe-Plan-Act-Reflect implementation
+│       │   ├── langgraph_agent.py # LangGraph opar-agent
+│       │   └── llm_manager.py # LLM interface with streaming & routing
+│       ├── cli/              # CLI commands and interface
+│       │   └── commands/     # Command implementations
+│       ├── config/           # Configuration management
+│       │   └── path_manager.py # Path resolution utility
+│       ├── core/             # Core infrastructure
+│       ├── providers/        # LLM provider implementations
+│       ├── runtime/          # Runtime and session management
+│       ├── tools/            # Tool system
+│       │   ├── base/         # Base tool classes and schemas
 │       │   └── tool_registry.py # Tool registration and management
-│       ├── providers/          # Provider system with routing and health checks
-│       ├── runtime/             # Runtime and session management
-│       ├── core/                # Core infrastructure
-│       ├── config/              # Configuration management
-│       └── cli/                 # CLI commands and interface
-├── tests/             # Comprehensive test suite
-│   ├── unit/          # Unit tests for individual components
-│   ├── integration/   # Integration tests with mocks
-│   └── e2e/           # End-to-end CLI tests
+│       └── utils/            # Utility functions
+├── tests/                    # Test suite
+│   ├── e2e/                  # End-to-end tests
+│   │   ├── conftest.py       # Test fixtures
+│   │   ├── test_cli_commands.py
+│   │   └── test_provider_commands.py
+│   ├── integration/          # Integration tests
+│   └── unit/                 # Unit tests
+│       └── providers/        # Provider-specific unit tests
+├── .env                      # Base environment variables
+├── .env.development          # Development environment
+├── .env.test                 # Test environment
+├── .env.production           # Production environment
+├── .env.local                # Local overrides (gitignored)
 ├── .gitignore
-├── pyproject.toml
-└── README.md
+├── .pre-commit-config.yaml   # Pre-commit hooks
+├── .python-version           # Python version file
+├── llms.txt                  # LLM documentation
+├── main.py                   # Main entry point
+├── pyproject.toml            # Project metadata and dependencies
+└── uv.lock                   # Dependency lock file
+
 ```
 
 ## CLI Usage
@@ -157,11 +213,34 @@ uv run locca run query "Summarize RFC 9110" --provider openrouter --model "openr
 
 ```bash
 # List available tools (text and JSON)
-uv run locca list-tools list
-uv run locca list-tools list --json
+uv run locca tool list
+uv run locca tool list --json
 
-# Register a new tool
-uv run locca tools register --name calculator --path ./my_tools/calc.py
+# Add a new tool
+uv run locca tool add --name calculator --path ./my_tools/calc.py
+
+# Remove a tool
+uv run locca tool remove calculator
+
+# Run a tool directly
+uv run locca tool run calculator --input '{"query": "example"}'
+
+# Validate tool configuration
+uv run locca tool validate
+
+# Reload tools (after config changes)
+uv run locca tool reload
+```
+
+Tools can also be registered by adding them to `config/tools.local.yaml`:
+
+```yaml
+tools:
+  - name: calculator
+    path: ./my_tools/calc.py  # or module: my_tools.calculator
+    enabled: true
+    config:
+      precision: 2
 ```
 
 ### Configuration

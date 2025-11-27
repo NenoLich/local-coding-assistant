@@ -1,0 +1,25 @@
+tools:
+  - id: sum
+    source: builtin
+    path: '@project/src/local_coding_assistant/tools/builtin_tools/math_tools.py'
+    description: "Adds two or more numbers together"
+    permissions: [compute]
+    tags: [math, utility]
+    enabled: true
+
+  - id: multiply
+    source: builtin
+    path: '@project/src/local_coding_assistant/tools/builtin_tools/math_tools.py'
+    description: "Multiplies two or more numbers together"
+    permissions: [compute]
+    tags: [math, utility]
+    enabled: true
+    category: math
+
+  - id: doc_classifier
+    source: mcp
+    endpoint: https://example-mcp.com/tools/doc_classifier
+    provider: example-mcp
+    description: "Classify large documents using remote MCP tool."
+    permissions: [network]
+    enabled: true

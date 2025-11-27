@@ -12,12 +12,8 @@ from local_coding_assistant.cli.main import app
 class TestProviderCommands:
     """Test cases for provider management CLI commands."""
 
-    @pytest.fixture(autouse=True)
-    def cli_runner(self, cli_runner):
-        """Fixture to provide a Click CLI runner."""
-        return cli_runner
 
-    def test_provider_add_basic(self, cli_runner, temp_config_dir):
+    def test_provider_add_basic(self, cli_runner, test_configs):
         """Test adding a basic provider - focus on config file creation."""
         # The bootstrap mocking is complex, so let's test the core functionality
         # which is creating the configuration file correctly
@@ -40,9 +36,7 @@ class TestProviderCommands:
 
         # Check if config file was created (core functionality)
         config_path = (
-            temp_config_dir
-            / ".local-coding-assistant"
-            / "config"
+            test_configs["config_dir"]
             / "providers.local.yaml"
         )
         if config_path.exists():
@@ -63,7 +57,7 @@ class TestProviderCommands:
         # The important thing is that the command doesn't crash completely
         # and the exit code indicates the issue is with bootstrap, not file operations
 
-    def test_provider_add_with_env_var(self, cli_runner, temp_config_dir):
+    def test_provider_add_with_env_var(self, cli_runner, test_configs):
         """Test adding a provider with API key from environment variable."""
         result = cli_runner.invoke(
             app,
@@ -81,9 +75,7 @@ class TestProviderCommands:
 
         # Check if config file was created (core functionality)
         config_path = (
-            temp_config_dir
-            / ".local-coding-assistant"
-            / "config"
+            test_configs["config_dir"]
             / "providers.local.yaml"
         )
         if config_path.exists():
@@ -95,7 +87,7 @@ class TestProviderCommands:
             assert config["test_provider"]["api_key_env"] == "OPENAI_API_KEY"
             assert "api_key" not in config["test_provider"]
 
-    def test_provider_add_with_base_url(self, cli_runner, temp_config_dir):
+    def test_provider_add_with_base_url(self, cli_runner, test_configs):
         """Test adding a provider with custom base URL."""
         result = cli_runner.invoke(
             app,
@@ -113,9 +105,7 @@ class TestProviderCommands:
 
         # Check if config file was created (core functionality)
         config_path = (
-            temp_config_dir
-            / ".local-coding-assistant"
-            / "config"
+            test_configs["config_dir"]
             / "providers.local.yaml"
         )
         if config_path.exists():
@@ -298,9 +288,9 @@ class TestProviderCommands:
         assert result.exit_code == 1
         assert "Provider 'nonexistent' not found in configuration" in result.stdout
 
-    def test_provider_validate_empty_config(self, cli_runner, temp_config_dir):
+    def test_provider_validate_empty_config(self, cli_runner, test_configs):
         """Test validating an empty provider configuration."""
-        config_dir = temp_config_dir / ".local-coding-assistant" / "config"
+        config_dir = test_configs["config_dir"]
         config_dir.mkdir(parents=True, exist_ok=True)
         config_file = config_dir / "providers.local.yaml"
 
@@ -315,10 +305,10 @@ class TestProviderCommands:
         assert "Validating provider configuration..." in result.stdout
         assert "Configuration is empty" in result.stdout
 
-    def test_provider_validate_valid_config(self, cli_runner, temp_config_dir):
+    def test_provider_validate_valid_config(self, cli_runner, test_configs):
         """Test validating a valid provider configuration."""
         # Create a test config file with the expected format
-        config_dir = temp_config_dir / ".local-coding-assistant" / "config"
+        config_dir = test_configs["config_dir"]
         config_dir.mkdir(parents=True, exist_ok=True)
         config_file = config_dir / "providers.local.yaml"
 
@@ -374,16 +364,6 @@ class TestProviderCommands:
             app, ["provider", "validate", "--config-file", str(config_file)]
         )
 
-        # Print debug information
-        print("\n=== Command Output ===")
-        print(result.output)
-        print("=== Exit Code:", result.exit_code)
-        print("====================\n")
-
-        if result.exit_code != 0:
-            print("=== stderr ===")
-            print(result.stderr)
-            print("==============")
 
         assert result.exit_code == 0, f"Command failed with output: {result.output}"
         assert "Validating provider configuration..." in result.output
@@ -395,9 +375,9 @@ class TestProviderCommands:
         assert "test_openai" in result.output
         assert "test_google" in result.output
 
-    def test_provider_validate_missing_driver(self, cli_runner, temp_config_dir):
+    def test_provider_validate_missing_driver(self, cli_runner, test_configs):
         """Test validating configuration with missing driver field."""
-        config_dir = temp_config_dir / ".local-coding-assistant" / "config"
+        config_dir = test_configs["config_dir"]
         config_dir.mkdir(parents=True, exist_ok=True)
         config_file = config_dir / "providers.local.yaml"
 
@@ -436,16 +416,6 @@ class TestProviderCommands:
             app, ["provider", "validate", "--config-file", str(config_file)]
         )
 
-        # Print debug information
-        print("\n=== Command Output ===")
-        print(result.output)
-        print("=== Exit Code:", result.exit_code)
-        print("====================\n")
-
-        if result.exit_code != 0:
-            print("=== stderr ===")
-            print(result.stderr)
-            print("==============")
 
         # The command should fail with exit code 1 when required fields are missing
         assert result.exit_code == 1, (
@@ -453,9 +423,9 @@ class TestProviderCommands:
         )
         assert "❌ Error: Missing required fields: ['driver']" in result.output
 
-    def test_provider_validate_invalid_yaml(self, cli_runner, temp_config_dir):
+    def test_provider_validate_invalid_yaml(self, cli_runner, test_configs):
         """Test validating invalid YAML configuration."""
-        config_dir = temp_config_dir / ".local-coding-assistant" / "config"
+        config_dir = test_configs["config_dir"]
         config_dir.mkdir(parents=True, exist_ok=True)
         config_file = config_dir / "providers.local.yaml"
 

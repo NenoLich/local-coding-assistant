@@ -2,7 +2,6 @@
 Generic Provider that can be configured from a dictionary.
 """
 
-import os
 from typing import Any
 
 from local_coding_assistant.providers.base import BaseProvider
@@ -38,11 +37,14 @@ class GenericProvider(BaseProvider):
         # Extract required parameters
         name = kwargs.get("name")
         base_url = kwargs.get("base_url")
+        env_manager = kwargs.get("env_manager")
 
         if not name:
             raise ValueError("name is required for GenericProvider")
         if not base_url:
             raise ValueError(f"base_url is required for GenericProvider - {name}")
+        if not env_manager:
+            raise ValueError("env_manager is required for GenericProvider")
 
         # Extract models if provided, otherwise use empty list
         models = kwargs.pop("models", [])
@@ -51,11 +53,12 @@ class GenericProvider(BaseProvider):
         super().__init__(
             name=name,
             base_url=base_url,
+            env_manager=env_manager,
             models=models,  # Pass models to BaseProvider
             **{
                 k: v
                 for k, v in kwargs.items()
-                if k not in ["name", "base_url", "models"]
+                if k not in ["name", "base_url", "env_manager", "models"]
             },
         )
 
@@ -69,8 +72,9 @@ class GenericProvider(BaseProvider):
         try:
             driver_class = driver_map[driver_name]
             api_key = kwargs.get("api_key")
+
             if not api_key and self.api_key_env:
-                api_key = os.getenv(self.api_key_env)
+                api_key = env_manager.get_env(self.api_key_env)
 
             driver_kwargs = {"provider_name": self.name}
             self.driver_instance = driver_class(

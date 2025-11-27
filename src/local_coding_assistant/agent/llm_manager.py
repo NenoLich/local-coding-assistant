@@ -8,7 +8,6 @@ while maintaining backward compatibility with existing code.
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
@@ -177,7 +176,9 @@ class LLMManager:
         from local_coding_assistant.providers import ProviderManager, ProviderRouter
 
         self.config_manager = config_manager
-        self.provider_manager = provider_manager or ProviderManager()
+        self.provider_manager = provider_manager or ProviderManager(
+            env_manager=config_manager.env_manager
+        )
         self.router = ProviderRouter(self.config_manager, self.provider_manager)
         self._current_provider = None
         self._current_model = None
@@ -201,10 +202,6 @@ class LLMManager:
         overrides: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """Generate a response using the provider system with fallback support."""
-
-        # Check if we're in test mode
-        if os.environ.get("LOCCA_TEST_MODE") == "true":
-            return self._generate_mock_response(request)
 
         try:
             # Route request and handle generation response
@@ -774,13 +771,6 @@ class LLMManager:
         Yields:
             Content chunks from the streaming response as strings.
         """
-
-        # Check if we're in test mode
-        if os.environ.get("LOCCA_TEST_MODE") == "true":
-            response = self._generate_mock_response(request)
-            if response.content:
-                yield response.content
-            return
 
         # Extract model from overrides if not provided directly
         effective_model = model

@@ -204,7 +204,9 @@ Please describe what actions were taken and their results.
                                     request = ToolExecutionRequest(
                                         tool_name=func_name, payload=args
                                     )
-                                    response = self.tool_manager.execute(request)
+                                    response = await self.tool_manager.execute_async(
+                                        request
+                                    )
                                     if not response.success:
                                         tool_result = f"Error: {response.error_message}"
                                     else:
@@ -317,7 +319,7 @@ Please provide:
             return []
 
         available_tools = []
-        for tool in self.tool_manager:
+        for tool in self.tool_manager.list_tools(available_only=True):
             if hasattr(tool, "name") and hasattr(tool, "description"):
                 available_tools.append(
                     {
@@ -334,7 +336,7 @@ Please provide:
             return "No tools available"
 
         descriptions = []
-        for tool in self.tool_manager:
+        for tool in self.tool_manager.list_tools(available_only=True):
             if hasattr(tool, "name") and hasattr(tool, "description"):
                 descriptions.append(f"- {tool.name}: {tool.description}")
         return "\n".join(descriptions) if descriptions else "No tools available"

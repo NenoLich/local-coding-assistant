@@ -41,8 +41,13 @@ def integration_provider_manager():
         patch(
             "local_coding_assistant.providers.provider_manager.ProviderManager.reload"
         ),
+        patch("local_coding_assistant.config.EnvManager") as mock_env_manager,
     ):
-        manager = ProviderManager()
+        # Create a mock EnvManager instance
+        mock_env_manager.return_value = MagicMock()
+        
+        # Initialize ProviderManager with required parameters
+        manager = ProviderManager(env_manager=mock_env_manager.return_value)
 
         # Create mock providers for integration testing
         mock_openai_provider = MagicMock(spec=BaseProvider)
@@ -52,6 +57,15 @@ def integration_provider_manager():
             "gpt-3.5-turbo",
         ]
         mock_openai_provider.health_check = AsyncMock(return_value=True)
+        
+        # Register the mock provider in the manager
+        manager._instances = {"openai": mock_openai_provider}
+        manager._providers = {"openai": MagicMock(return_value=mock_openai_provider)}
+        manager._provider_sources = {"openai": "test"}
+        
+        # Set up list_providers to return our mock providers
+        manager.list_providers = MagicMock(return_value=["openai"])
+        manager.get_provider = MagicMock(return_value=mock_openai_provider)
 
         mock_google_provider = MagicMock(spec=BaseProvider)
         mock_google_provider.name = "google"
@@ -486,8 +500,10 @@ class TestProviderConfigurationIntegration:
             with patch("pathlib.Path.home") as mock_home:
                 mock_home_path = MagicMock()
                 mock_home.return_value = mock_home_path
-
-                manager = ProviderManager()
+                
+                # Create a mock EnvManager
+                mock_env_manager = MagicMock()
+                manager = ProviderManager(env_manager=mock_env_manager)
 
                 # Simulate loading providers from different layers
                 # This would normally happen in the reload() method
@@ -544,8 +560,9 @@ class TestProviderErrorScenarios:
             "api_key": "test-key",
         }
 
-        # Create a fresh provider manager for this test
-        test_manager = ProviderManager()
+        # Create a fresh provider manager for this test with required parameters
+        mock_env_manager = MagicMock()
+        test_manager = ProviderManager(env_manager=mock_env_manager)
 
         # Print initial state
         print("\n=== Initial State ===")

@@ -226,17 +226,25 @@ class OpenAIChatCompletionsDriver(BaseDriver):
         Returns:
             Tuple of (status_code, response) where either or both can be None
         """
+        # Handle case where status_code is directly on the exception
         if hasattr(e, "status_code"):
-            status_code = int(e.status_code) if e.status_code is not None else None
-            return status_code, getattr(e, "response", None)
+            status_code = e.status_code
+            if status_code is None:
+                return None, getattr(e, "response", None)
+            try:
+                return int(str(status_code)), getattr(e, "response", None)
+            except (ValueError, TypeError):
+                return None, getattr(e, "response", None)
 
+        # Handle case where status_code is in the response object
         if hasattr(e, "response") and hasattr(e.response, "status_code"):
-            status_code = (
-                int(e.response.status_code)
-                if e.response.status_code is not None
-                else None
-            )
-            return status_code, e.response
+            status_code = e.response.status_code
+            if status_code is None:
+                return None, e.response
+            try:
+                return int(str(status_code)), e.response
+            except (ValueError, TypeError):
+                return None, e.response
 
         return None, None
 
@@ -542,16 +550,25 @@ class OpenAIResponsesDriver(BaseDriver):
         Returns:
             Tuple of (status_code, response) where either or both can be None
         """
+        # Handle case where status_code is directly on the exception
         if hasattr(e, "status_code"):
-            status_code = int(e.status_code) if e.status_code is not None else None
-            return status_code, getattr(e, "response", None)
+            status_code = e.status_code
+            if status_code is None:
+                return None, getattr(e, "response", None)
+            try:
+                return int(str(status_code)), getattr(e, "response", None)
+            except (ValueError, TypeError):
+                return None, getattr(e, "response", None)
+
+        # Handle case where status_code is in the response object
         if hasattr(e, "response") and hasattr(e.response, "status_code"):
-            status_code = (
-                int(e.response.status_code)
-                if e.response.status_code is not None
-                else None
-            )
-            return status_code, e.response
+            status_code = e.response.status_code
+            if status_code is None:
+                return None, e.response
+            try:
+                return int(str(status_code)), e.response
+            except (ValueError, TypeError):
+                return None, e.response
         return None, None
 
     def _log_error_details(

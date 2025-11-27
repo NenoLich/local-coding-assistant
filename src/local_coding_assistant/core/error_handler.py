@@ -74,7 +74,7 @@ def handle_error(
         )
 
 
-def error_handler(
+def error_handler[**P, R](
     func: Callable[P, R] | None = None,
     *,
     context: str | None = None,
@@ -115,7 +115,7 @@ def error_handler(
     return decorator
 
 
-def async_error_handler(
+def async_error_handler[**P, R](
     func: Callable[P, Awaitable[R]] | None = None,
     *,
     context: str | None = None,

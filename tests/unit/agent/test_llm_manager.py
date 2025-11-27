@@ -401,24 +401,6 @@ class TestLLMManager:
         assert mock_router.get_provider_for_request.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_generate_mock_mode(self, mock_provider_manager, mock_config_manager):
-        """Test mock mode for testing."""
-        import os
-
-        # Enable mock mode
-        with patch.dict(os.environ, {"LOCCA_TEST_MODE": "true"}):
-            llm = LLMManager(
-                config_manager=mock_config_manager,
-                provider_manager=mock_provider_manager,
-            )
-
-            request = LLMRequest(prompt="Test prompt")
-            response = await llm.generate(request)
-
-            assert response.content.startswith("[LLMManager] Echo:")
-            assert response.model_used == "mock-model"
-
-    @pytest.mark.asyncio
     async def test_streaming_generation(
         self, mock_provider_manager, mock_config_manager
     ):

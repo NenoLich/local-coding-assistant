@@ -115,15 +115,24 @@ def test_collect_tool_rows_sorts_and_filters_available_tools():
     )
 
     class FakeManager:
-        @staticmethod
-        def list_tools():
-            return [tool_b, tool_a]
+        def __init__(self):
+            self.calls = []
+            
+        def list_tools(self, available_only: bool = False, category: str | None = None):
+            self.calls.append(("list_tools", {"available_only": available_only, "category": category}))
+            return [tool for tool in [tool_a, tool_b] if not available_only or tool.available]
 
-    rows_all = tool_commands._collect_tool_rows(FakeManager(), available_only=False)  # noqa: SLF001
+    # Test with available_only=False (should return all tools)
+    manager = FakeManager()
+    rows_all = tool_commands._collect_tool_rows(manager, available_only=False)  # noqa: SLF001
     assert [row.name for row in rows_all] == ["Alpha", "beta"]
-
-    rows_available = tool_commands._collect_tool_rows(FakeManager(), available_only=True)  # noqa: SLF001
+    assert manager.calls == [("list_tools", {"available_only": False, "category": None})]
+    
+    # Test with available_only=True (should return only available tools)
+    manager = FakeManager()
+    rows_available = tool_commands._collect_tool_rows(manager, available_only=True)  # noqa: SLF001
     assert [row.name for row in rows_available] == ["Alpha"]
+    assert manager.calls == [("list_tools", {"available_only": True, "category": None})]
 
 
 def test_execute_tool_prefers_manager_execute_with_tool_execution_request():

@@ -38,6 +38,7 @@ class TestLLMManagerStreaming:
         """Create a mock config manager."""
         mock = MagicMock()
         mock.global_config = {"providers": {}, "models": {}}
+        mock.env_manager = MagicMock()
         return mock
         
     @pytest.fixture
@@ -180,20 +181,6 @@ class TestLLMManagerStreaming:
         with pytest.raises(LLMError, match="LLM streaming generation failed"):
             async for chunk in manager.stream(request):
                 pass
-
-    @pytest.mark.asyncio
-    async def test_stream_test_mode(self, mock_config_manager):
-        """Test streaming in test mode."""
-        with patch.dict("os.environ", {"LOCCA_TEST_MODE": "true"}):
-            manager = LLMManager(config_manager=mock_config_manager)
-
-            request = LLMRequest(prompt="Test prompt")
-            chunks = []
-            async for chunk in manager.stream(request):
-                chunks.append(chunk)
-
-            assert len(chunks) == 1
-            assert chunks[0].startswith("[LLMManager] Echo:")
 
 
 class TestLLMManagerMethodConsistency:
