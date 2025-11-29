@@ -25,6 +25,8 @@ providers:
     models:
       gemini-2.5-flash:
         supported_parameters: ["tools", "reasoning_effort", "max_tokens", "stream", "tool_choice", "response_format", "extra_body.thinking_config"]
+      gemini-2.5-flash-lite:
+        supported_parameters: [ "tools", "reasoning_effort", "max_tokens", "stream", "tool_choice", "response_format", "extra_body.thinking_config" ]
   github_models:
     driver: "openai_chat"
     base_url: "https://models.github.ai/inference"
@@ -35,3 +37,13 @@ providers:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format"]
       microsoft/Phi-4-mini-instruct:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty"]
+  groq:
+    driver: "openai_chat"
+    base_url: "https://api.groq.com/openai/v1"
+    api_key_env: "GROQ_API_KEY"
+    health_check_endpoint: "https://api.groq.com/openai/v1/models"
+    models:
+      groq/compound:
+        supported_parameters: ["max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format"]
+      groq/compound-mini:
+        supported_parameters: ["max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format" ]

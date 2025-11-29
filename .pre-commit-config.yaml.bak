@@ -37,6 +37,15 @@ repos:
         exclude: ^(tests|build|dist|.venv|.temp).*$
         language: python
         stages: [pre-commit]
+  - repo: https://github.com/codecov/codecov-action
+    rev: v3
+    hooks:
+      - id: codecov
+        name: Code Coverage
+        files: ^coverage\.xml$
+        stages: [pre-commit]
+  - repo: local
+    hooks:
       - id: pytest-unit
         name: pytest unit (fast)
         entry: pytest -vx tests/unit

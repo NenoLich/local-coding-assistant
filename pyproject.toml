@@ -67,7 +67,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 pythonpath = ["src"]
 asyncio_mode = "auto"
-# addopts = "-v --cov=local_coding_assistant --cov-report=term-missing"
+addopts = "-v --cov=local_coding_assistant --cov-report=term-missing"
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [coverage.run]

@@ -231,3 +231,80 @@ def test_cli_tool_add_persists_configuration(tool_test_env, cli_runner, monkeypa
     tool_manager = ToolManager(config_manager=config_manager, auto_load=True)
     run_result = tool_manager.run_tool("added_cli_tool", {"value": 2})
     assert run_result == {"result": 12}
+
+
+def test_cli_tool_add_updates_existing_tool(tool_test_env, cli_runner, monkeypatch, test_configs):
+    """The `tool add` CLI command should update existing tool configurations when using an existing ID."""
+    # Create a test tool module
+    module_path = tool_test_env.create_tool_module("updatable_tool", multiplier=2)
+    
+    # Create a local config with an initial tool
+    test_configs["local"].write_text(
+        yaml.safe_dump({
+            "tools": [{
+                "id": "updatable_tool",
+                "name": "Old Tool Name",
+                "description": "Old description",
+                "path": str(module_path),
+                "enabled": True,
+                "category": "utility"
+            }]
+        }),
+        encoding="utf-8"
+    )
+    
+    # Mock the bootstrap to use our test config
+    def fake_bootstrap(**kwargs) -> dict[str, object]:
+        config_file = kwargs.get("config_path")
+        if config_file:
+            config_manager = ConfigManager(
+                tool_config_paths=[config_file]
+            )
+        else:
+            config_manager = ConfigManager(
+                tool_config_paths=[test_configs["local"]]
+            )
+        return {
+            "tools": ToolManager(config_manager=config_manager, auto_load=True),
+        }
+    
+    monkeypatch.setattr(tool_cli, "bootstrap", fake_bootstrap)
+    
+    # Run the add command with the same ID to update the existing tool
+    result = cli_runner.invoke(
+        tool_cli.app,
+        [
+            "add",
+            "updatable_tool",  # Same ID as existing tool
+            "--name", "Updated Tool Name",
+            "--description", "Updated description",
+            "--disabled",
+            "--category", "utility",
+            "--path", str(module_path),  # Must provide path again since it's required
+            "--config-file", str(test_configs["local"]),
+        ],
+        catch_exceptions=False,
+    )
+    
+    # Debug output
+    print(f"Command output: {result.output}")
+    print(f"Exit code: {result.exit_code}")
+    if result.exception:
+        print(f"Exception: {result.exception}")
+    
+    # Verify the command was successful
+    assert result.exit_code == 0, f"Command failed with output: {result.output}"
+    assert "Successfully updated disabled tool 'Updated Tool Name' with ID 'updatable_tool'" in result.output
+    
+    # Verify the config file was updated
+    with open(test_configs["local"], encoding="utf-8") as f:
+        updated_config = yaml.safe_load(f)
+    
+    # Find our tool in the updated config
+    tool = next((t for t in updated_config["tools"] if t["id"] == "updatable_tool"), None)
+    assert tool is not None, "Tool not found in updated config"
+    assert tool["name"] == "Updated Tool Name"
+    assert tool["description"] == "Updated description"
+    assert tool["enabled"] is False
+    # Verify the original path is preserved
+    assert tool["path"] == str(module_path)

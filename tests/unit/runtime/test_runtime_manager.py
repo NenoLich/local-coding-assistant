@@ -865,21 +865,211 @@ def test_get_available_tools_returns_function_specs_for_iterable_entries(runtime
         description = "A dummy tool"
         args_schema = DummyInput
 
-    # Replace the tool manager with our test tool
-
-def test_get_available_tools_returns_none_when_no_valid_tools(runtime_manager: RuntimeManager):
-    """If the tool manager has no usable entries, None should be returned."""
-    # Create a mock tool manager that returns an empty list
-    class MockToolManager:
-        def list_tools(self, available_only: bool = False, category: str | None = None) -> list:
-            return []
+    # Create a mock tool manager with a list_tools method
+    mock_tool_manager = MagicMock()
+    mock_tool_manager.list_tools.return_value = [DummyTool()]
     
     # Replace the tool manager with our mock
     original_tool_manager = runtime_manager._tool_manager
-    runtime_manager._tool_manager = MockToolManager()
+    runtime_manager._tool_manager = mock_tool_manager
     
     try:
-        assert runtime_manager._get_available_tools() is None
+        tools = runtime_manager._get_available_tools()
+        
+        # Verify we got a list of tool specs
+        assert isinstance(tools, list)
+        assert len(tools) == 1
+        assert tools[0]["function"]["name"] == "dummy"
+        mock_tool_manager.list_tools.assert_called_once_with(available_only=True)
     finally:
-        # Restore the original tool manager
         runtime_manager._tool_manager = original_tool_manager
+
+
+def test_get_available_tools_returns_none_when_no_valid_tools(runtime_manager: RuntimeManager):
+    """If the tool manager has no usable entries, None should be returned."""
+    # Setup: Mock the tool manager to return an empty list from list_tools()
+    runtime_manager._tool_manager = MagicMock()
+    runtime_manager._tool_manager.list_tools.return_value = []
+
+    # Execute
+    tools = runtime_manager._get_available_tools()
+
+    # Verify
+    assert tools is None
+    runtime_manager._tool_manager.list_tools.assert_called_once_with(available_only=True)
+
+
+class TestToolHandling:
+    """Tests for tool handling methods in RuntimeManager."""
+
+    @pytest.mark.asyncio
+    async def test_handle_missing_tool_manager(self, runtime_manager: RuntimeManager):
+        # Setup
+        session = MagicMock()
+        tool_calls = [
+            {
+                "function": {
+                    "name": "test_tool",
+                    "arguments": '{"param1": "value1"}'
+                }
+            }
+        ]
+
+        # Execute
+        await runtime_manager._handle_missing_tool_manager(session, tool_calls)
+
+        # Verify
+        session.add_tool_message.assert_called_once_with(
+            name="test_tool",
+            args={"param1": "value1"},
+            result={"error": "Tool functionality is not available"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_handle_missing_tool_manager_invalid_json(self, runtime_manager: RuntimeManager):
+        # Setup
+        session = MagicMock()
+        tool_calls = [
+            {
+                "function": {
+                    "name": "test_tool",
+                    "arguments": 'invalid-json'
+                }
+            }
+        ]
+
+        # Execute
+        await runtime_manager._handle_missing_tool_manager(session, tool_calls)
+
+        # Verify it still adds a tool message with empty args on JSON decode error
+        session.add_tool_message.assert_called_once()
+        assert session.add_tool_message.call_args[1]["name"] == "test_tool"
+        assert session.add_tool_message.call_args[1]["args"] == {}
+
+    @pytest.mark.asyncio
+    async def test_process_single_tool_call_success(self, runtime_manager: RuntimeManager):
+        # Setup
+        session = MagicMock()
+        tool_call = {
+            "function": {
+                "name": "test_tool",
+                "arguments": '{"param1": "value1"}'
+            }
+        }
+        
+        # Mock _execute_tool to return a successful result
+        runtime_manager._execute_tool = AsyncMock(return_value={"result": "success"})
+
+        # Execute
+        await runtime_manager._process_single_tool_call(tool_call, session)
+
+        # Verify
+        runtime_manager._execute_tool.assert_awaited_once_with("test_tool", {"param1": "value1"})
+        session.add_tool_message.assert_called_once_with(
+            name="test_tool",
+            args={"param1": "value1"},
+            result={"result": "success"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_process_single_tool_call_json_error(self, runtime_manager: RuntimeManager):
+        # Setup
+        session = MagicMock()
+        tool_call = {
+            "function": {
+                "name": "test_tool",
+                "arguments": 'invalid-json'
+            }
+        }
+        
+        # Mock _handle_json_decode_error to verify it's called
+        runtime_manager._handle_json_decode_error = AsyncMock()
+
+        # Execute
+        await runtime_manager._process_single_tool_call(tool_call, session)
+
+        # Verify
+        runtime_manager._handle_json_decode_error.assert_awaited_once()
+        session.add_tool_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_process_single_tool_call_execution_error(self, runtime_manager: RuntimeManager):
+        # Setup
+        session = MagicMock()
+        tool_call = {
+            "function": {
+                "name": "test_tool",
+                "arguments": '{"param1": "value1"}'
+            }
+        }
+        
+        # Mock _execute_tool to raise an exception
+        runtime_manager._execute_tool = AsyncMock(side_effect=Exception("Tool error"))
+        runtime_manager._handle_tool_error = AsyncMock()
+
+        # Execute
+        await runtime_manager._process_single_tool_call(tool_call, session)
+
+        # Verify
+        runtime_manager._handle_tool_error.assert_awaited_once()
+        session.add_tool_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_success(self, runtime_manager: RuntimeManager):
+        # Setup
+        runtime_manager._tool_manager = MagicMock()
+        runtime_manager._tool_manager.execute_async = AsyncMock(return_value=MagicMock(
+            success=True,
+            result={"output": "test result"},
+            execution_time_ms=100
+        ))
+
+        # Execute
+        result = await runtime_manager._execute_tool("test_tool", {"param1": "value1"})
+
+        # Verify
+        assert result == {"output": "test result"}
+        runtime_manager._tool_manager.execute_async.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_failure(self, runtime_manager: RuntimeManager):
+        # Setup
+        runtime_manager._tool_manager = MagicMock()
+        runtime_manager._tool_manager.execute_async = AsyncMock(return_value=MagicMock(
+            success=False,
+            error_message="Tool execution failed",
+            execution_time_ms=100
+        ))
+
+        # Execute
+        result = await runtime_manager._execute_tool("test_tool", {"param1": "value1"})
+
+        # Verify
+        assert result == {"error": "Tool execution failed: Tool execution failed"}
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_no_tool_manager(self, runtime_manager: RuntimeManager):
+        # Setup
+        runtime_manager._tool_manager = None
+
+        # Execute
+        result = await runtime_manager._execute_tool("test_tool", {"param1": "value1"})
+
+        # Verify
+        assert result == {"error": "Tool functionality is not available"}
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_non_dict_result(self, runtime_manager: RuntimeManager):
+        # Setup
+        runtime_manager._tool_manager = MagicMock()
+        runtime_manager._tool_manager.execute_async = AsyncMock(return_value=MagicMock(
+            success=True,
+            result="plain string result",
+            execution_time_ms=100
+        ))
+
+        # Execute
+        result = await runtime_manager._execute_tool("test_tool", {"param1": "value1"})
+
+        # Verify result is wrapped in a dict
+        assert result == {"result": "plain string result"}

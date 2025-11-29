@@ -8,7 +8,6 @@ This module tests the complete provider lifecycle including:
 - Integration between CLI, provider manager, and LLM manager
 """
 
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

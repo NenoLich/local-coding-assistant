@@ -70,7 +70,7 @@ def test_env_manager():
             else:
                 os.environ[key] = old_env[key]
 
-    return True
+    assert True
 
 
 def test_bootstrap_integration():
@@ -99,7 +99,7 @@ def test_bootstrap_integration():
         import traceback
 
         traceback.print_exc()
-        return False
+        assert False
 
 
 def main():

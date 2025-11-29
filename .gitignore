@@ -20,6 +20,7 @@ tmp/
 logs/
 tests/logs/
 tests/cache/
+htmlcov/
 
 
 # IDE specific

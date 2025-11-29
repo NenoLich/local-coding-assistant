@@ -6,7 +6,7 @@ ensuring consistent behavior across different providers.
 """
 
 import json
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from typing import Any, NoReturn
 
 from openai import AsyncOpenAI
@@ -206,8 +206,30 @@ class OpenAIChatCompletionsDriver(BaseDriver):
             }
 
     def _calculate_tokens(self, response) -> int | None:
-        """Calculate total tokens used"""
-        return getattr(response.usage, "total_tokens", None)
+        """Calculate total tokens used from the response.
+
+        Args:
+            response: The response object from the API
+
+        Returns:
+            The total number of tokens used, or None if not available
+        """
+        if not hasattr(response, "usage"):
+            return None
+
+        usage = response.usage
+
+        # Handle case where usage is a dictionary
+        if isinstance(usage, Mapping):
+            total = usage.get("total_tokens")
+            return int(total) if total is not None else None
+
+        # Handle case where usage is an object with attributes
+        if hasattr(usage, "total_tokens"):
+            total = usage.total_tokens
+            return int(total) if total is not None else None
+
+        return None
 
     async def health_check(self) -> bool:
         """Check if the API is accessible"""
