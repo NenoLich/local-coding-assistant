@@ -14,8 +14,8 @@ from local_coding_assistant.tools.types import (
 from .tool_test_helpers import (
     AsyncTestTool,
     FailingTestTool,
-    StubToolConfig,
     StreamingTestTool,
+    StubToolConfig,
     SyncTestTool,
     build_manager,
     make_tool_info,
@@ -25,9 +25,11 @@ from .tool_test_helpers import (
 class TestToolLoading:
     def test_enabled_tools_create_runtimes(self):
         sync_info = make_tool_info("sync_tool", SyncTestTool)
-        manager, config_manager = build_manager({
-            "sync_tool": StubToolConfig(sync_info),
-        })
+        manager, config_manager = build_manager(
+            {
+                "sync_tool": StubToolConfig(sync_info),
+            }
+        )
 
         config_manager.get_tools.assert_called_once()
         assert manager.get_tool_info("sync_tool") is not None
@@ -35,9 +37,13 @@ class TestToolLoading:
 
     def test_disabled_tool_skipped(self):
         disabled_info = make_tool_info("disabled_tool", SyncTestTool)
-        manager, _ = build_manager({
-            "disabled_tool": StubToolConfig(disabled_info, enabled=False, available=False),
-        })
+        manager, _ = build_manager(
+            {
+                "disabled_tool": StubToolConfig(
+                    disabled_info, enabled=False, available=False
+                ),
+            }
+        )
 
         info = manager.get_tool_info("disabled_tool")
         assert info is not None
@@ -79,10 +85,13 @@ class TestToolExecution:
         result = manager.run_tool("sync_tool", {"value": 21})
 
         assert result == {"result": 42}
-        stats = manager.get_execution_stats()["sync_tool"]
-        assert stats["call_count"] == 1
+        stats = manager.get_execution_stats("sync_tool")
+        assert stats["total_executions"] == 1
         assert stats["error_count"] == 0
-        assert stats["last_called"] is not None
+        assert stats["success_count"] == 1
+        assert stats["last_execution"] is not None
+        assert stats["success_rate"] == 100.0
+        assert isinstance(stats["metrics_summary"], dict)
 
     def test_run_tool_invalid_input_raises_tool_registry_error(self):
         sync_info = make_tool_info("sync_tool", SyncTestTool)
@@ -124,9 +133,11 @@ class TestToolExecution:
             is_async=True,
             supports_streaming=True,
         )
-        manager, _ = build_manager({
-            "streaming_tool": StubToolConfig(streaming_info),
-        })
+        manager, _ = build_manager(
+            {
+                "streaming_tool": StubToolConfig(streaming_info),
+            }
+        )
 
         chunks = []
         async for chunk in manager.stream_tool("streaming_tool", {"value": 10}):
@@ -141,10 +152,14 @@ class TestToolExecution:
         with pytest.raises(ToolRegistryError):
             manager.run_tool("failing_tool", {"value": 1})
 
-        stats = manager.get_execution_stats()["failing_tool"]
-        assert stats["call_count"] == 1
+        stats = manager.get_execution_stats("failing_tool")
+        assert stats["total_executions"] == 1
         assert stats["error_count"] == 1
-        assert stats["last_error"] is not None
+        assert stats["success_count"] == 0
+        assert stats["last_execution"] is not None
+        # The error is recorded in the call metrics, not directly in the stats
+        assert stats["success_rate"] == 0.0
+        assert isinstance(stats["metrics_summary"], dict)
 
 
 class TestToolIntrospection:
@@ -270,4 +285,3 @@ class TestRuntimeHelpers:
         runtime = manager._runtime_from_instance(tool_info, DummyExecutor())
 
         assert runtime.kind == "mcp"
-

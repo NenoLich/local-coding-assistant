@@ -1,15 +1,15 @@
-
 from collections.abc import AsyncIterator
 from copy import deepcopy
-from typing import Any, Generator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from local_coding_assistant.agent.llm_manager import LLMManager
+from local_coding_assistant.agent.llm_manager import LLMManager, ToolCall
 from local_coding_assistant.config.config_manager import ConfigManager
 from local_coding_assistant.core.exceptions import LLMError
 from local_coding_assistant.core.protocols import IConfigManager
+from local_coding_assistant.tools.tool_manager import ToolExecutionResponse
 from local_coding_assistant.providers.base import (
     BaseProvider,
     ProviderLLMRequest,
@@ -18,7 +18,6 @@ from local_coding_assistant.providers.base import (
 )
 from local_coding_assistant.providers.provider_manager import ProviderManager
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
-from local_coding_assistant.tools.builtin_tools.math_tools import SumTool
 from local_coding_assistant.tools.tool_manager import ToolManager
 
 # Test configuration constants
@@ -74,7 +73,7 @@ class MockTestProvider(BaseProvider):
             api_key=api_key or "test_key",
             env_manager=env_manager,
             allow_test_requests=allow_test_requests,
-            **kwargs
+            **kwargs,
         )
         self.call_count = 0
         self.calls: list[dict[str, Any]] = []
@@ -163,50 +162,80 @@ class ToolManagerHelper(ToolManager):
         return self.run_tool(name, payload)
 
 
+class AttrDict(dict):
+    """A dictionary that supports both attribute and item access."""
+    def __getattr__(self, key):
+        try:
+            value = self[key]
+            if isinstance(value, dict):
+                return AttrDict(value)
+            return value
+        except KeyError as e:
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{key}'") from e
+
+    def __setattr__(self, key, value):
+        if key.startswith('_'):
+            super().__setattr__(key, value)
+        else:
+            self[key] = value
+
+    def __delattr__(self, key):
+        if key.startswith('_'):
+            super().__delattr__(key)
+        else:
+            del self[key]
+
 class MockConfigManager(IConfigManager):
     """Mock implementation of IConfigManager for testing."""
-    
+
     def __init__(self):
-        self._config = {
-            "runtime": {
+        self._config = AttrDict({
+            "runtime": AttrDict({
                 "persistent_sessions": False,
                 "use_graph_mode": False,
                 "stream": False,
-            },
-            "llm": {
+                "tool_call_mode": "auto"
+            }),
+            "llm": AttrDict({
                 "model_name": "test-model",
                 "provider": "test",
                 "temperature": 0.7,
                 "max_tokens": 1000,
-            },
-            "tools": {
-                "tools": []
-            },
-            "providers": {},
-            "agent": {}
-        }
+            }),
+            "tools": AttrDict({"tools": []}),
+            "providers": AttrDict({}),
+            "agent": AttrDict({}),
+        })
         self._session_overrides = {}
-    
+
     @property
-    def global_config(self) -> dict:
+    def global_config(self) -> AttrDict:
         return self._config
-    
+
     @property
     def session_overrides(self) -> dict:
         return self._session_overrides
-    
-    def load_global_config(self) -> dict:
+
+    def load_global_config(self) -> AttrDict:
         return self._config
-    
+
     def get_tools(self) -> dict:
         return {}
-    
+        
+    def set_session_overrides(self, overrides):
+        """Set session overrides."""
+        self._session_overrides = overrides or {}
+        
+    def resolve(self, global_config=None, session_overrides=None, call_overrides=None):
+        """Resolve configuration with overrides."""
+        return self._config
+
     def reload_tools(self) -> None:
         pass
-    
+
     def set_session_overrides(self, overrides: dict[str, Any]) -> None:
         self._session_overrides.update(overrides)
-        
+
         # Apply overrides to config
         for key, value in overrides.items():
             if key == "runtime.persistent_sessions":
@@ -214,7 +243,7 @@ class MockConfigManager(IConfigManager):
             elif key.startswith("llm."):
                 subkey = key[4:]  # Remove 'llm.' prefix
                 self._config["llm"][subkey] = value
-    
+
     def resolve(
         self,
         provider: str | None = None,
@@ -223,7 +252,7 @@ class MockConfigManager(IConfigManager):
     ) -> dict:
         # Create a deep copy of the config to avoid modifying the original
         result: dict[str, Any] = deepcopy(self._config)
-        
+
         # Apply session overrides
         if self._session_overrides:
             for key, value in self._session_overrides.items():
@@ -237,7 +266,7 @@ class MockConfigManager(IConfigManager):
                     current[parts[-1]] = value
                 else:
                     result[key] = value
-        
+
         # Apply call overrides
         if overrides:
             for key, value in overrides.items():
@@ -251,22 +280,22 @@ class MockConfigManager(IConfigManager):
                     current[parts[-1]] = value
                 else:
                     result[key] = value
-        
+
         # Apply provider and model name overrides if provided
         if provider is not None:
             if "llm" not in result:
                 result["llm"] = {}
             result["llm"]["provider"] = provider
-            
+
         if model_name is not None:
             if "llm" not in result:
                 result["llm"] = {}
             result["llm"]["model_name"] = model_name
-        
+
         # Ensure the runtime config has all required fields
         if "runtime" not in result:
             result["runtime"] = {}
-        
+
         # Add any missing runtime defaults
         runtime_defaults = {
             "persistent_sessions": False,
@@ -276,7 +305,7 @@ class MockConfigManager(IConfigManager):
         for key, default in runtime_defaults.items():
             if key not in result["runtime"]:
                 result["runtime"][key] = default
-        
+
         # Recursively convert dictionaries to ConfigResult objects
         def convert_dict(d: Any) -> Any:
             if isinstance(d, dict):
@@ -288,17 +317,19 @@ class MockConfigManager(IConfigManager):
                 return [convert_dict(item) for item in d]
             else:
                 return d
-        
+
         # Create a simple object with dot notation access
         class ConfigResult(dict):
             def __getattr__(self, name: str) -> Any:
                 if name in self:
                     return self[name]
-                raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-            
+                raise AttributeError(
+                    f"'{type(self).__name__}' object has no attribute '{name}'"
+                )
+
             def __setattr__(self, name: str, value: Any) -> None:
                 self[name] = value
-        
+
         return convert_dict(result)
 
 
@@ -309,26 +340,22 @@ def test_provider() -> MockTestProvider:
     mock_env = MagicMock()
     mock_env.get_env.return_value = "test_key"
     mock_env.is_testing.return_value = False
-    
-    return MockTestProvider(
-        name="test",
-        env_manager=mock_env,
-        allow_test_requests=True
-    )
+
+    return MockTestProvider(name="test", env_manager=mock_env, allow_test_requests=True)
 
 
 @pytest.fixture(scope="session")
-def provider_manager() -> Generator[ProviderManager, None, None]:
+def provider_manager() -> ProviderManager:
     """Session-scoped provider manager with test provider registered."""
     # Create a mock environment manager
     mock_env = MagicMock()
     mock_env.get_env.return_value = "test_key"
     mock_env.is_testing.return_value = False
-    
+
     manager = ProviderManager(env_manager=mock_env, allow_test_requests=True)
     manager._providers["test"] = MockTestProvider
     manager._provider_sources["test"] = "test"
-    
+
     # Initialize the provider manager with test configuration
     manager._provider_configs = {
         "test": {
@@ -338,14 +365,14 @@ def provider_manager() -> Generator[ProviderManager, None, None]:
             "models": ["test-model", "gpt-4", "gpt-3.5"],
             "api_key": "test_key",
             "env_manager": mock_env,
-            "allow_test_requests": True
+            "allow_test_requests": True,
         }
     }
-    
+
     # Initialize the providers
     manager._instantiate_providers()
-    
-    yield manager
+
+    return manager
     # Cleanup if needed
 
 
@@ -380,14 +407,14 @@ def runtime_manager(
     llm_manager: LLMManager,
     tool_manager: ToolManagerHelper,
     base_config_manager: MockConfigManager,
-) -> Generator[RuntimeManager, None, None]:
+) -> RuntimeManager:
     """Runtime manager fixture with fresh state for each test."""
     manager = RuntimeManager(
         llm_manager=llm_manager,
         tool_manager=tool_manager,
         config_manager=base_config_manager,
     )
-    yield manager
+    return manager
     # Cleanup if needed
 
 
@@ -395,22 +422,22 @@ def runtime_manager(
 def persistent_runtime_manager(
     tool_manager: ToolManagerHelper,
     base_config_manager: MockConfigManager,
-) -> Generator[RuntimeManager, None, None]:
+) -> RuntimeManager:
     """Runtime manager with persistent sessions enabled."""
     # Create a new config manager with persistent sessions
     config = deepcopy(base_config_manager)
     config.set_session_overrides({"runtime.persistent_sessions": True})
-    
+
     # Create a mock environment manager
     mock_env = MagicMock()
     mock_env.get_env.return_value = "test_key"
     mock_env.is_testing.return_value = False
-    
+
     # Create a new provider manager with the test provider and mock environment
     provider_manager = ProviderManager(env_manager=mock_env, allow_test_requests=True)
     test_provider = MockTestProvider(env_manager=mock_env, allow_test_requests=True)
     provider_manager._providers = {"test": test_provider}
-    
+
     # Initialize provider configs
     provider_manager._provider_configs = {
         "test": {
@@ -419,22 +446,22 @@ def persistent_runtime_manager(
             "base_url": "https://api.test.com",
             "models": ["test-model", "gpt-4", "gpt-3.5"],
             "api_key": "test_key",
-            "env_manager": mock_env
+            "env_manager": mock_env,
         }
     }
-    
+
     # Create a new LLM manager with the new config and provider manager
     llm_manager = LLMManager(
         config_manager=config,
         provider_manager=provider_manager,
     )
-    
+
     manager = RuntimeManager(
         llm_manager=llm_manager,
         tool_manager=tool_manager,
         config_manager=config,
     )
-    yield manager
+    return manager
     # Cleanup if needed
 
 
@@ -472,7 +499,7 @@ async def test_orchestrate_with_model_override(runtime_manager: RuntimeManager):
         assert len(mock_llm_manager.generate.await_args_list) == 1
         args, _ = mock_llm_manager.generate.await_args_list[0]
         llm_request = args[0]
-        
+
         # The model is passed to to_provider_request, not stored in the request
         # So we'll verify the request was created correctly
         assert llm_request.prompt == "test query"
@@ -521,7 +548,7 @@ async def test_orchestrate_with_multiple_overrides(runtime_manager: RuntimeManag
         assert len(mock_llm_manager.generate.await_args_list) == 1
         args, _ = mock_llm_manager.generate.await_args_list[0]
         llm_request = args[0]
-        
+
         # Verify the request was created with the correct prompt and parameters
         assert llm_request.prompt == "test query"
 
@@ -534,7 +561,9 @@ async def test_orchestrate_with_multiple_overrides(runtime_manager: RuntimeManag
 
 
 @pytest.mark.asyncio
-async def test_persistent_many_iterations_history_grows_linearly(persistent_runtime_manager: RuntimeManager):
+async def test_persistent_many_iterations_history_grows_linearly(
+    persistent_runtime_manager: RuntimeManager,
+):
     """Test that history grows linearly with many iterations."""
     # Create mock responses
     mock_responses = [
@@ -564,39 +593,42 @@ async def test_persistent_many_iterations_history_grows_linearly(persistent_runt
 
 
 @pytest.mark.asyncio
-async def test_directive_success_invokes_tool_and_passes_outputs_to_llm(runtime_manager: RuntimeManager, tool_manager: ToolManagerHelper):
+async def test_directive_success_invokes_tool_and_passes_outputs_to_llm(
+    runtime_manager: RuntimeManager, tool_manager: ToolManagerHelper
+):
     """Test direct tool invocation and output passing."""
+
     # Create a test tool
     class TestTool:
         name = "test_tool"
         description = "A test tool"
         available = True  # Add the required 'available' attribute
-        
+
         def execute(self, arg1: str) -> str:
             return f"Processed: {arg1}"
-    
+
     # Create a mock response for the LLM call after tool execution
     mock_llm_response = MagicMock()
     mock_llm_response.content = "Tool result processed"
     mock_llm_response.model_used = "gpt-4"
     mock_llm_response.tokens_used = MagicMock()
-    
+
     # Create a mock LLM manager
     mock_llm_manager = AsyncMock()
     mock_llm_manager.generate.return_value = mock_llm_response
-    
+
     # Replace the LLM manager in the runtime manager
     original_llm_manager = runtime_manager._llm_manager
     runtime_manager._llm_manager = mock_llm_manager
-    
+
     # Register the test tool
     test_tool = TestTool()
     tool_manager._tools["test_tool"] = test_tool
-    
+
     try:
         # Test direct tool invocation
-        result = await runtime_manager.orchestrate('tool:test_tool {\"arg1\": \"value1\"}')
-        
+        result = await runtime_manager.orchestrate('tool:test_tool {"arg1": "value1"}')
+
         # Verify the response contains the expected fields
         assert "message" in result
         assert "Tool result processed" in result["message"]
@@ -604,10 +636,10 @@ async def test_directive_success_invokes_tool_and_passes_outputs_to_llm(runtime_
         assert "tokens_used" in result
         assert "history" in result
         assert len(result["history"]) == 2  # User + Assistant
-        
+
         # Verify the LLM was called once with the tool output
         assert mock_llm_manager.generate.await_count == 1
-        
+
     finally:
         # Restore the original LLM manager
         runtime_manager._llm_manager = original_llm_manager
@@ -621,11 +653,11 @@ async def test_directive_unknown_tool_raises(runtime_manager: RuntimeManager):
     mock_response = MagicMock()
     mock_response.content = "Error: Tool 'unknown' not found"
     mock_llm_manager.generate.return_value = mock_response
-    
+
     # Replace the LLM manager in the runtime manager
     original_llm_manager = runtime_manager._llm_manager
     runtime_manager._llm_manager = mock_llm_manager
-    
+
     try:
         # Test with unknown tool
         result = await runtime_manager.orchestrate("tool:unknown {}")
@@ -640,7 +672,9 @@ async def test_directive_invalid_json_raises(runtime_manager: RuntimeManager):
     """Test that invalid JSON in tool calls returns an appropriate error message."""
     # Create a mock response for the error case
     mock_response = MagicMock()
-    mock_response.content = "Invalid JSON in tool payload: Expecting value: line 1 column 1 (char 0)"
+    mock_response.content = (
+        "Invalid JSON in tool payload: Expecting value: line 1 column 1 (char 0)"
+    )
     mock_response.model_used = "gpt-4"
     mock_response.tokens_used = MagicMock()
 
@@ -651,16 +685,22 @@ async def test_directive_invalid_json_raises(runtime_manager: RuntimeManager):
     # Replace the LLM manager in the runtime manager
     original_llm_manager = runtime_manager._llm_manager
     runtime_manager._llm_manager = mock_llm_manager
-    
+
     try:
         # Test with invalid JSON
         result = await runtime_manager.orchestrate("tool:sum not-json")
 
         # Verify the error message indicates invalid JSON
-        assert result["message"] == "Invalid JSON in tool payload: Expecting value: line 1 column 1 (char 0)"
+        assert (
+            result["message"]
+            == "Invalid JSON in tool payload: Expecting value: line 1 column 1 (char 0)"
+        )
         assert result["model_used"] == "gpt-4"
         assert len(result["history"]) == 2
-        assert result["history"][0]["content"] == "Invalid JSON in tool payload: Expecting value: line 1 column 1 (char 0)"
+        assert (
+            result["history"][0]["content"]
+            == "Invalid JSON in tool payload: Expecting value: line 1 column 1 (char 0)"
+        )
         assert result["history"][0]["role"] == "user"
         assert "Invalid JSON" in result["history"][1]["content"]
         assert result["history"][1]["role"] == "assistant"
@@ -673,7 +713,9 @@ async def test_directive_invalid_json_raises(runtime_manager: RuntimeManager):
 
 
 @pytest.mark.asyncio
-async def test_directive_invalid_payload_validation_raises(runtime_manager: RuntimeManager, tool_manager: ToolManagerHelper):
+async def test_directive_invalid_payload_validation_raises(
+    runtime_manager: RuntimeManager, tool_manager: ToolManagerHelper
+):
     """Test that invalid tool payload raises appropriate errors."""
     # Create a mock response for the error case
     mock_response = MagicMock()
@@ -684,21 +726,26 @@ async def test_directive_invalid_payload_validation_raises(runtime_manager: Runt
     # Create a mock LLM manager
     mock_llm_manager = AsyncMock()
     mock_llm_manager.generate.return_value = mock_response
-    
+
     # Replace the LLM manager in the runtime manager
     original_llm_manager = runtime_manager._llm_manager
     runtime_manager._llm_manager = mock_llm_manager
-    
+
     try:
         # Test with invalid payload (None instead of a dictionary)
         result = await runtime_manager.orchestrate("tool:sum null")
 
         # Verify the error message indicates invalid payload
-        assert "validation error" in result["message"] or "Input should be a valid dictionary" in result["message"]
+        assert (
+            "validation error" in result["message"]
+            or "Input should be a valid dictionary" in result["message"]
+        )
         assert result["model_used"] == "gpt-4"
         assert len(result["history"]) == 2
-        assert any(msg in result["history"][0]["content"] 
-                  for msg in ["validation error", "Input should be a valid dictionary"])
+        assert any(
+            msg in result["history"][0]["content"]
+            for msg in ["validation error", "Input should be a valid dictionary"]
+        )
         assert result["history"][0]["role"] == "user"
         assert "validation error" in result["history"][1]["content"]
         assert result["history"][1]["role"] == "assistant"
@@ -722,11 +769,11 @@ async def test_empty_text_is_accepted_and_yields_echo(runtime_manager: RuntimeMa
     # Create a mock LLM manager
     mock_llm_manager = AsyncMock()
     mock_llm_manager.generate.return_value = mock_response
-    
+
     # Replace the LLM manager in the runtime manager
     original_llm_manager = runtime_manager._llm_manager
     runtime_manager._llm_manager = mock_llm_manager
-    
+
     try:
         # Test with empty text
         result = await runtime_manager.orchestrate("")
@@ -759,7 +806,7 @@ async def test_structured_output_shape_and_fields(runtime_manager: RuntimeManage
     # Replace the LLM manager in the runtime manager
     original_llm_manager = runtime_manager._llm_manager
     runtime_manager._llm_manager = mock_llm_manager
-    
+
     try:
         # Test with a simple query
         result = await runtime_manager.orchestrate("test query")
@@ -785,18 +832,18 @@ async def test_provider_system_integration(
     runtime_manager: RuntimeManager,
     provider_manager: ProviderManager,
     base_config_manager: MockConfigManager,
-    tool_manager: ToolManagerHelper
+    tool_manager: ToolManagerHelper,
 ):
     """Test that the provider system integration works correctly."""
     # Create a test provider
     test_provider = MockTestProvider()
-    
+
     # Register our test provider
     provider_manager._providers["test"] = test_provider
-    
+
     # Configure the config manager
     base_config_manager._config["providers"] = {"test": {"api_key": "test_key"}}
-    
+
     # Create a mock LLM manager
     mock_llm_manager = AsyncMock()
     mock_response = MagicMock()
@@ -804,15 +851,15 @@ async def test_provider_system_integration(
     mock_response.model_used = "test-model"
     mock_response.tokens_used = 10
     mock_llm_manager.generate.return_value = mock_response
-    
+
     # Replace the LLM manager in the runtime manager
     original_llm_manager = runtime_manager._llm_manager
     runtime_manager._llm_manager = mock_llm_manager
-    
+
     try:
         # Test with a simple query
         result = await runtime_manager.orchestrate("test query")
-        
+
         # Verify the response
         assert result["message"] == "echo:test query"
         assert result["model_used"] == "test-model"
@@ -833,7 +880,7 @@ async def test_llm_provider_failure_handling(runtime_manager: RuntimeManager):
     # Replace the LLM manager in the runtime manager
     original_llm_manager = runtime_manager._llm_manager
     runtime_manager._llm_manager = mock_llm_manager
-    
+
     try:
         # Test that the exception is propagated
         with pytest.raises(LLMError) as exc_info:
@@ -849,8 +896,11 @@ async def test_llm_provider_failure_handling(runtime_manager: RuntimeManager):
         runtime_manager._llm_manager = original_llm_manager
 
 
-def test_get_available_tools_returns_function_specs_for_iterable_entries(runtime_manager: RuntimeManager):
+def test_get_available_tools_returns_function_specs_for_iterable_entries(
+    runtime_manager: RuntimeManager,
+):
     """Runtime manager should build OpenAI-style specs from iterable tool entries."""
+
     class DummyInput:
         @classmethod
         def model_json_schema(cls):
@@ -868,24 +918,26 @@ def test_get_available_tools_returns_function_specs_for_iterable_entries(runtime
     # Create a mock tool manager with a list_tools method
     mock_tool_manager = MagicMock()
     mock_tool_manager.list_tools.return_value = [DummyTool()]
-    
+
     # Replace the tool manager with our mock
     original_tool_manager = runtime_manager._tool_manager
     runtime_manager._tool_manager = mock_tool_manager
-    
+
     try:
         tools = runtime_manager._get_available_tools()
-        
+
         # Verify we got a list of tool specs
         assert isinstance(tools, list)
         assert len(tools) == 1
         assert tools[0]["function"]["name"] == "dummy"
-        mock_tool_manager.list_tools.assert_called_once_with(available_only=True)
+        mock_tool_manager.list_tools.assert_called_once_with(available_only=True, category=None)
     finally:
         runtime_manager._tool_manager = original_tool_manager
 
 
-def test_get_available_tools_returns_none_when_no_valid_tools(runtime_manager: RuntimeManager):
+def test_get_available_tools_returns_none_when_no_valid_tools(
+    runtime_manager: RuntimeManager,
+):
     """If the tool manager has no usable entries, None should be returned."""
     # Setup: Mock the tool manager to return an empty list from list_tools()
     runtime_manager._tool_manager = MagicMock()
@@ -896,24 +948,19 @@ def test_get_available_tools_returns_none_when_no_valid_tools(runtime_manager: R
 
     # Verify
     assert tools is None
-    runtime_manager._tool_manager.list_tools.assert_called_once_with(available_only=True)
+    runtime_manager._tool_manager.list_tools.assert_called_once_with(
+        available_only=True, category=None
+    )
 
 
 class TestToolHandling:
     """Tests for tool handling methods in RuntimeManager."""
 
-    @pytest.mark.asyncio
+    # ... rest of the code remains the same ...
     async def test_handle_missing_tool_manager(self, runtime_manager: RuntimeManager):
         # Setup
         session = MagicMock()
-        tool_calls = [
-            {
-                "function": {
-                    "name": "test_tool",
-                    "arguments": '{"param1": "value1"}'
-                }
-            }
-        ]
+        tool_calls = [ToolCall(name="test_tool", arguments={"param1": "value1"})]
 
         # Execute
         await runtime_manager._handle_missing_tool_manager(session, tool_calls)
@@ -922,41 +969,38 @@ class TestToolHandling:
         session.add_tool_message.assert_called_once_with(
             name="test_tool",
             args={"param1": "value1"},
-            result={"error": "Tool functionality is not available"}
+            result={"error": "Tool functionality is not available"},
         )
 
     @pytest.mark.asyncio
-    async def test_handle_missing_tool_manager_invalid_json(self, runtime_manager: RuntimeManager):
+    async def test_handle_missing_tool_manager_empty_args(
+        self, runtime_manager: RuntimeManager
+    ):
         # Setup
         session = MagicMock()
-        tool_calls = [
-            {
-                "function": {
-                    "name": "test_tool",
-                    "arguments": 'invalid-json'
-                }
-            }
-        ]
+        tool_calls = [ToolCall(name="test_tool", arguments={})]
 
         # Execute
         await runtime_manager._handle_missing_tool_manager(session, tool_calls)
 
-        # Verify it still adds a tool message with empty args on JSON decode error
+        # Verify it still adds a tool message with empty args
         session.add_tool_message.assert_called_once()
         assert session.add_tool_message.call_args[1]["name"] == "test_tool"
         assert session.add_tool_message.call_args[1]["args"] == {}
 
     @pytest.mark.asyncio
-    async def test_process_single_tool_call_success(self, runtime_manager: RuntimeManager):
+    async def test_process_single_tool_call_success(
+        self, runtime_manager: RuntimeManager
+    ):
         # Setup
         session = MagicMock()
-        tool_call = {
-            "function": {
-                "name": "test_tool",
-                "arguments": '{"param1": "value1"}'
-            }
-        }
-        
+        tool_call = ToolCall(
+            name="test_tool",
+            arguments={"param1": "value1"},
+            id="test_id",
+            type="function"
+        )
+
         # Mock _execute_tool to return a successful result
         runtime_manager._execute_tool = AsyncMock(return_value={"result": "success"})
 
@@ -964,45 +1008,28 @@ class TestToolHandling:
         await runtime_manager._process_single_tool_call(tool_call, session)
 
         # Verify
-        runtime_manager._execute_tool.assert_awaited_once_with("test_tool", {"param1": "value1"})
+        runtime_manager._execute_tool.assert_awaited_once_with(
+            "test_tool", {"param1": "value1"}
+        )
         session.add_tool_message.assert_called_once_with(
-            name="test_tool",
-            args={"param1": "value1"},
-            result={"result": "success"}
+            name="test_tool", args={"param1": "value1"}, result={"result": "success"}
         )
 
-    @pytest.mark.asyncio
-    async def test_process_single_tool_call_json_error(self, runtime_manager: RuntimeManager):
-        # Setup
-        session = MagicMock()
-        tool_call = {
-            "function": {
-                "name": "test_tool",
-                "arguments": 'invalid-json'
-            }
-        }
-        
-        # Mock _handle_json_decode_error to verify it's called
-        runtime_manager._handle_json_decode_error = AsyncMock()
-
-        # Execute
-        await runtime_manager._process_single_tool_call(tool_call, session)
-
-        # Verify
-        runtime_manager._handle_json_decode_error.assert_awaited_once()
-        session.add_tool_message.assert_not_called()
+    # test_process_single_tool_call_json_error removed as RuntimeManager no longer parses JSON
 
     @pytest.mark.asyncio
-    async def test_process_single_tool_call_execution_error(self, runtime_manager: RuntimeManager):
+    async def test_process_single_tool_call_execution_error(
+        self, runtime_manager: RuntimeManager
+    ):
         # Setup
         session = MagicMock()
-        tool_call = {
-            "function": {
-                "name": "test_tool",
-                "arguments": '{"param1": "value1"}'
-            }
-        }
-        
+        tool_call = ToolCall(
+            name="test_tool",
+            arguments={"param1": "value1"},
+            id="test_id",
+            type="function"
+        )
+
         # Mock _execute_tool to raise an exception
         runtime_manager._execute_tool = AsyncMock(side_effect=Exception("Tool error"))
         runtime_manager._handle_tool_error = AsyncMock()
@@ -1018,34 +1045,40 @@ class TestToolHandling:
     async def test_execute_tool_success(self, runtime_manager: RuntimeManager):
         # Setup
         runtime_manager._tool_manager = MagicMock()
-        runtime_manager._tool_manager.execute_async = AsyncMock(return_value=MagicMock(
-            success=True,
-            result={"output": "test result"},
-            execution_time_ms=100
-        ))
+        runtime_manager._tool_manager.execute_async = AsyncMock(
+            return_value=ToolExecutionResponse(
+                tool_name="test_tool",
+                success=True,
+                result={"output": "test result"},
+                execution_time_ms=100.0,
+            )
+        )
 
         # Execute
         result = await runtime_manager._execute_tool("test_tool", {"param1": "value1"})
 
         # Verify
-        assert result == {"output": "test result"}
+        assert result == {"execution_time_ms": 100.0, "result": {"output": "test result"}}
         runtime_manager._tool_manager.execute_async.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_execute_tool_failure(self, runtime_manager: RuntimeManager):
         # Setup
         runtime_manager._tool_manager = MagicMock()
-        runtime_manager._tool_manager.execute_async = AsyncMock(return_value=MagicMock(
-            success=False,
-            error_message="Tool execution failed",
-            execution_time_ms=100
-        ))
+        runtime_manager._tool_manager.execute_async = AsyncMock(
+            return_value=ToolExecutionResponse(
+                tool_name="test_tool",
+                success=False,
+                error_message="Tool execution failed",
+                execution_time_ms=100.0,
+            )
+        )
 
         # Execute
         result = await runtime_manager._execute_tool("test_tool", {"param1": "value1"})
 
         # Verify
-        assert result == {"error": "Tool execution failed: Tool execution failed"}
+        assert result == {"error_message": "Tool execution failed", "execution_time_ms": 100.0}
 
     @pytest.mark.asyncio
     async def test_execute_tool_no_tool_manager(self, runtime_manager: RuntimeManager):
@@ -1062,14 +1095,17 @@ class TestToolHandling:
     async def test_execute_tool_non_dict_result(self, runtime_manager: RuntimeManager):
         # Setup
         runtime_manager._tool_manager = MagicMock()
-        runtime_manager._tool_manager.execute_async = AsyncMock(return_value=MagicMock(
-            success=True,
-            result="plain string result",
-            execution_time_ms=100
-        ))
+        runtime_manager._tool_manager.execute_async = AsyncMock(
+            return_value=ToolExecutionResponse(
+                tool_name="test_tool",
+                success=True,
+                result="plain string result",
+                execution_time_ms=100.0,
+            )
+        )
 
         # Execute
         result = await runtime_manager._execute_tool("test_tool", {"param1": "value1"})
 
         # Verify result is wrapped in a dict
-        assert result == {"result": "plain string result"}
+        assert result == {"execution_time_ms": 100.0, "result": "plain string result"}

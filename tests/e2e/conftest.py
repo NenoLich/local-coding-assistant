@@ -14,7 +14,6 @@ def cli_runner():
     return CliRunner()
 
 
-
 @pytest.fixture
 def temp_providers_config(test_configs):
     """Create a temporary providers configuration file."""
@@ -57,7 +56,6 @@ def mock_env_vars():
 
 
 from typing import Any, cast
-
 
 
 @pytest.fixture

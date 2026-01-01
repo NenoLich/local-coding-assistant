@@ -37,7 +37,7 @@ class TestAppDependencies:
             config_manager=mock_config_manager,
             llm_manager="llm_mock",
             tool_manager="tool_mock",
-            runtime_manager="runtime_mock"
+            runtime_manager="runtime_mock",
         )
         assert deps.llm_manager == "llm_mock"
         assert deps.tool_manager == "tool_mock"
@@ -55,7 +55,7 @@ class TestAppDependencies:
             config_manager=mock_config_manager,
             llm_manager="llm_mock",
             tool_manager="tool_mock",
-            runtime_manager="runtime_mock"
+            runtime_manager="runtime_mock",
         )
         assert "AppDependencies(" in repr(deps)
         assert "config_manager=" in repr(deps)

@@ -1,10 +1,9 @@
 """Agent loop implementation for observe-plan-act-reflect lifecycle."""
 
-import json
 import time
 from typing import Any
 
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
+from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, ToolCall
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.core.protocols import IToolManager
 from local_coding_assistant.tools.types import ToolExecutionRequest
@@ -190,11 +189,11 @@ Please describe what actions were taken and their results.
             # Check if this is a tool call response
             if tool_calls:
                 for tool_call in tool_calls:
-                    if "function" in tool_call:
-                        func_name = tool_call["function"]["name"]
+                    if isinstance(tool_call, ToolCall):
+                        func_name = tool_call.name
                         try:
                             # Parse arguments
-                            args = json.loads(tool_call["function"]["arguments"])
+                            args = tool_call.arguments
 
                             # Handle tool execution
                             if self.tool_manager is None:

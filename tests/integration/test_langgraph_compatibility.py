@@ -116,12 +116,9 @@ Please provide a plan with specific actions to take. Respond in JSON format with
 - confidence: confidence level (0-1)
 """
             try:
-                    # Create the LLM request with the model
-                request = LLMRequest(
-                    prompt=prompt,
-                    tools=self._get_available_tools()
-                )
-                
+                # Create the LLM request with the model
+                request = LLMRequest(prompt=prompt, tools=self._get_available_tools())
+
                 # Generate the response with the model parameter
                 response = await self.llm_manager.generate(request, model=self.model)
 
@@ -161,8 +158,7 @@ If you need to provide a final answer, use the final_answer tool.
 Please describe what actions were taken and their results.
 """
                 request = LLMRequest(
-                    prompt=action_prompt,
-                    tools=self._get_available_tools()
+                    prompt=action_prompt, tools=self._get_available_tools()
                 )
                 response = await self.llm_manager.generate(request, model=self.model)
 
@@ -298,7 +294,7 @@ Please provide:
 
     async def run(self, user_input: str | None = None) -> str | None:
         """Run the LangGraph-based agent loop.
-        
+
         Args:
             user_input: Optional user input to process. If not provided, will use a default prompt.
         """
@@ -309,7 +305,7 @@ Please provide:
         # Initialize with user input if provided
         initial_state = {
             "tool_outputs": [],
-            "user_input": user_input or "How can I help you today?"
+            "user_input": user_input or "How can I help you today?",
         }
 
         while self.current_iteration < self.max_iterations:
@@ -378,10 +374,10 @@ class TestLangGraphCompatibility:
                 name="test_agent_loop",
                 max_iterations=5,
             )
-            
+
             # Set the model in the LLM manager
             mock_llm_with_tools.default_model = "gpt-4"
-            
+
             agent_result = await agent_loop.run()
             agent_history = agent_loop.get_history()
 
@@ -393,7 +389,7 @@ class TestLangGraphCompatibility:
 
             # Ensure the mock LLM manager has the default model set
             mock_llm_with_tools.default_model = "gpt-4"
-            
+
             # Run LangGraph version with model specified
             langgraph_agent = LangGraphAgentLoop(
                 llm_manager=mock_llm_with_tools,
@@ -401,13 +397,13 @@ class TestLangGraphCompatibility:
                 name="test_langgraph",
                 max_iterations=5,
             )
-            
+
             # Ensure the model is set
             langgraph_agent.model = "gpt-4"
-            
+
             # Ensure the LLM manager has the model set
             mock_llm_with_tools.default_model = "gpt-4"
-            
+
             # Pass the prompt to the run method
             langgraph_result = await langgraph_agent.run(prompt)
             langgraph_history = langgraph_agent.history
@@ -586,17 +582,17 @@ class TestLangGraphCompatibility:
             max_iterations=3,
             streaming=True,
         )
-        
+
         # Set the default model for the streaming LLM
         streaming_llm.default_model = "gpt-4"
-    
+
         langgraph_agent = LangGraphAgentLoop(
             llm_manager=streaming_llm,
             tool_manager=tool_manager,
             name="streaming_langgraph",
             max_iterations=3,
         )
-        
+
         # Set the model for the langgraph agent
         langgraph_agent.model = "gpt-4"
 

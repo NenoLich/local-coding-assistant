@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
 from local_coding_assistant.core.exceptions import ToolRegistryError
-from local_coding_assistant.tools.tool_manager import ToolRuntime, ToolInputTransformer
+from local_coding_assistant.tools.tool_runtime import ToolInputTransformer, ToolRuntime
 from local_coding_assistant.tools.types import ToolInfo, ToolSource
 
 
@@ -45,13 +44,13 @@ class DummyTool:
 
     async def stream_async(self, data):
         # Handle both dictionary and object access
-        value = data.value if hasattr(data, 'value') else data.get('value', 0)
+        value = data.value if hasattr(data, "value") else data.get("value", 0)
         for index in range(2):
             yield {"chunk": value + index}
-            
+
     async def stream(self, data):
         # Handle both dictionary and object access
-        value = data.value if hasattr(data, 'value') else data.get('value', 0)
+        value = data.value if hasattr(data, "value") else data.get("value", 0)
         for index in range(2):
             yield {"chunk": value + index}
 
@@ -85,36 +84,39 @@ def runtime(tool_info):
     return runtime
 
 
-def test_ensure_mapping_accepts_dict(runtime):
+@pytest.mark.asyncio
+async def test_ensure_mapping_accepts_dict(runtime):
     payload = {"value": 3}
-    assert runtime._ensure_mapping(payload) == payload
+    assert await runtime._ensure_mapping(payload) == payload
 
-
-def test_ensure_mapping_handles_model_dump(runtime):
+@pytest.mark.asyncio
+async def test_ensure_mapping_handles_model_dump(runtime):
     class Payload(BaseModel):
         value: int
 
     payload = Payload(value=9)
-    assert runtime._ensure_mapping(payload) == {"value": 9}
+    assert await runtime._ensure_mapping(payload) == {"value": 9}
 
-
-def test_ensure_mapping_parses_json(runtime):
+@pytest.mark.asyncio
+async def test_ensure_mapping_parses_json(runtime):
     payload = json.dumps({"value": 5})
-    assert runtime._ensure_mapping(payload) == {"value": 5}
+    assert await runtime._ensure_mapping(payload) == {"value": 5}
 
-
-def test_ensure_mapping_raises_for_bad_json(runtime):
+@pytest.mark.asyncio
+async def test_ensure_mapping_raises_for_bad_json(runtime):
     with pytest.raises(ValueError):
-        runtime._ensure_mapping("not json")
+        await runtime._ensure_mapping("not json")
 
-
-def test_ensure_mapping_rejects_non_iterable(runtime):
+@pytest.mark.asyncio
+async def test_ensure_mapping_rejects_non_iterable(runtime):
     with pytest.raises(ValueError):
-        runtime._ensure_mapping(object())
+        await runtime._ensure_mapping(object())
 
 
 def test_transform_payload_uses_transformer(runtime, monkeypatch):
-    monkeypatch.setattr(ToolInputTransformer, "transform", MagicMock(return_value={"value": 7}))
+    monkeypatch.setattr(
+        ToolInputTransformer, "transform", MagicMock(return_value={"value": 7})
+    )
     payload = runtime._transform_payload({"value": 3})
     assert payload == {"value": 7}
 
@@ -127,13 +129,16 @@ def test_transform_payload_logs_but_returns_original(runtime, caplog, monkeypatc
     payload = runtime._transform_payload({"value": 3})
     assert payload == {"value": 3}
 
-
-def test_validate_payload_against_model_handles_instances(runtime):
+@pytest.mark.asyncio
+async def test_validate_payload_against_model_handles_instances(runtime):
     model_instance = ToolInputModel(value=4)
-    assert runtime._validate_payload_against_model(model_instance, ToolInputModel) is model_instance
+    assert (
+        await runtime._validate_payload_against_model(model_instance, ToolInputModel)
+        is model_instance
+    )
 
-
-def test_validate_payload_against_model_uses_schema(runtime, monkeypatch):
+@pytest.mark.asyncio
+async def test_validate_payload_against_model_uses_schema(runtime, monkeypatch):
     payload = {"value": -1}
     schema = {
         "type": "object",
@@ -149,21 +154,22 @@ def test_validate_payload_against_model_uses_schema(runtime, monkeypatch):
 
     monkeypatch.setattr(runtime.instance, "Input", RejectingModel)
     with pytest.raises(ValidationError):
-        runtime._validate_payload_against_model(payload, RejectingModel)
+        await runtime._validate_payload_against_model(payload, RejectingModel)
 
 
-def test_validate_field_type_for_union(runtime):
+@pytest.mark.asyncio
+async def test_validate_field_type_for_union(runtime):
     field_schema = {"type": "string|number"}
-    assert runtime._validate_field_type(5, field_schema["type"], field_schema)
+    assert await runtime._validate_field_type(5, field_schema["type"], field_schema)
 
-
-def test_validate_field_type_array_items(runtime):
+@pytest.mark.asyncio
+async def test_validate_field_type_array_items(runtime):
     field_schema = {"type": "array", "items": {"type": "integer"}}
-    assert runtime._validate_field_type([1, 2], field_schema["type"], field_schema)
-    assert not runtime._validate_field_type(["a"], field_schema["type"], field_schema)
+    assert await runtime._validate_field_type([1, 2], field_schema["type"], field_schema)
+    assert not await runtime._validate_field_type(["a"], field_schema["type"], field_schema)
 
-
-def test_validate_with_parameters_schema_enforces_required(runtime):
+@pytest.mark.asyncio
+async def test_validate_with_parameters_schema_enforces_required(runtime):
     runtime.info.parameters = {
         "type": "object",
         "properties": {"value": {"type": "integer"}},
@@ -171,12 +177,12 @@ def test_validate_with_parameters_schema_enforces_required(runtime):
     }
 
     with pytest.raises(ValueError) as exc:
-        runtime._validate_with_parameters_schema({}, runtime.info.parameters)
+        await runtime._validate_with_parameters_schema({}, runtime.info.parameters)
 
     assert "Missing required fields" in str(exc.value)
 
-
-def test_validate_with_parameters_schema_checks_enum(runtime):
+@pytest.mark.asyncio
+async def test_validate_with_parameters_schema_checks_enum(runtime):
     runtime.info.parameters = {
         "type": "object",
         "properties": {"value": {"type": "integer", "enum": [1]}},
@@ -184,52 +190,53 @@ def test_validate_with_parameters_schema_checks_enum(runtime):
     }
 
     with pytest.raises(ValueError):
-        runtime._validate_with_parameters_schema({"value": 2}, runtime.info.parameters)
+        await runtime._validate_with_parameters_schema({"value": 2}, runtime.info.parameters)
 
-
-def test_prepare_input_handles_validation_success(runtime, monkeypatch):
+@pytest.mark.asyncio
+async def test_prepare_input_handles_validation_success(runtime, monkeypatch):
     monkeypatch.setattr(runtime.instance, "Input", ToolInputModel)
-    payload = runtime._prepare_input({"value": 3})
+    payload = await runtime._prepare_input({"value": 3})
     assert isinstance(payload, ToolInputModel)
     assert payload.value == 3
 
-
-def test_prepare_input_raises_tool_registry_error(runtime, monkeypatch):
+@pytest.mark.asyncio
+async def test_prepare_input_raises_tool_registry_error(runtime, monkeypatch):
     # Import the ValidationError from the same module as BaseModel
     from pydantic import BaseModel, Field
-    from pydantic_core import ValidationError
-    
+
     # Create a model that will raise ValidationError
     class RejectingModel(BaseModel):
         required_field: int = Field(..., description="This field is required")
-    
+
     # Create a function that will raise ValidationError when called
     def raise_validation_error(*args, **kwargs):
         # This will raise ValidationError because required_field is missing
         RejectingModel.model_validate({"invalid": "data"})
-    
+
     # Patch the _validate_payload_against_model method to raise the error
     original_validate = runtime._validate_payload_against_model
-    
+
     def mock_validate_payload(payload, model):
         if model == RejectingModel:
             raise_validation_error()
         return original_validate(payload, model)
-    
-    monkeypatch.setattr(runtime, "_validate_payload_against_model", mock_validate_payload)
-    
+
+    monkeypatch.setattr(
+        runtime, "_validate_payload_against_model", mock_validate_payload
+    )
+
     # Patch the Input class on the instance
     monkeypatch.setattr(runtime.instance, "Input", RejectingModel)
-    
+
     # Now this should raise ToolRegistryError because the validation will fail
     with pytest.raises(ToolRegistryError) as exc_info:
-        runtime._prepare_input({"invalid": "data"})
-    
+        await runtime._prepare_input({"invalid": "data"})
+
     # Verify the error message contains the expected text
     assert "required_field" in str(exc_info.value) or "missing" in str(exc_info.value)
 
-
-def test_prepare_input_schema_validation_error(runtime):
+@pytest.mark.asyncio
+async def test_prepare_input_schema_validation_error(runtime):
     runtime.has_input_validation = False
     runtime.info.parameters = {
         "type": "object",
@@ -238,7 +245,7 @@ def test_prepare_input_schema_validation_error(runtime):
     }
 
     with pytest.raises(ToolRegistryError):
-        runtime._prepare_input({})
+        await runtime._prepare_input({})
 
 
 def test_invoke_run_sync(runtime, monkeypatch):
@@ -264,7 +271,7 @@ def test_invoke_run_missing_run_method(runtime, monkeypatch):
     class NoRunTool:
         Input = ToolInputModel
         Output = ToolOutputModel
-        
+
     runtime.instance = NoRunTool()
     with pytest.raises(ToolRegistryError):
         asyncio.run(runtime._invoke_run({"value": 1}))
@@ -273,32 +280,33 @@ def test_invoke_run_missing_run_method(runtime, monkeypatch):
 async def _collect_async_generator(async_gen):
     return [item async for item in async_gen]
 
+
 def test_invoke_stream_requires_tool(runtime, monkeypatch):
     # Set kind to something other than 'tool' to trigger the error
     runtime.kind = "callable"
-    
+
     # Create a valid input for the stream method
     input_data = {"value": 1}
-    
+
     # The error should come from the stream method checking the kind
     with pytest.raises(ToolRegistryError) as exc_info:
         asyncio.run(_collect_async_generator(runtime.stream(input_data)))
-    
+
     # The error message should indicate that streaming is not supported
-    assert "does not support streaming operations" in str(exc_info.value)
+    assert "does not support streaming" in str(exc_info.value)
 
 
 def test_invoke_stream_requires_support(runtime, monkeypatch):
     # Create a valid input for the stream method
     input_data = {"value": 1}
-    
+
     # The error should come from the stream method checking supports_streaming
     runtime.kind = "tool"  # Make sure kind is 'tool' to pass the first check
     runtime.supports_streaming = False  # Explicitly set to False
-    
+
     with pytest.raises(ToolRegistryError) as exc_info:
         asyncio.run(_collect_async_generator(runtime.stream(input_data)))
-    
+
     # The error message should indicate that streaming is not supported
     assert "does not support streaming" in str(exc_info.value)
 
@@ -311,9 +319,11 @@ def test_invoke_stream_success(runtime, monkeypatch):
     runtime.supports_streaming = True
     # Use a mock that returns our test data
     monkeypatch.setattr(runtime.instance, "stream", stream_mock)
-    
+
     # Collect all items from the async generator
-    results = asyncio.run(_collect_async_generator(runtime._invoke_stream({"value": 1})))
+    results = asyncio.run(
+        _collect_async_generator(runtime._invoke_stream({"value": 1}))
+    )
     assert results == [1, 2]
 
 

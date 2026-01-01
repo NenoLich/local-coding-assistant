@@ -2,13 +2,13 @@
 
 import os
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from local_coding_assistant.config.env_manager import EnvManager
-from local_coding_assistant.core.exceptions import ConfigError
 from local_coding_assistant.config.path_manager import PathManager
+from local_coding_assistant.core.exceptions import ConfigError
 
 
 class TestEnvManager:
@@ -19,14 +19,16 @@ class TestEnvManager:
         # Setup mock PathManager
         mock_path_manager = MagicMock(spec=PathManager)
         mock_path_manager.get_project_root.return_value = tmp_path
-        mock_path_manager.resolve_path.side_effect = lambda x: tmp_path / x.replace("@project/", "")
-        
+        mock_path_manager.resolve_path.side_effect = lambda x: tmp_path / x.replace(
+            "@project/", ""
+        )
+
         # Create test .env files
         (tmp_path / ".env").touch()
         (tmp_path / ".env.local").touch()
-        
+
         manager = EnvManager.create(path_manager=mock_path_manager, load_env=False)
-        
+
         # Should find the default .env files
         assert len(manager.env_paths) >= 2
         assert any(".env" in str(path) for path in manager.env_paths)
@@ -37,14 +39,16 @@ class TestEnvManager:
         # Create a mock path manager
         mock_path_manager = MagicMock(spec=PathManager)
         mock_path_manager.resolve_path.side_effect = lambda x: Path(x)
-        
+
         # Create test files
         env_file = tmp_path / ".env"
         env_file.touch()
-        
+
         custom_paths = [str(env_file)]
-        manager = EnvManager.create(env_paths=custom_paths, load_env=False, path_manager=mock_path_manager)
-        
+        manager = EnvManager.create(
+            env_paths=custom_paths, load_env=False, path_manager=mock_path_manager
+        )
+
         # Paths should be converted to Path objects
         assert len(manager.env_paths) == 1
         assert isinstance(manager.env_paths[0], Path)
@@ -135,24 +139,26 @@ class TestEnvManager:
         # Setup mock PathManager
         mock_path_manager = MagicMock(spec=PathManager)
         mock_path_manager.get_project_root.return_value = tmp_path
-        mock_path_manager.resolve_path.side_effect = lambda x: tmp_path / x.replace("@project/", "")
-        
+        mock_path_manager.resolve_path.side_effect = lambda x: tmp_path / x.replace(
+            "@project/", ""
+        )
+
         # Create test .env files
         (tmp_path / ".env").write_text("TEST_KEY=value")
         (tmp_path / ".env.local").write_text("TEST_LOCAL=local_value")
-        
+
         manager = EnvManager.create(path_manager=mock_path_manager, load_env=False)
-        
+
         # Track loaded paths
         loaded_paths = []
-        
+
         def mock_load_dotenv(path, **kwargs):
             loaded_paths.append(Path(path).resolve())
             return True
-            
+
         with patch("dotenv.load_dotenv", side_effect=mock_load_dotenv):
             manager.load_env_files()
-            
+
             # Verify the correct paths were loaded
             assert len(loaded_paths) > 0
             assert any(".env" in str(p) for p in loaded_paths)
@@ -162,27 +168,29 @@ class TestEnvManager:
         # Create a mock path manager
         mock_path_manager = MagicMock(spec=PathManager)
         mock_path_manager.resolve_path.return_value = Path("/nonexistent/.env")
-        
+
         # Create a custom import function that raises ImportError for dotenv
         def mock_import(name, *args, **kwargs):
-            if name == 'dotenv' or name.startswith('dotenv.'):
+            if name == "dotenv" or name.startswith("dotenv."):
                 raise ImportError("No module named 'dotenv'")
             return original_import(name, *args, **kwargs)
-        
+
         # Patch the built-in import
         original_import = __import__
-        with patch('builtins.__import__', side_effect=mock_import):
+        with patch("builtins.__import__", side_effect=mock_import):
             # Create manager after patching imports
             manager = EnvManager.create(load_env=False, path_manager=mock_path_manager)
-            
+
             # Patch logger to verify warning
-            with patch("local_coding_assistant.config.env_manager.logger") as mock_logger:
+            with patch(
+                "local_coding_assistant.config.env_manager.logger"
+            ) as mock_logger:
                 # Set env_paths to avoid file system operations
                 manager.env_paths = [Path("/nonexistent/.env")]
-                
+
                 # Should not raise an error
                 manager.load_env_files()
-                
+
                 # Should log a warning
                 assert mock_logger.warning.called
                 warning_msg = mock_logger.warning.call_args[0][0]
@@ -191,14 +199,14 @@ class TestEnvManager:
     def test_env_file_loading_file_error(self, tmp_path):
         """Test error handling when .env file loading fails."""
         test_error = Exception("File not found")
-        
+
         # Setup mock PathManager
         mock_path_manager = MagicMock(spec=PathManager)
         mock_path_manager.get_project_root.return_value = tmp_path
         mock_path_manager.resolve_path.return_value = tmp_path / ".env"
-        
+
         manager = EnvManager.create(path_manager=mock_path_manager, load_env=False)
-        
+
         with (
             patch("dotenv.load_dotenv") as mock_load,
             patch.object(Path, "exists", return_value=True),
@@ -220,12 +228,14 @@ class TestEnvManager:
         mock_path_manager = MagicMock(spec=PathManager)
         mock_path_manager.get_project_root.return_value = tmp_path
         mock_path_manager.resolve_path.return_value = tmp_path / "nonexistent.env"
-        
+
         manager = EnvManager.create(path_manager=mock_path_manager, load_env=False)
-        
+
         with patch.object(Path, "exists", return_value=False):
             # Should not raise an error, just log a warning
-            with patch("local_coding_assistant.config.env_manager.logger") as mock_logger:
+            with patch(
+                "local_coding_assistant.config.env_manager.logger"
+            ) as mock_logger:
                 manager.load_env_files()
                 mock_logger.warning.assert_called()
 

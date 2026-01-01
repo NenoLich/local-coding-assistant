@@ -45,7 +45,7 @@ def integration_provider_manager():
     ):
         # Create a mock EnvManager instance
         mock_env_manager.return_value = MagicMock()
-        
+
         # Initialize ProviderManager with required parameters
         manager = ProviderManager(env_manager=mock_env_manager.return_value)
 
@@ -57,12 +57,12 @@ def integration_provider_manager():
             "gpt-3.5-turbo",
         ]
         mock_openai_provider.health_check = AsyncMock(return_value=True)
-        
+
         # Register the mock provider in the manager
         manager._instances = {"openai": mock_openai_provider}
         manager._providers = {"openai": MagicMock(return_value=mock_openai_provider)}
         manager._provider_sources = {"openai": "test"}
-        
+
         # Set up list_providers to return our mock providers
         manager.list_providers = MagicMock(return_value=["openai"])
         manager.get_provider = MagicMock(return_value=mock_openai_provider)
@@ -109,7 +109,7 @@ class TestProviderManagerLLMManagerIntegration:
         # Initialize LLM manager with the integration_provider_manager and config_manager
         llm_manager = LLMManager(
             provider_manager=integration_provider_manager,
-            config_manager=mock_config_manager
+            config_manager=mock_config_manager,
         )
 
         # Verify provider manager is properly integrated
@@ -127,7 +127,7 @@ class TestProviderManagerLLMManagerIntegration:
         """Test provider status list with actual provider manager."""
         # Set up mock config manager
         mock_config_manager = MagicMock()
-        
+
         # Create a mock provider manager with test providers
         # Make list_providers a synchronous method that returns a list
         mock_provider_manager = MagicMock()
@@ -135,7 +135,7 @@ class TestProviderManagerLLMManagerIntegration:
             "test_provider1",
             "test_provider2",
         ]
-        
+
         # Create a mock provider with get_status method
         mock_provider = MagicMock()
         mock_provider.get_status.return_value = {
@@ -144,17 +144,16 @@ class TestProviderManagerLLMManagerIntegration:
             "error": None,
         }
         mock_provider_manager.get_provider.return_value = mock_provider
-        
+
         # Mock the health check to return True
         mock_provider_manager.check_provider_health = AsyncMock(return_value=True)
-        
+
         # Mock the get_provider_source method
         mock_provider_manager.get_provider_source.return_value = "test_source"
 
         # Initialize LLMManager with the mock provider manager and config manager
         llm_manager = LLMManager(
-            provider_manager=mock_provider_manager,
-            config_manager=mock_config_manager
+            provider_manager=mock_provider_manager, config_manager=mock_config_manager
         )
 
         # Set up the cache and other required attributes
@@ -166,19 +165,19 @@ class TestProviderManagerLLMManagerIntegration:
         mock_router = MagicMock()
         mock_router._unhealthy_providers = set()
         llm_manager.router = mock_router
-        
+
         # Pre-populate the cache to avoid async issues in the test
         llm_manager._provider_status_cache = {
             "test_provider1": {
                 "healthy": True,
                 "models": ["test-model-1"],
-                "error": None
+                "error": None,
             },
             "test_provider2": {
                 "healthy": True,
                 "models": ["test-model-2"],
-                "error": None
-            }
+                "error": None,
+            },
         }
 
         # Test status list generation
@@ -198,17 +197,21 @@ class TestProviderManagerLLMManagerIntegration:
         provider_names = [status["name"] for status in status_list]
         assert "test_provider1" in provider_names
         assert "test_provider2" in provider_names
-        
+
         # Find each provider in the status list
         status_map = {status["name"]: status for status in status_list}
-        
+
         # Verify the first provider
         assert status_map["test_provider1"]["status"] == "available"
-        assert isinstance(status_map["test_provider1"]["models"], int)  # Should be a count of models
-        
+        assert isinstance(
+            status_map["test_provider1"]["models"], int
+        )  # Should be a count of models
+
         # Verify the second provider
         assert status_map["test_provider2"]["status"] == "available"
-        assert isinstance(status_map["test_provider2"]["models"], int)  # Should be a count of models
+        assert isinstance(
+            status_map["test_provider2"]["models"], int
+        )  # Should be a count of models
 
     @pytest.mark.asyncio
     async def test_llm_generation_with_provider_integration(
@@ -227,7 +230,10 @@ class TestProviderManagerLLMManagerIntegration:
                     {
                         "id": "call_1",
                         "type": "function",
-                        "function": {"name": "test_tool", "arguments": "{}"},
+                        "function": {
+                            "name": "test_tool",
+                            "arguments": "{}"
+                        }
                     }
                 ],
                 finish_reason="stop",
@@ -242,9 +248,12 @@ class TestProviderManagerLLMManagerIntegration:
 
         # Set up mock config manager
         mock_config_manager = MagicMock()
-        
+
         # Patch ConfigManager to return our mock config manager
-        with patch('local_coding_assistant.config.ConfigManager', return_value=mock_config_manager):
+        with patch(
+            "local_coding_assistant.config.ConfigManager",
+            return_value=mock_config_manager,
+        ):
             llm_manager = LLMManager.__new__(LLMManager)
             llm_manager.router = mock_router
             llm_manager.provider_manager = integration_provider_manager
@@ -270,7 +279,7 @@ class TestProviderManagerLLMManagerIntegration:
             assert response.tokens_used == 100
             assert response.tool_calls is not None
             assert len(response.tool_calls) == 1
-            assert response.tool_calls[0]["function"]["name"] == "test_tool"
+            assert response.tool_calls[0].name == "test_tool"
 
             # Verify provider was called correctly
             mock_provider.generate_with_retry.assert_called_once()
@@ -321,8 +330,10 @@ class TestProviderManagerLLMManagerIntegration:
         # Mock the ConfigManager to return our test config
         mock_config = MagicMock()
         mock_config.get.return_value = {}
-        
-        with patch('local_coding_assistant.config.ConfigManager', return_value=mock_config):
+
+        with patch(
+            "local_coding_assistant.config.ConfigManager", return_value=mock_config
+        ):
             llm_manager = LLMManager.__new__(LLMManager)
             llm_manager.router = mock_router
             llm_manager.provider_manager = integration_provider_manager
@@ -454,8 +465,11 @@ class TestProviderConfigurationIntegration:
         mock_global_config = MagicMock()
         mock_global_config.providers = {}
         mock_config_manager.global_config = mock_global_config
-        
-        with patch('local_coding_assistant.config.ConfigManager', return_value=mock_config_manager):
+
+        with patch(
+            "local_coding_assistant.config.ConfigManager",
+            return_value=mock_config_manager,
+        ):
             llm_manager = LLMManager.__new__(LLMManager)
             llm_manager.provider_manager = integration_provider_manager
             llm_manager.config_manager = mock_config_manager
@@ -500,7 +514,7 @@ class TestProviderConfigurationIntegration:
             with patch("pathlib.Path.home") as mock_home:
                 mock_home_path = MagicMock()
                 mock_home.return_value = mock_home_path
-                
+
                 # Create a mock EnvManager
                 mock_env_manager = MagicMock()
                 manager = ProviderManager(env_manager=mock_env_manager)
@@ -632,7 +646,10 @@ class TestProviderErrorScenarios:
         mock_config_manager.global_config = mock_global_config
 
         # Create a properly initialized LLMManager instance with patched ConfigManager
-        with patch('local_coding_assistant.config.ConfigManager', return_value=mock_config_manager):
+        with patch(
+            "local_coding_assistant.config.ConfigManager",
+            return_value=mock_config_manager,
+        ):
             llm_manager = LLMManager(
                 config_manager=mock_config_manager,
                 provider_manager=integration_provider_manager,

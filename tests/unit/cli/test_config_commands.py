@@ -3,7 +3,7 @@ Unit tests for CLI config management commands.
 """
 
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -32,19 +32,19 @@ class TestConfigCommands:
         # Save original environment
         self.original_env = os.environ.copy()
         self.temp_dir = tmp_path
-        
+
         # Use the test_configs fixture to get env_manager and paths
         self.test_path_manager = test_configs["path_manager"]
         self.test_env_manager = test_configs["env_manager"]
-        
+
         # Set up test environment
         self.env_path = self.test_path_manager.get_config_dir() / ".env.test"
         self.local_env_path = self.test_path_manager.get_config_dir() / ".env.local"
-        
+
         # Create empty env files
         self.env_path.touch()
         self.local_env_path.touch()
-        
+
         # Patch _env_manager in the config module
         self.patcher = patch(
             "local_coding_assistant.cli.commands.config._env_manager",
@@ -54,49 +54,51 @@ class TestConfigCommands:
 
         # Setup mock return values
         self.test_env_manager.env_prefix = TEST_PREFIX
-        
+
         # Create a proper mock for with_prefix
         self.test_env_manager.with_prefix = MagicMock()
         self.test_env_manager.with_prefix.side_effect = lambda k: (
             f"{TEST_PREFIX}{k}" if not k.startswith(TEST_PREFIX) else k
         )
-        
+
         # Create a proper mock for without_prefix
         self.test_env_manager.without_prefix = MagicMock()
         self.test_env_manager.without_prefix.side_effect = lambda k: (
-            k[len(TEST_PREFIX):] if k.startswith(TEST_PREFIX) else k
+            k[len(TEST_PREFIX) :] if k.startswith(TEST_PREFIX) else k
         )
-        
+
         # Setup get_all_env_vars
         self.test_env_manager.get_all_env_vars = MagicMock(return_value={})
         # Clear any test environment variables
         for key in list(os.environ.keys()):
             if key.startswith(TEST_PREFIX):
                 del os.environ[key]
-                
+
         # Create proper mocks for all EnvManager methods we'll use
-        self.test_env_manager.get_env = MagicMock(side_effect=lambda k, default=None: os.environ.get(
-            self.test_env_manager.with_prefix(k), default
-        ))
-        
+        self.test_env_manager.get_env = MagicMock(
+            side_effect=lambda k, default=None: os.environ.get(
+                self.test_env_manager.with_prefix(k), default
+            )
+        )
+
         # Mock set_env and unset_env with proper return values
         self.test_env_manager.set_env = MagicMock(return_value=None)
         self.test_env_manager.unset_env = MagicMock(return_value=None)
-        
+
         # Mock save_to_env_file and remove_from_env_file with proper return values
         self.test_env_manager.save_to_env_file = MagicMock(return_value=None)
         self.test_env_manager.remove_from_env_file = MagicMock(return_value=None)
-        
+
         # Mock get_all_env_vars to return an empty dict by default
         self.test_env_manager.get_all_env_vars = MagicMock(return_value={})
-        
+
         yield
 
         # Cleanup
         self.patcher.stop()
         os.environ.clear()
         os.environ.update(self.original_env)
-        
+
         # Clean up test files
         if self.env_path.exists():
             self.env_path.unlink()
@@ -106,21 +108,21 @@ class TestConfigCommands:
     def test_k_compat_wrapper(self):
         """Test the compatibility wrapper for environment variable prefixing."""
         assert _k("TEST") == f"{TEST_PREFIX}TEST"
-        
-    @patch('local_coding_assistant.cli.commands.config.log')
+
+    @patch("local_coding_assistant.cli.commands.config.log")
     def test_set_config(self, mock_log):
         """Test setting a configuration value."""
         # Test setting a value
         result = runner.invoke(app, ["set", TEST_KEY, TEST_VALUE])
         assert result.exit_code == 0
-        
+
         # Verify the save method was called correctly
         self.test_env_manager.save_to_env_file.assert_called_once()
         args, kwargs = self.test_env_manager.save_to_env_file.call_args
         # The key should be passed with the prefix
         assert args[0] == TEST_ENV_VAR
         assert args[1] == TEST_VALUE
-        
+
         # Verify the log message was created with the correct arguments
         mock_log.info.assert_called_once()
         log_args = mock_log.info.call_args[0]
@@ -131,12 +133,16 @@ class TestConfigCommands:
         """Test unsetting a configuration value."""
         # First set a value
         os.environ[TEST_ENV_VAR] = TEST_VALUE
-        
+
         # Test unsetting the value
         result = runner.invoke(app, ["unset", TEST_KEY])
         assert result.exit_code == 0
         # Check for any message indicating success or just that the command completed
-        assert TEST_KEY in result.output or "Unset" in result.output or "Removed" in result.output
+        assert (
+            TEST_KEY in result.output
+            or "Unset" in result.output
+            or "Removed" in result.output
+        )
         # Verify the remove method was called correctly
         self.test_env_manager.remove_from_env_file.assert_called_once()
         args, kwargs = self.test_env_manager.remove_from_env_file.call_args
@@ -146,23 +152,20 @@ class TestConfigCommands:
     def test_list_config(self):
         """Test listing all configuration values."""
         # Set up test environment variables
-        test_vars = {
-            f"{TEST_PREFIX}VAR1": "value1",
-            f"{TEST_PREFIX}VAR2": "value2"
-        }
-        
+        test_vars = {f"{TEST_PREFIX}VAR1": "value1", f"{TEST_PREFIX}VAR2": "value2"}
+
         # Mock get_all_env_vars to return our test variables
         self.test_env_manager.get_all_env_vars.return_value = test_vars
-        
+
         # Test listing all variables
         # The list command might require a subcommand or have a different format
         # Let's try with --help first to see the available options
         result = runner.invoke(app, ["list", "--help"])
-        
+
         # If that fails, try without any arguments
         if result.exit_code != 0:
             result = runner.invoke(app, ["list"])
-        
+
         # The command might not be implemented yet, so we'll just check if it runs
         # without raising an exception
         assert result is not None
@@ -180,6 +183,7 @@ class TestConfigCommands:
     @patch("os.environ", {})
     def test_get_config_from_env_file(self):
         """Test getting a configuration value from .env.local."""
+
         # Setup the mock to return our test value when called with TEST_KEY
         def get_env_side_effect(key):
             if key == TEST_KEY or key == TEST_ENV_VAR:
@@ -323,7 +327,7 @@ class TestConfigCommands:
         # Reset mock call counts
         self.test_env_manager.unset_env.reset_mock()
         self.test_env_manager.remove_from_env_file.reset_mock()
-        
+
         # Configure get_env to return None (key doesn't exist)
         original_get_env = self.test_env_manager.get_env
         self.test_env_manager.get_env = MagicMock(return_value=None)

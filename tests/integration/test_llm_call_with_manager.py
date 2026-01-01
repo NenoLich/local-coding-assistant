@@ -41,7 +41,7 @@ def make_test_llm_manager():
         mock_config_manager.global_config = {
             "llm": {
                 "default_provider": "test_provider",
-                "providers": {"test_provider": {"type": "test_provider"}}
+                "providers": {"test_provider": {"type": "test_provider"}},
             }
         }
 
@@ -49,6 +49,8 @@ def make_test_llm_manager():
         llm.provider_manager = mock_provider_manager
         llm.config_manager = mock_config_manager
         llm.router = MagicMock()
+        # Configure the mark_provider_success method to avoid coroutine warning
+        llm.router.mark_provider_success = MagicMock()
 
         return llm
 
@@ -83,7 +85,7 @@ class TestLLMManagerIntegration:
         mock_config_manager.global_config = {
             "llm": {
                 "default_provider": "test_provider",
-                "providers": {"test_provider": {"type": "test_provider"}}
+                "providers": {"test_provider": {"type": "test_provider"}},
             }
         }
 

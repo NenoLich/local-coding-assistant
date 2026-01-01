@@ -37,7 +37,7 @@ def test_bootstrap_runtime_manager_has_config(ctx: AppContext):
 
         assert isinstance(runtime.config_manager, ConfigManager)
         # Test that config_manager has runtime configuration
-        resolved_config = runtime.config_manager.resolve()
+        resolved_config = runtime.config_manager.global_config
         assert hasattr(resolved_config, "runtime")
         assert hasattr(resolved_config.runtime, "persistent_sessions")
         assert hasattr(resolved_config.runtime, "max_session_history")

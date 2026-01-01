@@ -88,11 +88,10 @@ def test_bootstrap_integration():
         assert runtime is not None
 
         # Access config through the config_manager
-        config = runtime.config_manager.resolve()
+        config = runtime.config_manager.global_config
         print(f"✓ Runtime manager created with config: {type(config)}")
         assert config is not None
 
-        return True
 
     except Exception as e:
         print(f"❌ Bootstrap error: {e}")

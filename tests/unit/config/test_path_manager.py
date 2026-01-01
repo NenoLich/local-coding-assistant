@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import site
 from pathlib import Path
+
 from pytest import MonkeyPatch
 
 from local_coding_assistant.config.path_manager import PathManager
@@ -50,11 +51,21 @@ class TestPathManager:
         ):
             assert directory.is_dir()
 
-    def test_production_environment_directories(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-        monkeypatch.setattr(PathManager, "_get_system_config_dir", lambda self: tmp_path / "config")
-        monkeypatch.setattr(PathManager, "_get_system_data_dir", lambda self: tmp_path / "data")
-        monkeypatch.setattr(PathManager, "_get_system_cache_dir", lambda self: tmp_path / "cache")
-        monkeypatch.setattr(PathManager, "_get_system_log_dir", lambda self: tmp_path / "logs")
+    def test_production_environment_directories(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            PathManager, "_get_system_config_dir", lambda self: tmp_path / "config"
+        )
+        monkeypatch.setattr(
+            PathManager, "_get_system_data_dir", lambda self: tmp_path / "data"
+        )
+        monkeypatch.setattr(
+            PathManager, "_get_system_cache_dir", lambda self: tmp_path / "cache"
+        )
+        monkeypatch.setattr(
+            PathManager, "_get_system_log_dir", lambda self: tmp_path / "logs"
+        )
 
         manager = PathManager(project_root=tmp_path)
 
@@ -72,7 +83,9 @@ class TestPathManager:
         ):
             assert directory.is_dir()
 
-    def test_resolve_path_with_absolute_and_relative_inputs(self, tmp_path: Path) -> None:
+    def test_resolve_path_with_absolute_and_relative_inputs(
+        self, tmp_path: Path
+    ) -> None:
         manager = PathManager(is_testing=True, project_root=tmp_path)
 
         absolute = tmp_path / "absolute.txt"
@@ -104,7 +117,9 @@ class TestPathManager:
             resolved = manager.resolve_path(raw)
             assert resolved == expected
 
-    def test_resolve_path_unknown_prefix_falls_back_to_project_root(self, tmp_path: Path) -> None:
+    def test_resolve_path_unknown_prefix_falls_back_to_project_root(
+        self, tmp_path: Path
+    ) -> None:
         manager = PathManager(is_testing=True, project_root=tmp_path)
 
         unknown = manager.resolve_path("@unknown/file.txt")
@@ -123,26 +138,53 @@ class TestPathManager:
         assert target == tmp_path / "logs" / "output" / "app.log"
         assert target.parent.is_dir()
 
-    def test_module_dir_production_site_packages(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-        monkeypatch.setattr(PathManager, "_get_system_config_dir", lambda self: tmp_path / "config")
-        monkeypatch.setattr(PathManager, "_get_system_data_dir", lambda self: tmp_path / "data")
-        monkeypatch.setattr(PathManager, "_get_system_cache_dir", lambda self: tmp_path / "cache")
-        monkeypatch.setattr(PathManager, "_get_system_log_dir", lambda self: tmp_path / "logs")
-        monkeypatch.setattr(site, "getsitepackages", lambda: [str(tmp_path / "site-packages")])
+    def test_module_dir_production_site_packages(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            PathManager, "_get_system_config_dir", lambda self: tmp_path / "config"
+        )
+        monkeypatch.setattr(
+            PathManager, "_get_system_data_dir", lambda self: tmp_path / "data"
+        )
+        monkeypatch.setattr(
+            PathManager, "_get_system_cache_dir", lambda self: tmp_path / "cache"
+        )
+        monkeypatch.setattr(
+            PathManager, "_get_system_log_dir", lambda self: tmp_path / "logs"
+        )
+        monkeypatch.setattr(
+            site, "getsitepackages", lambda: [str(tmp_path / "site-packages")]
+        )
 
         manager = PathManager(project_root=tmp_path)
         module_dir = manager.get_module_dir()
 
-        assert module_dir == (tmp_path / "site-packages" / "local_coding_assistant" / "modules")
+        assert module_dir == (
+            tmp_path / "site-packages" / "local_coding_assistant" / "modules"
+        )
 
-    def test_module_dir_production_fallback(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-        monkeypatch.setattr(PathManager, "_get_system_config_dir", lambda self: tmp_path / "config")
-        monkeypatch.setattr(PathManager, "_get_system_data_dir", lambda self: tmp_path / "data")
-        monkeypatch.setattr(PathManager, "_get_system_cache_dir", lambda self: tmp_path / "cache")
-        monkeypatch.setattr(PathManager, "_get_system_log_dir", lambda self: tmp_path / "logs")
+    def test_module_dir_production_fallback(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            PathManager, "_get_system_config_dir", lambda self: tmp_path / "config"
+        )
+        monkeypatch.setattr(
+            PathManager, "_get_system_data_dir", lambda self: tmp_path / "data"
+        )
+        monkeypatch.setattr(
+            PathManager, "_get_system_cache_dir", lambda self: tmp_path / "cache"
+        )
+        monkeypatch.setattr(
+            PathManager, "_get_system_log_dir", lambda self: tmp_path / "logs"
+        )
         monkeypatch.setattr(site, "getsitepackages", lambda: [])
 
         manager = PathManager(project_root=tmp_path)
         module_dir = manager.get_module_dir()
 
-        assert module_dir == Path("lib") / "site-packages" / "local_coding_assistant" / "modules"
+        assert (
+            module_dir
+            == Path("lib") / "site-packages" / "local_coding_assistant" / "modules"
+        )

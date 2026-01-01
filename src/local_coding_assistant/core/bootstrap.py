@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from local_coding_assistant.agent.llm_manager import LLMManager
 from local_coding_assistant.config.env_manager import EnvManager
@@ -10,11 +10,8 @@ from local_coding_assistant.core.app_context import AppContext
 from local_coding_assistant.core.dependencies import AppDependencies
 from local_coding_assistant.core.protocols import IConfigManager, IToolManager
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
+from local_coding_assistant.sandbox.manager import SandboxManager
 from local_coding_assistant.utils.logging import get_logger, setup_logging
-
-# Imported here to avoid circular imports
-if TYPE_CHECKING:
-    pass
 
 logger = get_logger("core.bootstrap")
 
@@ -82,10 +79,13 @@ def bootstrap(
         ctx = AppContext(dependencies=deps)
 
         # 6. Initialize components
+        deps.config_manager = config_manager
+        deps.sandbox_manager = _initialize_sandbox_manager(config_manager)
         deps.llm_manager = _initialize_llm_manager(config_manager, config)
-        deps.tool_manager = _initialize_tool_manager(config_manager)
-
-        # 7. Initialize runtime manager with required config_manager
+        deps.tool_manager = _initialize_tool_manager(
+            config_manager=config_manager,
+            sandbox_manager=deps.sandbox_manager,
+        )
         deps.runtime_manager = _initialize_runtime_manager(
             config_manager=config_manager,
             llm_manager=deps.llm_manager,
@@ -99,6 +99,10 @@ def bootstrap(
             ctx.register("tools", deps.tool_manager)
         if deps.runtime_manager:
             ctx.register("runtime", deps.runtime_manager)
+        if deps.sandbox_manager:
+            ctx.register("sandbox", deps.sandbox_manager)
+        if deps.config_manager:
+            ctx.register("config", deps.config_manager)
 
         # 9. Mark dependencies as fully initialized
         deps.mark_initialized()
@@ -160,7 +164,9 @@ def _initialize_dependencies(config_manager: IConfigManager) -> AppDependencies:
     Returns:
         Initialized AppDependencies instance
     """
-    return AppDependencies(config_manager=config_manager)
+    deps = AppDependencies(config_manager=config_manager)
+
+    return deps
 
 
 def _setup_logging(config: Any | None = None, log_level: int | None = None) -> None:
@@ -237,11 +243,35 @@ def _initialize_llm_manager(
         return None
 
 
-def _initialize_tool_manager(config_manager: IConfigManager) -> IToolManager | None:
+def _initialize_sandbox_manager(
+    config_manager: IConfigManager,
+) -> "SandboxManager | None":
+    """Initialize the sandbox manager.
+
+    Args:
+        config_manager: The config manager implementing IConfigManager
+
+    Returns:
+        Initialized SandboxManager instance or None if initialization fails
+    """
+    try:
+        sandbox_manager = SandboxManager(config_manager)
+        logger.info("Sandbox manager initialized successfully")
+        return sandbox_manager
+    except Exception as e:
+        logger.error("Failed to initialize sandbox manager: %s", str(e), exc_info=True)
+        return None
+
+
+def _initialize_tool_manager(
+    config_manager: IConfigManager,
+    sandbox_manager: Any | None = None,
+) -> IToolManager | None:
     """Initialize the tool manager.
 
     Args:
         config_manager: The config manager implementing IConfigManager
+        sandbox_manager: Optional SandboxManager instance
 
     Returns:
         Initialized ToolManager instance or None if initialization fails
@@ -251,7 +281,11 @@ def _initialize_tool_manager(config_manager: IConfigManager) -> IToolManager | N
             ToolManager,  # Local import
         )
 
-        tool_manager: IToolManager = ToolManager(config_manager=config_manager)
+        tool_manager: IToolManager = ToolManager(
+            config_manager=config_manager, sandbox_manager=sandbox_manager
+        )
+        logger.info("Tool manager initialized successfully")
+
         return tool_manager
     except Exception as e:
         logger.error("Failed to initialize tool manager: %s", str(e), exc_info=True)

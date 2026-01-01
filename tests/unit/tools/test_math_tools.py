@@ -98,7 +98,7 @@ class TestMultiplyTool:
         # Test with valid empty list input (should multiply to 1)
         input_data = MultiplyTool.Input(**{"numbers": []})
         assert input_data.numbers == []
-        
+
         # Test that multiplying by empty list gives 1 (mathematically correct for empty product)
         result = tool.run(input_data)
         assert result.result == 1.0
@@ -112,24 +112,25 @@ class TestToolIntegration:
         """Return a mocked tool manager instance with math tools registered."""
         # Create a mock ToolManager instance
         mock_tool_manager = Mock()
-        
+
         # Set up the arun_tool method to handle our test cases
         async def mock_arun_tool(tool_name, params):
-            if tool_name == 'sum':
-                return {"result": sum(params['numbers'])}
-            elif tool_name == 'sum_async':
-                return {"result": sum(params['numbers'])}
-            elif tool_name == 'multiply':
+            if tool_name == "sum":
+                return {"result": sum(params["numbers"])}
+            elif tool_name == "sum_async":
+                return {"result": sum(params["numbers"])}
+            elif tool_name == "multiply":
                 result = 1
-                for num in params['numbers']:
+                for num in params["numbers"]:
                     result *= num
                 return {"result": result}
             else:
                 from local_coding_assistant.core.exceptions import ToolRegistryError
+
                 raise ToolRegistryError(f"Tool '{tool_name}' not found")
-        
+
         mock_tool_manager.arun_tool.side_effect = mock_arun_tool
-        
+
         # Return the mock instance
         return mock_tool_manager
 
@@ -144,13 +145,13 @@ class TestToolIntegration:
         """Test executing an asynchronous math tool through the tool manager."""
         result = await tool_manager.arun_tool("sum_async", {"numbers": [10, 20, 30]})
         assert result == {"result": 60}
-        
+
     @pytest.mark.asyncio
     async def test_multiply_tool_execution(self, tool_manager):
         """Test executing the multiply tool through the tool manager."""
         result = await tool_manager.arun_tool("multiply", {"numbers": [2, 3, 4]})
         assert result == {"result": 24}
-        
+
         # Test empty list (should return 1)
         result = await tool_manager.arun_tool("multiply", {"numbers": []})
         assert result == {"result": 1.0}

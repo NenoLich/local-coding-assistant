@@ -216,7 +216,7 @@ def safe_entrypoint(context: str) -> Callable[[Callable[P, T]], Callable[P, T | 
     def decorator(func: Callable[P, T]) -> Callable[P, T | None]:
         @wraps(func)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> T | None:
-            verbose = kwargs.get("verbose", False)
+            verbose = bool(kwargs.get("verbose", False))
             try:
                 return func(*args, **kwargs)
             except Exception as err:

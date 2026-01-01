@@ -7,18 +7,42 @@ repos:
         name: ruff lint
         args: [--fix]
         files: \.py$
-        exclude: ^(tests|build|dist|.venv|.temp).*$
+        exclude: |
+          (?x)^(
+            tests/|
+            build/|
+            dist/|
+            \.venv/|
+            \.temp/|
+            .*/tools_api\.py
+          ).*$
         stages: [pre-commit]
       - id: ruff
         name: ruff isort
         args: ["check", "--select", "I", "--fix"]
         files: \.py$
-        exclude: ^(tests|build|dist|.venv|.temp).*$
+        exclude: |
+          (?x)^(
+            tests/|
+            build/|
+            dist/|
+            \.venv/|
+            \.temp/|
+            .*/tools_api\.py
+          ).*$
         stages: [pre-commit]
       - id: ruff-format
         name: ruff format
         files: \.py$
-        exclude: ^(tests|build|dist|.venv|.temp).*$
+        exclude: |
+          (?x)^(
+            tests/|
+            build/|
+            dist/|
+            \.venv/|
+            \.temp/|
+            .*/tools_api\.py
+          ).*$
         stages: [pre-commit]
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.21.2
@@ -28,13 +52,31 @@ repos:
         args: [--py312-plus]
         files: \.py$
         stages: [ pre-commit ]
-        exclude: ^(tests|build|dist|.venv|.temp).*$
+        exclude: |
+          (?x)^(
+            tests/|
+            build/|
+            dist/|
+            \.venv/|
+            \.temp/|
+            .*/tools_api\.py
+          ).*$
   - repo: local
     hooks:
       - id: ty
         name: ty type check
-        entry: uvx ty check --ignore unresolved-import
-        exclude: ^(tests|build|dist|.venv|.temp).*$
+        entry: uvx ty check --ignore unresolved-import src/
+        pass_filenames: false
+        always_run: true
+        exclude: |
+          (?x)^(
+            tests/|
+            build/|
+            dist/|
+            \.venv/|
+            \.temp/|
+            .*Dockerfile$
+          ).*$
         language: python
         stages: [pre-commit]
       - id: pytest-unit

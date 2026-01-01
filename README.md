@@ -15,6 +15,9 @@ An AI-powered coding assistant that runs locally with support for LLMs, tools, a
 - **Session Management** - Persistent sessions with context awareness
 - **Error Handling** - Robust error handling and logging throughout
 - **Tool System** - Extensible tool registry with JSON schema validation
+- **Programmatic Tool Calling (PTC)** - Advanced tool calling capabilities with sandboxed execution
+- **Sandbox Environment** - Secure, isolated execution environment for untrusted code
+- **Execution Statistics** - Comprehensive monitoring and metrics for tool execution
 
 ## Architecture Overview
 
@@ -38,6 +41,8 @@ LOCCA implements a sophisticated agent architecture with the following key compo
 - **Tool Registry** - Dynamic tool loading and management with schema validation
 - **Runtime Manager** - Session and context management with persistence
 - **Configuration System** - Three-layer precedence (global, session, call) with Pydantic schemas
+- **Sandbox Manager** - Secure execution environment with resource constraints and isolation
+- **Statistics Manager** - Tracks and reports on tool execution metrics and resource usage
 
 ## Configuration
 
@@ -97,17 +102,17 @@ Configuration is loaded from multiple YAML files with the following precedence (
 1. Core configuration:
    - `config/defaults.yaml` - Default configuration (base settings)
    - `config/${LOCCA_ENV}.yaml` - Environment-specific overrides
-   - `config/${LOCCA_ENV}.local.yaml` - Local overrides (gitignored)
+   - `config/local.yaml` - Local overrides (gitignored)
 
 2. Provider configuration:
    - `config/providers.default.yaml` - Default provider configurations
    - `config/providers.${LOCCA_ENV}.yaml` - Environment-specific providers
-   - `config/providers.${LOCCA_ENV}.local.yaml` - Local provider overrides (gitignored)
+   - `config/providers.local.yaml` - Local provider overrides (gitignored)
 
 3. Tool configuration:
    - `config/tools.default.yaml` - Default tool configurations
    - `config/tools.${LOCCA_ENV}.yaml` - Environment-specific tool configurations
-   - `config/tools.${LOCCA_ENV}.local.yaml` - Local tool overrides (gitignored)
+   - `config/tools.local.yaml` - Local tool overrides (gitignored)
 
 All paths in configuration files can use the `@` aliases (e.g., `@data/models`) which will be resolved by the `path_manager`.
 

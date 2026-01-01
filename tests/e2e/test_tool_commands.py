@@ -1,7 +1,9 @@
 """End-to-end tests for the tool CLI commands."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -28,6 +30,9 @@ class DummyToolManager:
 
     def execute(self, request):
         return SimpleNamespace(model_dump=lambda: self._result)
+
+    async def arun_tool(self, tool_name: str, payload: dict[str, Any]):
+        return self._result
 
     def reload_tools(self) -> None:
         self.reload_called = True
@@ -56,6 +61,8 @@ class TestToolCommands:
                 "Sample tool configured via CLI",
                 "--path",
                 "tests/mock_tools/sample_tool.py",
+                "--tool-class",
+                "SampleTool",
                 "--config-file",
                 str(test_configs["local"]),
             ],
@@ -84,7 +91,7 @@ class TestToolCommands:
 
         assert result.exit_code == 0, result.stdout
         assert "Executing tool: echo_tool" in result.stdout
-        assert "success: true" in result.stdout.lower()
+        assert "Tool execution result:" in result.stdout
         assert "Echo result" in result.stdout
 
     def test_tool_list_handles_empty_registry(

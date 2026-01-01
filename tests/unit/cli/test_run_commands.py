@@ -82,7 +82,13 @@ class TestRunCommands:
 
         # Verify the runtime was called correctly
         self.mock_bootstrap.assert_called_once()
-        self.mock_runtime.orchestrate.assert_awaited_once_with(TEST_QUERY, model=None)
+        from unittest.mock import ANY
+        self.mock_runtime.orchestrate.assert_awaited_once_with(
+            TEST_QUERY, 
+            model=None,
+            tool_call_mode='ptc',
+            sandbox_session=ANY  # Typer OptionInfo object
+        )
 
     def test_query_with_model(self):
         """Test query execution with a specific model."""
@@ -105,9 +111,13 @@ class TestRunCommands:
         self.mock_echo.assert_any_call("\nResponse:")
         self.mock_echo.assert_any_call(TEST_RESPONSE["message"])
 
-        # Verify the runtime was called with the correct model
+        # Verify the runtime was called with the correct model and default parameters
+        from unittest.mock import ANY
         self.mock_runtime.orchestrate.assert_awaited_once_with(
-            TEST_QUERY, model=TEST_MODEL
+            TEST_QUERY,
+            model=TEST_MODEL,
+            tool_call_mode='ptc',
+            sandbox_session=ANY  # Typer OptionInfo object
         )
 
     def test_verbose_mode(self):
@@ -131,8 +141,14 @@ class TestRunCommands:
         self.mock_echo.assert_any_call("\nResponse:")
         self.mock_echo.assert_any_call(TEST_RESPONSE["message"])
 
-        # Verify the runtime was called correctly
-        self.mock_runtime.orchestrate.assert_awaited_once_with(TEST_QUERY, model=None)
+        # Verify the runtime was called with the correct parameters
+        from unittest.mock import ANY
+        self.mock_runtime.orchestrate.assert_awaited_once_with(
+            TEST_QUERY,
+            model=None,
+            tool_call_mode='ptc',
+            sandbox_session=ANY  # Typer OptionInfo object
+        )
 
     def test_log_level_parameter(self):
         """Test that log level parameter is passed to bootstrap."""

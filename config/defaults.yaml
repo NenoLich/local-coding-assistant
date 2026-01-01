@@ -8,7 +8,7 @@ llm:
   # LLM generation settings
   temperature: 0.7
   max_tokens: 1000
-  max_retries: 3
+  max_retries: 1
   retry_delay: 1.0
   # Providers will be dynamically managed at runtime
   providers: []
@@ -21,6 +21,8 @@ runtime:
   log_level: "INFO"
   use_graph_mode: True
   stream: true
+  # Tool calling mode: 'classic' (default) or 'ptc' (programmatic tool calling)
+  tool_call_mode: "classic"
 
 providers: {}
 
@@ -51,3 +53,94 @@ agent:
     models:
       - "google_gemini:gemini-2.5-flash"
       - "fallback:any"
+
+sandbox:
+  enabled: false
+  image: "locca-sandbox:latest"
+  timeout: 30
+  memory_limit: "512m"
+  cpu_limit: 0.5
+  network_enabled: false
+  max_code_length: 10000
+  max_file_size: 1048576
+  allowed_directories:
+    - '/workspace'
+  working_directory: "/workspace"
+  session_timeout: 300
+  max_sessions: 5
+  session_id: "default"
+  persistence: true
+  # Security settings
+  # By default, we allow all imports and patterns because we rely on Docker isolation.
+  # The agent needs to be able to run code, open files, and install packages.
+  allowed_imports:
+    - json
+    - yaml
+    - datetime
+    - pathlib
+    - typing
+    - re
+    - math
+    - random
+    - time
+    - collections
+    - itertools
+    - functools
+    - tools_api
+    # - requests
+  blocked_patterns:
+    - "eval\\("
+    - "exec\\("
+    - "__import__"
+    - "compile\\("
+    - "globals\\("
+    - "locals\\("
+    - "open\\("
+    - "os\\."
+    - "shutil\\."
+    - "getattr\\(__builtins__"
+    - "getattr\\(__builtins__,"
+    - "builtins\\."
+  blocked_shell_commands:
+    - "rm"
+    - "mv"
+    - "cp"
+    - "dd"
+    - "chmod"
+    - "chown"
+    - "sudo"
+    - "su"
+    - "mount"
+    - "umount"
+    - "curl"
+    - "wget"
+    - "scp"
+    - "nc"
+    - "netcat"
+    - "ssh"
+    - "iptables"
+    - "systemctl"
+    - "service"
+    - "kill"
+    - "pkill"
+    - "ps"
+    - "top"
+    - "nmap"
+    - "python"
+    - "pip"
+    - "systemctl"
+    - "service"
+    - "shutdown"
+    - "reboot"
+    - "ftp"
+    - "venv"
+    - "virtualenv"
+  # Logging configuration
+  logging:
+    level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+    console: true  # Enable console logging
+    file: true  # Enable file logging
+    directory: "/workspace/logs"  # Directory to store log files (inside container)
+    file_name: "container_{session_id}.log"  # Log file name pattern
+    max_size: 10485760  # Maximum log file size in bytes before rotation (10MB)
+    backup_count: 5  # Number of backup log files to keep

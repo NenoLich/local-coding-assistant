@@ -16,6 +16,7 @@ from types import UnionType
 from typing import TYPE_CHECKING, Any, Union, get_args, get_origin, get_type_hints
 
 import yaml
+from docstring_parser import parse
 from pydantic import BaseModel, ValidationError
 
 from local_coding_assistant.config import EnvManager
@@ -91,7 +92,7 @@ class RawToolDefinition:
 class ToolConfigLoader:
     """Handles reading and combining raw tool configuration documents."""
 
-    CONFIG_TYPES = ("default", "local")
+    CONFIG_TYPES = ("default", "local", "sandbox")
 
     def __init__(self, env_manager: EnvManager | None = None) -> None:
         """Initialize the ToolConfigLoader.
@@ -113,7 +114,7 @@ class ToolConfigLoader:
                 If provided, these paths will be used instead of the default configuration.
                 Paths can be strings or Path objects, and will be resolved using the path manager.
         """
-        if tool_config_paths is not None:
+        if tool_config_paths:
             # Load from custom paths if provided
             for path in tool_config_paths:
                 config_path = self._path_manager.resolve_path(path)
@@ -147,6 +148,8 @@ class ToolConfigLoader:
         if self._path_manager and hasattr(self._path_manager, "resolve_path"):
             if config_type == "default":
                 return self._path_manager.resolve_path("@config/tools.default.yaml")
+            elif config_type == "sandbox":
+                return self._path_manager.resolve_path("@config/sandbox_tools.yaml")
             return self._path_manager.resolve_path("@config/tools.local.yaml")
 
         raise ConfigError("EnvManager not available (initialization failed)")
@@ -212,9 +215,12 @@ class ToolConfigLoader:
             return
 
         if entry.get("source") != "mcp":
-            entry.setdefault(
-                "source", "builtin" if config_type == "default" else "external"
-            )
+            if config_type == "default":
+                entry["source"] = "builtin"
+            elif config_type == "sandbox":
+                entry["source"] = "sandbox"
+            else:
+                entry["source"] = "external"
 
         definition = self._raw_definitions.setdefault(
             tool_id, RawToolDefinition(tool_id=tool_id)
@@ -269,17 +275,17 @@ class ToolModuleLoader:
         """
         self._env_manager = env_manager or EnvManager.create(load_env=False)
         self._path_manager = self._env_manager.path_manager
-        self._loaded_modules: set[str] = set()
-        self._loaded_paths: set[Path] = set()
+        self._module_cache: dict[str, Any] = {}
 
     def enrich_with_modules(self, tool_configs: dict[str, dict[str, Any]]) -> None:
         for tool_id, tool_data in tool_configs.items():
             config = tool_data.get("config", {})
+
             if not self._should_load_class(tool_id, config, tool_data):
                 continue
 
             try:
-                module = self._load_module(config, tool_data.get("base_dir"))
+                module = self._load_module(tool_id, config, tool_data.get("base_dir"))
                 if module is None:
                     continue
 
@@ -291,6 +297,7 @@ class ToolModuleLoader:
                     config["parameters"] = self._retrieve_parameters(tool_class)
 
                 tool_data["tool_class"] = tool_class
+                config["tool_class"] = tool_class
                 config["available"] = True
 
                 logger.info(
@@ -324,171 +331,208 @@ class ToolModuleLoader:
         if "path" not in config and "module" not in config:
             logger.debug("No path or module specified for tool: %s", tool_id)
             return False
+        if "tool_class" not in config:
+            logger.debug("No tool_class specified for tool: %s", tool_id)
+            return False
         return True
 
-    def _load_module(self, config: dict[str, Any], base_dir: Path | None) -> Any:
-        """
-        Load a module from a config using either:
-        - module: <import path or @module/...>
-        - path: <filesystem path>
-
-        Raises:
-            ConfigError on missing fields or failed load.
-        """
+    def _load_module(
+        self, tool_id: str, config: dict[str, Any], base_dir: Path | None
+    ) -> Any:
+        """Import the Python module that should contain the tool implementation."""
         module_spec = config.get("module")
         path_spec = config.get("path")
 
-        # Validate at least one spec is provided
         if not module_spec and not path_spec:
-            raise ConfigError("Tool config must define either 'module' or 'path'")
+            raise ConfigError(
+                f"Tool '{tool_id}' must define either 'module' or 'path' to load implementation"
+            )
 
-        # Try loading from module if specified
+        errors: list[str] = []
+
+        # Try loading via module specification first
         if module_spec:
             try:
-                return self._try_load_module(module_spec, path_spec)
-            except ConfigError:
-                if not path_spec:
-                    raise  # Re-raise if no fallback path
-                # Continue to try path_spec
+                return self._load_module_from_spec(tool_id, module_spec, base_dir)
+            except Exception as exc:
+                if not isinstance(exc, ConfigError):
+                    errors.append(str(exc))
+                else:
+                    raise
 
-        # Try loading from path if specified or as fallback
+        # Fall back to path-based loading if module loading failed or wasn't specified
         if path_spec:
-            return self._try_load_path(path_spec, base_dir, module_spec)
+            try:
+                return self._load_module_from_path_spec(tool_id, path_spec, base_dir)
+            except Exception as exc:
+                if not isinstance(exc, ConfigError):
+                    errors.append(str(exc))
+                else:
+                    raise
 
-        # This should never be reached due to validation above
-        raise ConfigError("Unexpected module loading state")
+        if errors:
+            raise ConfigError(
+                f"Failed to load module for tool '{tool_id}': " + "; ".join(errors)
+            )
 
-    def _try_load_module(self, module_spec: str, fallback_path: str | None) -> Any:
-        """Attempt to load a module from a module specification."""
+        raise ConfigError(
+            f"Tool '{tool_id}' module configuration is invalid (no usable module or path)"
+        )
+
+    def _load_module_from_spec(
+        self, tool_id: str, module_spec: str, base_dir: Path | None
+    ) -> Any:
+        """Load a module from a module specification."""
         if not isinstance(module_spec, str):
             raise ConfigError(
-                f"Module specification must be a string, got {type(module_spec)}"
+                f"Module specification for tool '{tool_id}' must be a string"
             )
 
-        try:
-            if module_spec.startswith("@module/"):
-                return self._load_module_from_path_spec(module_spec)
-            return importlib.import_module(module_spec)
-        except Exception as exc:
-            error_msg = f"Failed to import module '{module_spec}': {exc}"
-            if not fallback_path:
-                raise ConfigError(error_msg) from exc
-            logger.debug("%s, falling back to path", error_msg)
-            raise ConfigError(error_msg) from exc
+        if module_spec.startswith("@module/"):
+            resolved_path = self._path_manager.resolve_path(
+                module_spec, base_dir=base_dir
+            )
+            return self._import_module_from_path(resolved_path)
 
-    def _try_load_path(
-        self, path_spec: str, base_dir: Path | None, fallback_module: str | None
+        return self._import_module_by_name(module_spec)
+
+    def _load_module_from_path_spec(
+        self, tool_id: str, path_spec: str, base_dir: Path | None
     ) -> Any:
-        """Attempt to load a module from a filesystem path."""
+        """Load a module from a file path specification."""
         if not isinstance(path_spec, str):
             raise ConfigError(
-                f"Path specification must be a string, got {type(path_spec)}"
+                f"Path specification for tool '{tool_id}' must be a string"
             )
 
-        try:
-            module_path = self._path_manager.resolve_path(path_spec, base_dir=base_dir)
-            if not module_path.exists():
-                raise ConfigError(f"Module file not found: {module_path}")
-            return self._import_module_from_path(module_path)
-        except Exception as exc:
-            if fallback_module:
-                raise ConfigError(
-                    f"Both module '{fallback_module}' and path '{path_spec}' failed to load"
-                ) from exc
-            raise ConfigError(
-                f"Failed to load module from path '{path_spec}': {exc}"
-            ) from exc
+        resolved_path = self._path_manager.resolve_path(path_spec, base_dir=base_dir)
+        return self._import_module_from_path(resolved_path)
 
-    def _load_module_from_path_spec(self, module_spec: str) -> Any:
-        """Load a module from a @module/ path specification."""
-        module_path = self._path_manager.resolve_path(module_spec)
-        if not module_path.exists():
-            raise ConfigError(f"Module path not found: {module_path}")
-        return self._import_module_from_path(module_path)
+    def _import_module_by_name(self, module_name: str) -> Any:
+        if module_name in self._module_cache:
+            return self._module_cache[module_name]
+
+        module = importlib.import_module(module_name)
+        self._module_cache[module_name] = module
+        return module
 
     def _resolve_tool_class(
         self, tool_id: str, config: dict[str, Any], module: Any
     ) -> type:
-        class_name = config.get(
-            "tool_class",
-            f"{tool_id.replace('_', ' ').title().replace(' ', '')}Tool",
-        )
-        if hasattr(module, class_name):
-            tool_class = getattr(module, class_name)
-        else:
-            candidates = [
-                name
-                for name, value in vars(module).items()
-                if isinstance(value, type)
-                and value.__module__ == module.__name__
-                and (name.endswith("Tool") or name == tool_id.replace("_", ""))
-            ]
-            if not candidates and hasattr(module, "__all__"):
-                candidates = [
+        """Resolve and validate a tool class from the provided module."""
+
+        if "tool_class" not in config:
+            available = (
+                ", ".join(
                     name
-                    for name in module.__all__
-                    if isinstance(getattr(module, name, None), type)
-                ]
-            if not candidates:
-                available = "None found"
-                raise ImportError(
-                    f"Module '{module.__name__}' does not contain class '{class_name}'."
-                    f" Available classes: {available}"
+                    for name, obj in vars(module).items()
+                    if isinstance(obj, type) and obj.__module__ == module.__name__
                 )
-            class_name = candidates[0]
-            tool_class = getattr(module, class_name)
-            logger.debug("Using class '%s' for tool '%s'", class_name, tool_id)
+                or "None found"
+            )
+
+            raise ValueError(
+                f"Tool '{tool_id}' is missing required 'tool_class' in its configuration. "
+                f"Available classes in {module.__name__}: {available}"
+            )
+
+        class_name = config["tool_class"]
+
+        if not isinstance(class_name, str):
+            raise ValueError(
+                f"tool_class for tool '{tool_id}' must be provided as a class name string"
+            )
+
+        if not hasattr(module, class_name):
+            available = (
+                ", ".join(
+                    name
+                    for name, obj in vars(module).items()
+                    if isinstance(obj, type) and obj.__module__ == module.__name__
+                )
+                or "None found"
+            )
+
+            raise ImportError(
+                f"Module '{module.__name__}' does not contain class '{class_name}'. "
+                f"Available classes: {available}"
+            )
+
+        tool_class = getattr(module, class_name)
 
         if not isinstance(tool_class, type):
-            raise ValueError(f"'{class_name}' is not a class")
+            raise ValueError(
+                f"'{class_name}' in module '{module.__name__}' is not a class"
+            )
+
+        if inspect.isabstract(tool_class):
+            raise ValueError(
+                f"Cannot use abstract class '{class_name}' as a tool implementation"
+            )
 
         required_methods = ["run"]
-        required_attributes = ["Input", "Output"]
 
         missing_methods = [
             method
             for method in required_methods
             if not callable(getattr(tool_class, method, None))
         ]
-        missing_attributes = [
-            attr for attr in required_attributes if not hasattr(tool_class, attr)
-        ]
-        if missing_methods or missing_attributes:
-            error_parts = []
-            if missing_methods:
-                error_parts.append(f"missing methods: {', '.join(missing_methods)}")
-            if missing_attributes:
-                error_parts.append(
-                    f"missing attributes: {', '.join(missing_attributes)}"
-                )
+
+        error_parts = []
+        if missing_methods:
+            error_parts.append(f"missing methods: {', '.join(missing_methods)}")
+
             raise ValueError(
                 f"Class '{class_name}' is not a valid tool. It must have: {'; '.join(error_parts)}"
             )
 
         return tool_class
 
+    def _extract_param_descriptions_from_docstring(
+        self, docstring: str
+    ) -> dict[str, str]:
+        """Extract parameter descriptions from a function's docstring.
+
+        Uses docstring_parser to parse the docstring.
+
+        Args:
+            docstring: The docstring to parse
+
+        Returns:
+            Dictionary mapping parameter names to their descriptions
+        """
+        if not docstring:
+            return {}
+
+        parsed = parse(docstring)
+        return {str(p.arg_name): str(p.description) for p in parsed.params}
+
     def _retrieve_parameters(self, tool_class: type) -> dict:
         """Extract parameters from either Input model or run() method."""
+        # Try to extract from Input model first
+        params = self._extract_parameters_from_input_model(tool_class)
+        if params is not None:
+            return params
 
-        # -----------------------------------------------------------
-        # 1. Extract from Input model
-        # -----------------------------------------------------------
+        # Fallback to extracting from run() method signature and docstring
+        params = self._extract_parameters_from_run_method(tool_class)
+        if params is not None:
+            return params
+
+        # Ultimate fallback
+        return {"type": "object", "properties": {}, "required": []}
+
+    def _extract_parameters_from_input_model(self, tool_class: type) -> dict | None:
+        """Extract parameters from a Pydantic Input model if present."""
         try:
             input_field = getattr(tool_class, "Input", None)
-            if isinstance(input_field, type) and issubclass(input_field, BaseModel):
-                schema = input_field.model_json_schema()
+            if not (
+                isinstance(input_field, type) and issubclass(input_field, BaseModel)
+            ):
+                return None
 
-                # Normalize all properties individually
-                props = {}
-                for field_name, _field_def in schema.get("properties", {}).items():
-                    py_type = input_field.model_fields[field_name].annotation
-                    props[field_name] = self.normalize_type(py_type)
-
-                return {
-                    "type": "object",
-                    "properties": props,
-                    "required": schema.get("required", []),
-                }
+            schema = input_field.model_json_schema()
+            return self._build_parameter_schema(input_field, schema)
 
         except Exception as e:
             logger.warning(
@@ -496,44 +540,86 @@ class ToolModuleLoader:
                 str(e),
                 exc_info=logger.isEnabledFor(logging.DEBUG),
             )
+            return None
 
-        # -----------------------------------------------------------
-        # 2. Fallback: Extract from run() method signature
-        # -----------------------------------------------------------
-        run_method = getattr(tool_class, "run", None)
-        if callable(run_method):
-            try:
-                sig = inspect.signature(run_method)
-                resolved = get_type_hints(run_method)
+    def _build_parameter_schema(
+        self, input_model: type[BaseModel], schema: dict
+    ) -> dict:
+        """Build a parameter schema from a Pydantic model and its JSON schema."""
+        properties = {}
+        for field_name, field_def in schema.get("properties", {}).items():
+            field_info = input_model.model_fields[field_name]
+            prop = self.normalize_type(field_info.annotation)
 
-                props = {}
-                required = []
+            if field_info.description:
+                prop["description"] = field_info.description
 
-                for name, param in sig.parameters.items():
-                    if name in ("self", "cls"):
-                        continue
+            if "enum" in field_def:
+                prop["enum"] = field_def["enum"]
 
-                    annotation = resolved.get(name, str)
-                    props[name] = self.normalize_type(annotation)
+            properties[field_name] = prop
 
-                    if param.default is inspect.Parameter.empty:
-                        required.append(name)
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": schema.get("required", []),
+        }
 
-                return {
-                    "type": "object",
-                    "properties": props,
-                    "required": required,
-                }
+    def _extract_parameters_from_run_method(self, tool_class: type) -> dict | None:
+        """Extract parameters from a run() method signature and docstring."""
+        try:
+            run_method = getattr(tool_class, "run", None)
+            if not (run_method and callable(run_method)):
+                return None
 
-            except Exception as e:
-                logger.warning(
-                    "Failed to extract parameters from run() signature: %s", str(e)
+            signature = inspect.signature(run_method)
+            resolved = get_type_hints(run_method)
+            docstring = inspect.getdoc(run_method) or ""
+            param_descriptions = self._extract_param_descriptions_from_docstring(
+                docstring
+            )
+
+            properties = {}
+            required = []
+
+            for param_name, param in signature.parameters.items():
+                if param_name in ("self", "cls"):
+                    continue
+
+                annotation = resolved.get(param_name, str)
+                param_info = self._process_parameter(
+                    param, annotation, param_descriptions
                 )
+                properties[param_name] = param_info
 
-        # -----------------------------------------------------------
-        # 3. Ultimate fallback
-        # -----------------------------------------------------------
-        return {"type": "object", "properties": {}, "required": []}
+                if param.default is param.empty:
+                    required.append(param_name)
+
+            return {
+                "type": "object",
+                "properties": properties,
+                "required": required,
+            }
+
+        except Exception as e:
+            logger.warning(
+                "Failed to extract parameters from run() signature: %s", str(e)
+            )
+            return None
+
+    def _process_parameter(
+        self, param: inspect.Parameter, annotation: Any, param_descriptions: dict
+    ) -> dict:
+        """Process a single parameter from a function signature."""
+        param_info = self.normalize_type(annotation)
+
+        if param.name in param_descriptions:
+            param_info["description"] = param_descriptions[param.name]
+
+        if param.default is not param.empty:
+            param_info["default"] = param.default
+
+        return param_info
 
     def normalize_type(self, py_type: Any) -> dict:  # noqa: C901
         """
@@ -652,62 +738,38 @@ class ToolModuleLoader:
             raise ConfigError(f"Failed to resolve path '{path_value}': {e}") from e
 
     def _import_module_from_path(self, module_path: Path) -> Any:
-        """Import a Python module from a file path.
+        module_path = module_path.resolve()
 
-        Args:
-            module_path: Path to the Python module file
+        if not module_path.exists():
+            raise ConfigError(f"Tool module path does not exist: {module_path}")
 
-        Returns:
-            The imported module
+        cache_key = str(module_path)
+        if cache_key in self._module_cache:
+            return self._module_cache[cache_key]
 
-        Raises:
-            ImportError: If the module cannot be imported
-            ConfigError: If there's an error during import
-        """
-        try:
-            module_path = module_path.resolve()
+        module_name = self._module_name_from_path(module_path)
 
-            # Check if already loaded
-            if module_path in self._loaded_paths:
-                module_name = self._module_name_from_path(module_path)
-                if module_name in sys.modules:
-                    return sys.modules[module_name]
-
-            if not module_path.exists():
-                raise ConfigError(f"Tool module path does not exist: {module_path}")
-
-            # Generate a unique module name
-            module_name = self._module_name_from_path(module_path)
-
-            # Handle environment-specific overrides
-            if hasattr(self._env_manager, "get_environment"):
-                env_suffix = f".{self._env_manager.get_environment()}"
-                if env_suffix in module_name:
-                    base_module_name = module_name.replace(env_suffix, "")
-                    if base_module_name in sys.modules:
-                        del sys.modules[base_module_name]
-
-            # Import the module
-            spec = importlib.util.spec_from_file_location(module_name, module_path)
-            if spec is None or spec.loader is None:
-                raise ConfigError(f"Could not import module from {module_path}")
-
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module
-            spec.loader.exec_module(module)
-
-            # Update caches
-            self._loaded_paths.add(module_path)
-            self._loaded_modules.add(module_name)
-
-            logger.debug("Successfully imported module from %s", module_path)
+        if module_name in sys.modules:
+            module = sys.modules[module_name]
+            self._module_cache[cache_key] = module
             return module
 
-        except Exception as exc:  # pragma: no cover - logging only
-            logger.error(
-                "Failed to import tool module %s: %s", module_path, exc, exc_info=True
-            )
-            return None
+        spec = importlib.util.spec_from_file_location(module_name, module_path)
+        if spec is None or spec.loader is None:
+            raise ConfigError(f"Could not import module from {module_path}")
+
+        module = importlib.util.module_from_spec(spec)
+
+        try:
+            spec.loader.exec_module(module)
+        except Exception as exc:
+            raise ConfigError(f"Error executing module '{module_path}': {exc}") from exc
+
+        sys.modules[module_name] = module
+        self._module_cache[cache_key] = module
+
+        logger.debug("Successfully loaded module %s", module_path)
+        return module
 
     @staticmethod
     def _module_name_from_path(module_path: Path) -> str:
@@ -750,6 +812,8 @@ class ToolConfigConverter:
             base_dir = tool_data.get("base_dir")
             merged_config = config.copy()
 
+            tool_config = None
+
             try:
                 if config.get("source") == "mcp":
                     tool_configs[tool_id] = self._convert_mcp_tool(tool_id, config)
@@ -770,24 +834,24 @@ class ToolConfigConverter:
                     tool_config = self._create_tool_config(tool_id, config_copy)
                     if "tool_class" in tool_data:
                         tool_config.tool_class = tool_data["tool_class"]
-                    tool_configs[tool_id] = tool_config
-                except Exception as exc:  # pragma: no cover - defensive
-                    logger.error(
+                except Exception as exc:
+                    error_count += 1
+                    logger.warning(
                         "Failed to create tool config for '%s': %s", tool_id, exc
                     )
-                    tool_configs[tool_id] = self._create_unavailable_tool(
+                    tool_config = self._create_unavailable_tool(
                         tool_id, merged_config, exc
                     )
 
-            except (ValidationError, ConfigError) as error:
+            except Exception as error:
                 error_count += 1
                 self._log_tool_processing_error(tool_id, error, tool_data)
-                tool_configs[tool_id] = self._create_unavailable_tool(
+                tool_config = self._create_unavailable_tool(
                     tool_id, merged_config, error
                 )
-            except Exception as error:  # pragma: no cover - unexpected
-                error_count += 1
-                self._log_tool_processing_error(tool_id, error, tool_data)
+
+            if tool_config:
+                tool_configs[tool_id] = tool_config
 
         if error_count > 0:
             logger.warning(
@@ -884,15 +948,33 @@ class ToolConfigConverter:
     @staticmethod
     def _create_unavailable_tool(
         tool_id: str, config: dict[str, Any], error: Exception
-    ) -> ToolConfig:
-        error_config = config.copy()
-        error_config.update(
-            {
-                "available": False,
-                "description": f"Error loading tool: {str(error)[:200]}",
-            }
-        )
-        return ToolConfigConverter._create_tool_config(tool_id, error_config)
+    ) -> ToolConfig | None:
+        """Create a ToolConfig for an unavailable tool.
+
+        Args:
+            tool_id: ID of the tool
+            config: Original tool config
+            error: The error that caused the tool to be unavailable
+
+        Returns:
+            ToolConfig for the unavailable tool, or None if we can't create one
+        """
+        try:
+            error_config = config.copy()
+            error_config.update(
+                {
+                    "available": False,
+                    "description": f"Error loading tool: {str(error)[:200]}",
+                }
+            )
+            return ToolConfigConverter._create_tool_config(tool_id, error_config)
+        except Exception as e:
+            logger.warning(
+                "Failed to create unavailable tool config for '%s', skipping: %s",
+                tool_id,
+                str(e),
+            )
+            return None
 
     @staticmethod
     def _log_tool_processing_error(

@@ -6,7 +6,7 @@ improve testability.
 """
 
 from collections.abc import AsyncIterator, Iterable
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from local_coding_assistant.tools.base import Tool
 from local_coding_assistant.tools.types import (
@@ -15,6 +15,10 @@ from local_coding_assistant.tools.types import (
     ToolExecutionResponse,
     ToolInfo,
 )
+
+if TYPE_CHECKING:
+    from local_coding_assistant.config import AppConfig
+    from local_coding_assistant.config.path_manager import PathManager
 
 
 @runtime_checkable
@@ -26,7 +30,12 @@ class IConfigManager(Protocol):
     """
 
     @property
-    def global_config(self) -> Any | None:
+    def path_manager(self) -> "PathManager | None":
+        """Get the path manager."""
+        ...
+
+    @property
+    def global_config(self) -> "AppConfig":
         """Get the current global configuration.
 
         Returns:
@@ -84,19 +93,19 @@ class IConfigManager(Protocol):
 
     def resolve(
         self,
-        provider: str | None = None,
-        model_name: str | None = None,
-        overrides: dict[str, Any] | None = None,
+        global_config: dict | None = None,
+        session_overrides: dict | None = None,
+        call_overrides: dict | None = None,
     ) -> Any:
         """Resolve configuration with all layers applied.
 
         Args:
-            provider: Optional provider override for this call
-            model_name: Optional model_name override for this call
-            overrides: Optional additional overrides for this call
+            global_config: Base configuration dictionary. If None, uses instance's global config.
+            session_overrides: Session-level overrides. If None, uses instance's session overrides.
+            call_overrides: Call-specific overrides (highest priority). If None, uses empty dict.
 
         Returns:
-            Resolved configuration with all layers merged
+            AppConfig: The resolved and validated configuration
 
         Raises:
             ConfigError: If no global config is loaded or resolution fails
@@ -202,5 +211,24 @@ class IToolManager(Iterable[Any], Protocol):
 
         Raises:
             ToolRegistryError: If the tool is not found, doesn't support streaming, or execution fails
+        """
+        ...
+
+    def get_sandbox_tools_prompt(self) -> str:
+        """Get the tools prompt for the sandbox."""
+        ...
+
+    async def run_programmatic_tool_call(
+        self, code: str, session_id: str, env_vars: dict[str, str] | None = None
+    ) -> ToolExecutionResponse:
+        """Execute code using the programmatic tool calling interface (sandbox).
+
+        Args:
+            code: The Python code to execute.
+            session_id: The session ID for context persistence.
+            env_vars: Optional environment variables.
+
+        Returns:
+            The execution response.
         """
         ...

@@ -4,7 +4,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 from local_coding_assistant.agent.langgraph_agent import AgentState, LangGraphAgent
 from local_coding_assistant.agent.llm_manager import (
     LLMManager,
@@ -145,7 +144,7 @@ class TestLangGraphAgent:
         agent = LangGraphAgent(
             llm_manager=mock_llm_manager,
             tool_manager=mock_tool_manager,
-            name="test_agent"
+            name="test_agent",
         )
 
         # Test _get_available_tools
@@ -168,9 +167,7 @@ class TestLangGraphAgent:
 
         # Test with no tool manager
         agent_no_tools = LangGraphAgent(
-            llm_manager=mock_llm_manager,
-            tool_manager=None,
-            name="test_agent_no_tools"
+            llm_manager=mock_llm_manager, tool_manager=None, name="test_agent_no_tools"
         )
         assert agent_no_tools._get_available_tools() == []
         assert agent_no_tools._get_tools_description() == "No tools available"

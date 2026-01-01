@@ -23,6 +23,23 @@ A sophisticated local-first Python project for building an advanced AI coding as
   - `langgraph_agent.py`: LangGraph-compatible agent, graph node interface, streaming deltas.
   - `llm_manager.py`: Provider-aware request routing, streaming, retry + fallback orchestration.
 
+- **`sandbox/`**
+  - `manager.py`: Manages sandbox lifecycle, configuration, and execution requests.
+  - `base.py`: Defines the ISandbox interface for sandbox implementations.
+  - `sandbox_types.py`: Data models for sandbox execution requests/responses and metrics.
+  - `guest/`: Sandbox guest environment components.
+    - `session.py`: Handles code execution within the sandbox.
+    - `resource_tracker.py`: Tracks resource usage and execution metrics.
+
+- **`tools/`**
+  - `builtin_tools/ptc_tools.py`: Implements Programmatic Tool Calling (PTC) with sandbox integration.
+  - `sandbox_tools/`: Special tools available only in sandbox environment.
+    - `compute_tools.py`: Math operations and computations.
+    - `file_tools.py`: File system operations within sandbox.
+    - `final_answer.py`: Tool for providing final answers in PTC flows.
+  - `statistics.py`: Tracks and reports tool execution metrics and resource usage.
+  - `tool_manager.py`: Manages tool registration and execution with metrics collection.
+
 - **`providers/`**
   - `provider_manager.py`: Layered config merge (builtins, global YAML, local YAML), registration decorators, instantiation.
   - `router.py`: Policy-driven provider/model selection, health tracking, fallback logic.
@@ -167,6 +184,22 @@ uv run locca provider remove openrouter --dev
 # Config inspection
 uv run locca config show
 uv run locca config set LLM__TEMPERATURE 0.6
+
+# Sandbox commands
+uv run locca sandbox run "print('Hello, Sandbox!')"  # Run Python code
+uv run locca sandbox exec "ls -la"  # Execute shell command
+uv run locca sandbox stop <session_id>  # Stop a sandbox session
+
+# Tool management
+uv run locca tool list  # List all available tools
+uv run locca tool info <tool_name>  # Show tool details
+
+# Provider management
+uv run locca provider list
+uv run locca provider add --name my-provider --type openai --api-key $API_KEY
+
+# Run a query with a specific provider
+uv run locca run --provider my-provider "Your query here"
 ```
 
 ### Development features

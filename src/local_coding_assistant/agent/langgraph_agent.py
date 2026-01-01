@@ -9,7 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StreamWriter
 from pydantic import BaseModel, Field
 
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest
+from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, ToolCall
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.core.protocols import IToolManager
 from local_coding_assistant.tools.types import ToolExecutionRequest
@@ -380,7 +380,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
 
     async def _get_llm_response_with_tools(
         self, prompt: str, writer: StreamWriter, phase: str
-    ) -> tuple[str, list[dict[str, Any]]]:
+    ) -> tuple[str, list[ToolCall]]:
         """Get LLM response and extract tool calls.
 
         Unified method to interact with llm_manager.stream/ainvoke.
@@ -449,7 +449,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
         return response_content
 
     async def _process_tool_calls(
-        self, tool_calls: list[dict[str, Any]], plan: dict[str, Any], state: AgentState
+        self, tool_calls: list[ToolCall], plan: dict[str, Any], state: AgentState
     ) -> dict[str, Any] | None:
         """Process tool calls and return action result.
 
@@ -465,19 +465,18 @@ Please provide a plan with specific actions to take. Respond in JSON format with
             return None
 
         for tool_call in tool_calls:
-            if "function" in tool_call:
-                await self._handle_tool_call(tool_call, plan, state)
+            await self._handle_tool_call(tool_call, plan, state)
 
         return None
 
     async def _handle_tool_call(
-        self, tool_call: dict[str, Any], plan: dict[str, Any], state: AgentState
+        self, tool_call: ToolCall, plan: dict[str, Any], state: AgentState
     ) -> dict[str, Any]:
         """Handle execution of a single tool call."""
-        func_name = tool_call["function"]["name"]
+        func_name = tool_call.name
         try:
             # Parse arguments
-            args = json.loads(tool_call["function"]["arguments"])
+            args = tool_call.arguments
 
             # Handle tool execution
             if self.tool_manager is None:
@@ -524,7 +523,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
             }
 
     def _create_action_result(
-        self, response_content: str, tool_calls: list[dict[str, Any]]
+        self, response_content: str, tool_calls: list[ToolCall]
     ) -> dict[str, Any]:
         """Create action result from LLM response."""
         return {

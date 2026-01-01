@@ -3,7 +3,7 @@ Unit tests for LLMManager with provider system integration.
 """
 
 import inspect
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -40,7 +40,7 @@ class TestLLMManagerStreaming:
         mock.global_config = {"providers": {}, "models": {}}
         mock.env_manager = MagicMock()
         return mock
-        
+
     @pytest.fixture
     def mock_provider_manager(self):
         """Create a mock provider manager."""
@@ -158,12 +158,15 @@ class TestLLMManagerStreaming:
         mock_config_manager = MagicMock()
         mock_config_manager.global_config = MagicMock()
 
-        # Mock failing provider
-        mock_provider = MagicMock()
+        # Mock failing provider with proper async generator
+        mock_provider = AsyncMock()
         mock_provider.name = "openai"
-        mock_provider.stream_with_retry = AsyncMock(
-            side_effect=ProviderError("API Error", provider="openai")
-        )
+        
+        # Create an async generator that raises the error
+        async def mock_stream_with_retry(*args, **kwargs):
+            raise ProviderError("API Error", provider="openai")
+            
+        mock_provider.stream_with_retry = mock_stream_with_retry
 
         # Mock router
         mock_router = MagicMock()
@@ -192,7 +195,7 @@ class TestLLMManagerMethodConsistency:
         mock = MagicMock()
         mock.global_config = {"providers": {}, "models": {}}
         return mock
-        
+
     @pytest.fixture
     def mock_provider_manager(self):
         """Create a mock provider manager."""
@@ -209,12 +212,14 @@ class TestLLMManagerMethodConsistency:
 
         # Check that they have the same parameters (except for return type)
         generate_params = [
-            p for p in generate_sig.parameters.values()
-            if p.name != 'return' and p.name != 'self'
+            p
+            for p in generate_sig.parameters.values()
+            if p.name != "return" and p.name != "self"
         ]
         stream_params = [
-            p for p in stream_sig.parameters.values()
-            if p.name != 'return' and p.name != 'self'
+            p
+            for p in stream_sig.parameters.values()
+            if p.name != "return" and p.name != "self"
         ]
 
         assert len(generate_params) == len(stream_params)
@@ -224,7 +229,9 @@ class TestLLMManagerMethodConsistency:
             assert gp.default == sp.default
 
     @pytest.mark.asyncio
-    async def test_both_methods_use_same_config_resolution(self, mock_config_manager, mock_provider_manager):
+    async def test_both_methods_use_same_config_resolution(
+        self, mock_config_manager, mock_provider_manager
+    ):
         """Test that both methods use the same config resolution."""
         # This test is not applicable to v2 architecture which uses provider system
         # The v2 manager resolves providers differently
@@ -246,9 +253,12 @@ class TestLLMManagerMethodConsistency:
         mock_provider.generate_with_retry = AsyncMock(
             side_effect=ProviderError("API Error", provider="openai")
         )
-        mock_provider.stream_with_retry = AsyncMock(
-            side_effect=ProviderError("API Error", provider="openai")
-        )
+        
+        # Properly mock the async generator function
+        async def mock_stream_with_retry(*args, **kwargs):
+            raise ProviderError("API Error", provider="openai")
+            
+        mock_provider.stream_with_retry = mock_stream_with_retry
 
         # Mock router
         mock_router = MagicMock()
@@ -281,7 +291,7 @@ class TestLLMManagerIntegrationUpdates:
         mock = MagicMock()
         mock.global_config = {"providers": {}, "models": {}}
         return mock
-        
+
     @pytest.fixture
     def mock_provider_manager(self):
         """Create a mock provider manager."""
@@ -292,7 +302,7 @@ class TestLLMManagerIntegrationUpdates:
         manager = LLMManager(config_manager=mock_config_manager)
         assert hasattr(manager, "ainvoke")
         assert callable(manager.ainvoke)
-        
+
         # ainvoke should be functionally equivalent to generate
         # ainvoke provides a simpler interface that calls generate with defaults
         import inspect
@@ -319,7 +329,9 @@ class TestLLMManagerIntegrationUpdates:
         assert len(generate_sig.parameters) > 1  # Has additional optional parameters
 
     @pytest.mark.asyncio
-    async def test_ainvoke_functionality(self, mock_config_manager, mock_provider_manager):
+    async def test_ainvoke_functionality(
+        self, mock_config_manager, mock_provider_manager
+    ):
         """Test ainvoke method functionality."""
         from local_coding_assistant.providers.base import ProviderLLMResponse
 
@@ -331,19 +343,20 @@ class TestLLMManagerIntegrationUpdates:
                 content="Test response",
                 model="test-model",
                 model_used="test-model",
-                tokens_used=10
+                tokens_used=10,
             )
         )
-        
+
         # Create the manager with mocks
         manager = LLMManager(
-            config_manager=mock_config_manager,
-            provider_manager=mock_provider_manager
+            config_manager=mock_config_manager, provider_manager=mock_provider_manager
         )
-        
+
         # Setup router mock
         mock_router = MagicMock()
-        mock_router.get_provider_for_request = AsyncMock(return_value=(mock_provider, "test-model"))
+        mock_router.get_provider_for_request = AsyncMock(
+            return_value=(mock_provider, "test-model")
+        )
         manager.router = mock_router
 
         request = LLMRequest(prompt="Test")
@@ -352,19 +365,21 @@ class TestLLMManagerIntegrationUpdates:
 
         # Should call generate and return same result
         assert result.content == "Test response"
-        assert result.model_used == "test-model"  # Should match the model we set in the mock
+        assert (
+            result.model_used == "test-model"
+        )  # Should match the model we set in the mock
 
 
 class TestLLMManagerBackwardCompatibility:
     """Test backward compatibility with existing code."""
-    
+
     @pytest.fixture
     def mock_config_manager(self):
         """Create a mock config manager."""
         mock = MagicMock()
         mock.global_config = {"providers": {}, "models": {}}
         return mock
-        
+
     @pytest.fixture
     def mock_provider_manager(self):
         """Create a mock provider manager."""
@@ -472,7 +487,7 @@ class TestLLMManagerBackwardCompatibility:
         # Check that the method has a docstring
         docstring = manager.stream.__doc__
         assert docstring is not None
-        
+
         # Check for key phrases in the docstring (case-insensitive)
         docstring_lower = docstring.lower()
         assert "streaming response" in docstring_lower

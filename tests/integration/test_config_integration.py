@@ -1,9 +1,9 @@
 """Integration tests for configuration management."""
+
 import os
 from unittest.mock import patch
 
 import pytest
-
 
 from local_coding_assistant.agent import LLMManager
 from local_coding_assistant.core.exceptions import AgentError
@@ -21,7 +21,7 @@ class TestBootstrapIntegration:
         assert runtime is not None
         assert hasattr(runtime, "config_manager")
         # Test that config_manager can resolve runtime config
-        resolved_config = runtime.config_manager.resolve()
+        resolved_config = runtime.config_manager.global_config
         assert resolved_config.runtime.persistent_sessions is False  # Default value
 
     def test_bootstrap_with_custom_config_file(self, tmp_yaml_config):
@@ -52,7 +52,7 @@ class TestBootstrapIntegration:
 
         # Create config file using the fixture
         config_path = tmp_yaml_config(custom_config)
-        
+
         from local_coding_assistant.core.bootstrap import bootstrap
 
         # Bootstrap with custom config
@@ -66,7 +66,7 @@ class TestBootstrapIntegration:
         assert runtime is not None
 
         # Check LLM config via config manager
-        llm_resolved = llm.config_manager.resolve()
+        llm_resolved = llm.config_manager.global_config
         assert llm_resolved.llm.temperature == 0.8
         assert llm_resolved.llm.max_tokens == 2000
         assert llm_resolved.llm.max_retries == 5
@@ -78,13 +78,10 @@ class TestBootstrapIntegration:
         openai_provider = llm_resolved.providers["openai"]
         assert openai_provider.name == "openai"
         assert openai_provider.driver == "openai_chat"
-        assert (
-            openai_provider.base_url == "https://api.openai.com/v1/chat/completions"
-        )
+        assert openai_provider.base_url == "https://api.openai.com/v1/chat/completions"
         assert openai_provider.api_key_env == "OPENAI_API_KEY"
         assert (
-            openai_provider.health_check_endpoint
-            == "https://api.openai.com/v1/models"
+            openai_provider.health_check_endpoint == "https://api.openai.com/v1/models"
         )
 
         # Check models
@@ -120,13 +117,13 @@ class TestBootstrapIntegration:
             assert llm is not None
             assert runtime is not None
             # Check LLM config via config manager
-            llm_resolved = llm.config_manager.resolve()
+            llm_resolved = llm.config_manager.global_config
             assert llm_resolved.llm.temperature == 0.9
             assert llm_resolved.llm.max_tokens == 3000
             assert llm_resolved.llm.max_retries == 7
 
             # Check runtime config via config manager
-            runtime_resolved = runtime.config_manager.resolve()
+            runtime_resolved = runtime.config_manager.global_config
             assert runtime_resolved.runtime.persistent_sessions is True
             assert runtime_resolved.runtime.max_session_history == 150
             assert runtime_resolved.runtime.log_level == "ERROR"
@@ -149,7 +146,7 @@ class TestBootstrapIntegration:
 
         # Create config file using the fixture
         config_path = tmp_yaml_config(yaml_config)
-        
+
         with patch.dict(os.environ, env_config):
             from local_coding_assistant.core.bootstrap import bootstrap
 
@@ -162,12 +159,12 @@ class TestBootstrapIntegration:
             assert llm is not None
             assert runtime is not None
             # Check LLM config via config manager
-            llm_resolved = llm.config_manager.resolve()
+            llm_resolved = llm.config_manager.global_config
             assert llm_resolved.llm.temperature == 0.9  # From ENV
             assert llm_resolved.llm.max_tokens == 2000  # From ENV
 
             # Check runtime config via config manager
-            runtime_resolved = runtime.config_manager.resolve()
+            runtime_resolved = runtime.config_manager.global_config
             assert runtime_resolved.runtime.persistent_sessions is True  # From ENV
             assert runtime_resolved.runtime.log_level == "DEBUG"  # From ENV
 
@@ -176,35 +173,37 @@ class TestBootstrapIntegration:
         # Create invalid YAML file
         config_path = tmp_path / "invalid_config.yaml"
         config_path.write_text("invalid: yaml: content: [")
-        
+
         from local_coding_assistant.core.bootstrap import bootstrap
         from local_coding_assistant.core.exceptions import ConfigError
 
         # Should raise RuntimeError with ConfigError as cause for invalid YAML
         with pytest.raises(RuntimeError) as excinfo:
             bootstrap(config_path=str(config_path))
-            
+
         # The original error should be a ConfigError
-        assert isinstance(excinfo.value.__cause__, ConfigError), \
+        assert isinstance(excinfo.value.__cause__, ConfigError), (
             f"Expected ConfigError, got {type(excinfo.value.__cause__).__name__}"
-            
+        )
+
         # The error message should indicate invalid YAML
         error_msg = str(excinfo.value.__cause__).lower()
-        assert "invalid yaml" in error_msg or "yaml" in error_msg, \
+        assert "invalid yaml" in error_msg or "yaml" in error_msg, (
             f"Expected YAML error in message, got: {error_msg}"
+        )
 
     def test_bootstrap_missing_config_file(self):
         """Test bootstrap with missing configuration file."""
         from local_coding_assistant.core.bootstrap import bootstrap
-        
+
         # Should not raise an error for missing config file
         # It should use default configuration
         ctx = bootstrap(config_path="nonexistent.yaml")
-        
+
         # Should still get a valid context with default configuration
         assert ctx is not None
-        assert hasattr(ctx, 'get')
-        
+        assert hasattr(ctx, "get")
+
         # Should have LLM manager initialized with default config
         llm = ctx.get("llm")
         assert llm is not None
@@ -243,22 +242,24 @@ class TestBootstrapIntegration:
 
         # Create config file using the fixture
         config_path = tmp_yaml_config(invalid_config)
-        
+
         from local_coding_assistant.core.bootstrap import bootstrap
         from local_coding_assistant.core.exceptions import ConfigError
 
         # Should raise RuntimeError with ConfigError as cause for invalid config
         with pytest.raises(RuntimeError) as excinfo:
             bootstrap(config_path=config_path)
-            
+
         # The original error should be a ConfigError
-        assert isinstance(excinfo.value.__cause__, ConfigError), \
+        assert isinstance(excinfo.value.__cause__, ConfigError), (
             f"Expected ConfigError, got {type(excinfo.value.__cause__).__name__}"
-            
+        )
+
         # The error message should indicate validation errors
         error_msg = str(excinfo.value.__cause__).lower()
-        assert "validation error" in error_msg or "invalid" in error_msg, \
+        assert "validation error" in error_msg or "invalid" in error_msg, (
             f"Expected validation error in message, got: {error_msg}"
+        )
 
     def test_logging_configuration_application(self, tmp_yaml_config):
         """Test that logging configuration is properly applied."""
@@ -267,7 +268,7 @@ class TestBootstrapIntegration:
 
         # Create config file using the fixture
         config_path = tmp_yaml_config(config)
-        
+
         from local_coding_assistant.core.bootstrap import bootstrap
 
         # Bootstrap should work even with logging disabled
@@ -277,8 +278,282 @@ class TestBootstrapIntegration:
         runtime = ctx.get("runtime")
         assert runtime is not None
         # Check runtime config via config manager
-        runtime_resolved = runtime.config_manager.resolve()
+        runtime_resolved = runtime.config_manager.global_config
         assert runtime_resolved.runtime.enable_logging is False
+
+
+class TestConfigCaching:
+    """Integration tests for configuration caching functionality."""
+
+    def test_config_caching_basic(self, ctx, tmp_path):
+        """Test that repeated config resolutions use the cache."""
+        from local_coding_assistant.config.config_manager import ConfigManager
+
+        # Create a test config file
+        test_config = {
+            "llm": {"temperature": 0.7, "max_tokens": 1000},
+            "runtime": {"persistent_sessions": False},
+        }
+        config_path = tmp_path / "test_config.yaml"
+        with open(config_path, "w") as f:
+            import yaml
+
+            yaml.dump(test_config, f)
+
+        # Create a test config
+        config_manager = ConfigManager(config_paths=[str(config_path)])
+
+        # Load initial config
+        config_manager.load_global_config()
+
+        # Clear any existing cache
+        config_manager._resolve_dicts.cache_clear()
+
+        try:
+            # First call - should miss cache
+            config1 = config_manager.resolve()
+            cache_info = config_manager.get_cache_info()
+            assert cache_info["misses"] == 1, "First call should be a cache miss"
+
+            # Second call - should hit cache
+            config2 = config_manager.resolve()
+            cache_info = config_manager.get_cache_info()
+            assert cache_info["hits"] == 1, "Second call should be a cache hit"
+
+            # Third call with different overrides - should miss cache
+            config3 = config_manager.resolve(
+                call_overrides={"llm": {"temperature": 0.8}}
+            )
+            cache_info = config_manager.get_cache_info()
+            assert cache_info["misses"] == 2, (
+                "Third call with different overrides should be a cache miss"
+            )
+
+            # Fourth call with same overrides as third - should hit cache
+            config4 = config_manager.resolve(
+                call_overrides={"llm": {"temperature": 0.8}}
+            )
+            cache_info = config_manager.get_cache_info()
+            assert cache_info["hits"] == 2, (
+                "Fourth call with same overrides should be a cache hit"
+            )
+
+            # Fifth call with different session overrides - should miss cache
+            config5 = config_manager.resolve(
+                session_overrides={"llm": {"max_tokens": 2000}}
+            )
+            cache_info = config_manager.get_cache_info()
+            assert cache_info["misses"] == 3, (
+                "Fifth call with different session overrides should be a cache miss"
+            )
+
+            # Verify all configs are instances of AppConfig
+            from local_coding_assistant.config.schemas import AppConfig
+
+            assert all(
+                isinstance(c, AppConfig)
+                for c in [config1, config2, config3, config4, config5]
+            )
+
+        finally:
+            # Clean up
+            config_manager._resolve_dicts.cache_clear()
+
+    def test_config_caching_with_overrides(self, ctx, tmp_path):
+        """Test that different overrides result in different cache entries."""
+        from local_coding_assistant.config.config_manager import ConfigManager
+        from local_coding_assistant.config.schemas import AppConfig
+
+        # Create a test config file
+        test_config = {
+            "llm": {"temperature": 0.7, "max_tokens": 1000},
+            "runtime": {"persistent_sessions": False},
+        }
+        config_path = tmp_path / "test_config.yaml"
+        with open(config_path, "w") as f:
+            import yaml
+
+            yaml.dump(test_config, f)
+
+        config_manager = ConfigManager(config_paths=[str(config_path)])
+        config_manager.load_global_config()
+
+        # Clear any existing cache
+        config_manager._resolve_dicts.cache_clear()
+
+        # First call with no overrides - should miss cache
+        config1 = config_manager.resolve()
+        assert isinstance(config1, AppConfig)
+        assert config1.llm.temperature == 0.7
+        cache_info = config_manager.get_cache_info()
+        assert cache_info["misses"] == 1
+
+        # Second call with no overrides - should hit cache
+        config2 = config_manager.resolve()
+        cache_info = config_manager.get_cache_info()
+        assert cache_info["hits"] == 1
+
+        # Call with different overrides - should miss cache
+        config3 = config_manager.resolve(call_overrides={"llm": {"temperature": 0.8}})
+        assert config3.llm.temperature == 0.8
+        cache_info = config_manager.get_cache_info()
+        assert cache_info["misses"] == 2
+
+        # Call with same overrides - should hit cache
+        config4 = config_manager.resolve(call_overrides={"llm": {"temperature": 0.8}})
+        cache_info = config_manager.get_cache_info()
+        assert cache_info["hits"] == 2
+
+        # Call with different session overrides - should miss cache
+        config5 = config_manager.resolve(
+            session_overrides={"llm": {"max_tokens": 2000}}
+        )
+        assert config5.llm.max_tokens == 2000
+        cache_info = config_manager.get_cache_info()
+        assert cache_info["misses"] == 3
+
+        # Verify all configs are instances of AppConfig
+        assert all(
+            isinstance(c, AppConfig)
+            for c in [config1, config2, config3, config4, config5]
+        )
+
+        # Verify that different overrides produce different configs
+        assert config1.llm.temperature == 0.7
+        assert config3.llm.temperature == 0.8
+        assert config5.llm.max_tokens == 2000
+
+    def test_cache_invalidation_on_session_overrides(self, tmp_path):
+        """Test that cache is invalidated when session overrides change."""
+        from local_coding_assistant.config.config_manager import ConfigManager
+        from local_coding_assistant.config.schemas import AppConfig
+
+        # Create a test config file
+        test_config = {
+            "llm": {"temperature": 0.7, "max_tokens": 1000},
+            "runtime": {"persistent_sessions": False},
+        }
+        config_path = tmp_path / "test_config.yaml"
+        with open(config_path, "w") as f:
+            import yaml
+
+            yaml.dump(test_config, f)
+
+        config_manager = ConfigManager(config_paths=[str(config_path)])
+        config_manager.load_global_config()
+
+        # Clear any existing cache
+        config_manager._resolve_dicts.cache_clear()
+
+        try:
+            config1 = config_manager.resolve()
+            assert isinstance(config1, AppConfig)
+            assert config1.llm.temperature == 0.7
+            cache_info = config_manager.get_cache_info()
+            assert cache_info["misses"] == 1, "First call should be a cache miss"
+
+            config2 = config_manager.resolve()
+            cache_info = config_manager.get_cache_info()
+            assert cache_info["hits"] == 1, "Second call should be a cache hit"
+
+            config_manager.set_session_overrides({"llm": {"temperature": 0.9}})
+
+            config3 = config_manager.resolve()
+            cache_info = config_manager.get_cache_info()
+            assert cache_info["misses"] == 1, (
+                "Third call should be a cache miss due to overrides"
+            )
+            assert config3.llm.temperature == 0.9
+
+            config4 = config_manager.resolve()
+            cache_info = config_manager.get_cache_info()
+            assert cache_info["hits"] == 1, (
+                "Fourth call should be a cache hit with overrides"
+            )
+
+            config_manager.clear_session_overrides()
+
+            config5 = config_manager.resolve()
+            cache_info = config_manager.get_cache_info()
+            assert cache_info["misses"] == 1, (
+                "Fifth call should be a cache miss due to cleared overrides"
+            )
+            assert config5.llm.temperature == 0.7  # Back to original
+
+            config6 = config_manager.resolve()
+            cache_info = config_manager.get_cache_info()
+            assert cache_info["hits"] == 1, "Sixth call should be a cache hit"
+
+        finally:
+            # Clean up
+            config_manager._resolve_dicts.cache_clear()
+
+    def test_cache_invalidation_on_global_config_change(self, tmp_path):
+        """Test that cache is invalidated when global config changes."""
+        import yaml
+
+        from local_coding_assistant.config.config_manager import ConfigManager
+        from local_coding_assistant.config.schemas import AppConfig
+
+        # Create initial test config file
+        test_config = {
+            "llm": {"temperature": 0.8, "max_tokens": 1500},
+            "runtime": {"persistent_sessions": True},
+        }
+        config_path = tmp_path / "test_config.yaml"
+        with open(config_path, "w") as f:
+            yaml.dump(test_config, f)
+
+        # Create a new ConfigManager with our test config
+        config_manager = ConfigManager(config_paths=[str(config_path)])
+
+        # Load initial config
+        config_manager.load_global_config()
+
+        # Clear any existing cache
+        config_manager._resolve_dicts.cache_clear()
+
+        # Initial resolve - should miss cache
+        config1 = config_manager.resolve()
+        assert isinstance(config1, AppConfig)
+        assert config1.llm.temperature == 0.8
+        assert config1.runtime.persistent_sessions is True
+        cache_info = config_manager.get_cache_info()
+        assert cache_info["misses"] == 1
+
+        # Second resolve - should hit cache
+        config2 = config_manager.resolve()
+        cache_info = config_manager.get_cache_info()
+        assert cache_info["hits"] == 1
+
+        # Modify the config file
+        updated_config = {
+            "llm": {"temperature": 0.9, "max_tokens": 2000},
+            "runtime": {"persistent_sessions": False},
+        }
+        with open(config_path, "w") as f:
+            yaml.dump(updated_config, f)
+
+        # Reload the config to simulate a config change - should clear cache
+        config_manager.load_global_config()
+
+        # This should miss cache due to config reload
+        config3 = config_manager.resolve()
+        cache_info = config_manager.get_cache_info()
+        assert cache_info["misses"] == 1
+        assert config3.llm.temperature == 0.9
+        assert config3.runtime.persistent_sessions is False
+
+        # Verify the configs are different
+        assert config1.llm.temperature != config3.llm.temperature
+        assert (
+            config1.runtime.persistent_sessions != config3.runtime.persistent_sessions
+        )
+
+        # Verify cache is used for subsequent calls with new config
+        config4 = config_manager.resolve()
+        cache_info = config_manager.get_cache_info()
+        assert cache_info["hits"] == 1  # Should hit cache again
 
 
 class TestConfigurationEdgeCases:
@@ -288,7 +563,7 @@ class TestConfigurationEdgeCases:
         """Test loading empty YAML file."""
         # Create an empty YAML file using the fixture
         config_path = tmp_yaml_config("")
-        
+
         from local_coding_assistant.core.bootstrap import bootstrap
 
         # Should fall back to defaults
@@ -298,7 +573,7 @@ class TestConfigurationEdgeCases:
         llm = ctx.get("llm")
         assert llm is not None
         # Check LLM config via config manager
-        llm_resolved = llm.config_manager.resolve()
+        llm_resolved = llm.config_manager.global_config
         assert llm_resolved.llm.temperature == 0.7  # Default value
         assert llm_resolved.llm.max_tokens == 1000  # Default value
         assert llm_resolved.llm.max_retries == 3  # Default value
@@ -309,12 +584,12 @@ class TestConfigurationEdgeCases:
 
         # Create config file using the fixture
         config_path = tmp_yaml_config(config)
-        
+
         from local_coding_assistant.core.bootstrap import bootstrap
 
         # Should not raise an error for null values
         ctx = bootstrap(config_path=config_path)
-        
+
         # Get the resolved configuration
         llm = ctx.get("llm")
         runtime = ctx.get("runtime")
@@ -322,31 +597,35 @@ class TestConfigurationEdgeCases:
         assert runtime is not None
 
         # Check LLM config via config manager
-        llm_resolved = llm.config_manager.resolve()
-        
+        llm_resolved = llm.config_manager.global_config
+
         # For now, let's make the test more permissive
         # The important part is that the system works with null values
         max_tokens = None
-        if hasattr(llm_resolved, 'llm'):
+        if hasattr(llm_resolved, "llm"):
             max_tokens = llm_resolved.llm.max_tokens
-        elif hasattr(llm_resolved, 'get'):
-            max_tokens = llm_resolved.get('llm', {}).get('max_tokens')
-            
+        elif hasattr(llm_resolved, "get"):
+            max_tokens = llm_resolved.get("llm", {}).get("max_tokens")
+
         # Accept either the default value or None (if it will be set later)
-        assert max_tokens in (1000, None), f"Expected max_tokens to be 1000 or None, got {max_tokens}"
-        
+        assert max_tokens in (1000, None), (
+            f"Expected max_tokens to be 1000 or None, got {max_tokens}"
+        )
+
         # Check runtime config via config manager
-        runtime_resolved = runtime.config_manager.resolve()
-        
+        runtime_resolved = runtime.config_manager.global_config
+
         # Get the log level with flexible access
         log_level = None
-        if hasattr(runtime_resolved, 'runtime'):
+        if hasattr(runtime_resolved, "runtime"):
             log_level = runtime_resolved.runtime.log_level
-        elif hasattr(runtime_resolved, 'get'):
-            log_level = runtime_resolved.get('runtime', {}).get('log_level')
-            
+        elif hasattr(runtime_resolved, "get"):
+            log_level = runtime_resolved.get("runtime", {}).get("log_level")
+
         # Accept either the default value or None (if it will be set later)
-        assert log_level in ("INFO", None), f"Expected log_level to be 'INFO' or None, got {log_level}"
+        assert log_level in ("INFO", None), (
+            f"Expected log_level to be 'INFO' or None, got {log_level}"
+        )
 
     def test_environment_variable_type_conversion(self):
         """Test that environment variables are properly converted to correct types."""
@@ -368,7 +647,7 @@ class TestConfigurationEdgeCases:
 
             assert llm is not None
             # Check LLM config via config manager
-            llm_resolved = llm.config_manager.resolve()
+            llm_resolved = llm.config_manager.global_config
             assert isinstance(llm_resolved.llm.temperature, float)
             assert llm_resolved.llm.temperature == 0.8
             assert isinstance(llm_resolved.llm.max_tokens, int)
@@ -376,7 +655,7 @@ class TestConfigurationEdgeCases:
 
             assert runtime is not None
             # Check runtime config via config manager
-            runtime_resolved = runtime.config_manager.resolve()
+            runtime_resolved = runtime.config_manager.global_config
             assert isinstance(runtime_resolved.runtime.max_session_history, int)
             assert runtime_resolved.runtime.max_session_history == 200
 
@@ -437,7 +716,7 @@ class TestConfigurationEdgeCases:
         """Test that configuration overrides don't affect the base configuration."""
         runtime = ctx_with_mocked_llm.get("runtime")
         # Get initial LLM config via config manager
-        initial_llm_config = runtime._llm_manager.config_manager.resolve()
+        initial_llm_config = runtime._llm_manager.config_manager.global_config
         initial_temperature = initial_llm_config.llm.temperature
         initial_max_tokens = initial_llm_config.llm.max_tokens
 
@@ -447,7 +726,7 @@ class TestConfigurationEdgeCases:
         )
 
         # Base config should remain unchanged
-        updated_llm_config = runtime._llm_manager.config_manager.resolve()
+        updated_llm_config = runtime._llm_manager.config_manager.global_config
         assert updated_llm_config.llm.temperature == initial_temperature
         assert updated_llm_config.llm.max_tokens == initial_max_tokens
 

@@ -5,7 +5,7 @@ import logging
 
 import typer
 
-from local_coding_assistant.core import bootstrap
+from local_coding_assistant.core.bootstrap import bootstrap
 from local_coding_assistant.core.error_handler import safe_entrypoint
 from local_coding_assistant.utils.logging import get_logger
 
@@ -21,6 +21,12 @@ def query(
         False, "--verbose", "-v", help="Enable verbose output"
     ),
     model: str | None = typer.Option(None, help="Model to use for the query"),
+    ptc: bool = typer.Option(
+        False, "--ptc", help="Enable Programmatic Tool Calling mode (PTC)"
+    ),
+    sandbox_session: str | None = typer.Option(
+        None, "--sandbox-session", help="Session ID for persistent state in sandbox"
+    ),
     log_level: str = typer.Option(
         "INFO",
         "--log-level",
@@ -51,7 +57,14 @@ def query(
         typer.echo("Error: Runtime manager not available (LLM initialization failed)")
         raise typer.Exit(code=1)
 
-    result = asyncio.run(runtime.orchestrate(text, model=model))
+    result = asyncio.run(
+        runtime.orchestrate(
+            text,
+            model=model,
+            tool_call_mode="ptc" if ptc else "classic",
+            sandbox_session=sandbox_session,
+        )
+    )
 
     # Print the assistant message (preserves existing tests that check for LLM echo)
     typer.echo("\nResponse:")

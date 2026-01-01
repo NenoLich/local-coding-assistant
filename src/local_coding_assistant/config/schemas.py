@@ -133,6 +133,18 @@ class RuntimeConfig(BaseModel):
     stream: bool = Field(
         default=True, description="Default streaming mode for agent responses"
     )
+    tool_call_mode: str = Field(
+        default="classic",
+        description="Tool calling mode: 'classic' (default) uses function calling, 'ptc' uses programmatic tool calling",
+    )
+
+    @field_validator("tool_call_mode")
+    @classmethod
+    def validate_tool_call_mode(cls, v: str) -> str:
+        """Validate that tool_call_mode is either 'classic' or 'ptc'."""
+        if v not in ("classic", "ptc"):
+            raise ValueError("tool_call_mode must be either 'classic' or 'ptc'")
+        return v
 
 
 class ModelConfig(BaseModel):
@@ -311,20 +323,20 @@ class ToolConfig(BaseModel):
             "Alternative to path, used for installed packages."
         ),
     )
-    tool_class: type | None = Field(
+    tool_class: type | str | None = Field(
         None,
         description=(
             "The tool class type. This should be set by the ToolLoader "
-            "when loading the tool module. Should be None or a Python type."
+            "when loading the tool module. Can be a string class name or actual type."
         ),
     )
 
     @field_validator("tool_class", mode="before")
     @classmethod
     def validate_tool_class(cls, v):
-        if v is None or isinstance(v, type):
+        if v is None or isinstance(v, (type, str)):
             return v
-        raise ValueError("tool_class must be a Python type or None")
+        return str(v)  # Convert any non-None, non-type value to string
 
     endpoint: str | None = Field(
         None,
@@ -545,6 +557,89 @@ class ToolConfigList(BaseModel):
         return {"tools": [tool.model_dump(exclude_unset=True) for tool in self.tools]}
 
 
+class SandboxLoggingConfig(BaseModel):
+    """Configuration for sandbox logging."""
+
+    level: str = Field(
+        default="INFO",
+        description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+        pattern=r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$",
+    )
+    console: bool = Field(default=True, description="Whether to enable console logging")
+    file: bool = Field(default=True, description="Whether to enable file logging")
+    directory: str = Field(
+        default="/workspace/logs",
+        description="Directory to store log files (inside container)",
+    )
+    file_name: str = Field(
+        default="container_{session_id}.log",
+        description="Log file name pattern. {session_id} will be replaced with the actual session ID.",
+    )
+    max_size: int = Field(
+        default=10 * 1024 * 1024,  # 10MB
+        description="Maximum log file size in bytes before rotation",
+        gt=0,
+    )
+    backup_count: int = Field(
+        default=5, description="Number of backup log files to keep", ge=0
+    )
+
+
+class SandboxConfig(BaseModel):
+    """Configuration for the Docker sandbox environment."""
+
+    enabled: bool = Field(
+        default=False, description="Whether to enable sandbox execution"
+    )
+    image: str = Field(
+        default="locca-sandbox:latest",
+        description="Docker image to use for the sandbox",
+    )
+    timeout: int = Field(default=30, description="Execution timeout in seconds")
+    memory_limit: str = Field(
+        default="512m", description="Memory limit for the container (e.g., 512m, 1g)"
+    )
+    cpu_limit: float = Field(default=0.5, description="CPU limit (fraction of one CPU)")
+    network_enabled: bool = Field(
+        default=False, description="Whether to allow network access in the sandbox"
+    )
+    persistence: bool = Field(
+        default=False, description="Whether to persist the sandbox container"
+    )
+    session_id: str = Field(default="default", description="Session ID for the sandbox")
+    allowed_imports: list[str] = Field(
+        default_factory=list, description="List of allowed Python top-level imports"
+    )
+    blocked_patterns: list[str] = Field(
+        default_factory=list, description="List of regex patterns to block in code"
+    )
+    blocked_shell_commands: list[str] = Field(
+        default_factory=list, description="List of blocked shell commands"
+    )
+    max_code_length: int = Field(
+        default=10000, description="Maximum allowed code length in characters"
+    )
+    max_file_size: int = Field(
+        default=1024 * 1024, description="Maximum allowed file size for created files"
+    )
+    allowed_directories: list[str] = Field(
+        default_factory=list, description="List of allowed directories for file access"
+    )
+    working_directory: str = Field(
+        default="/workspace", description="Working directory inside the container"
+    )
+    session_timeout: int = Field(
+        default=300, description="Session timeout in seconds (default: 5 minutes)"
+    )
+    max_sessions: int = Field(
+        default=5, description="Maximum number of concurrent persistent sessions"
+    )
+    logging: SandboxLoggingConfig = Field(
+        default_factory=SandboxLoggingConfig,
+        description="Logging configuration for the sandbox",
+    )
+
+
 class AppConfig(BaseModel):
     """Top-level application configuration."""
 
@@ -563,6 +658,10 @@ class AppConfig(BaseModel):
         default_factory=ToolConfigList,
         description="Tool configurations",
     )
+    sandbox: SandboxConfig = Field(
+        default_factory=SandboxConfig,
+        description="Sandbox configuration",
+    )
 
     @classmethod
     def from_dict(cls, config_dict: dict[str, Any]) -> AppConfig:
@@ -576,6 +675,7 @@ class AppConfig(BaseModel):
 
         agent_config = AgentConfig.from_dict(config_dict.get("agent", {}))
         tool_config = ToolConfigList.from_dict(config_dict.get("tools", {}))
+        sandbox_config = SandboxConfig(**config_dict.get("sandbox", {}))
 
         return cls(
             llm=llm_config,
@@ -583,6 +683,7 @@ class AppConfig(BaseModel):
             providers=providers,
             agent=agent_config,
             tools=tool_config,
+            sandbox=sandbox_config,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -596,4 +697,5 @@ class AppConfig(BaseModel):
             },
             "agent": self.agent.model_dump(exclude_unset=True),
             "tools": self.tools.to_dict(),
+            "sandbox": self.sandbox.model_dump(exclude_unset=True),
         }

@@ -1,15 +1,13 @@
 """Unit tests for compatible_drivers.py"""
 
-import asyncio
-import json
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from openai.types.chat import ChatCompletion, ChatCompletionMessage, ChatCompletionChunk
-from openai.types.chat.chat_completion import Choice
-from openai.types.chat.chat_completion_chunk import ChoiceDelta, Choice as ChunkChoice
 
-from local_coding_assistant.providers.base import ProviderLLMRequest, ProviderLLMResponse
+from local_coding_assistant.providers.base import (
+    ProviderLLMRequest,
+    ProviderLLMResponse,
+)
 from local_coding_assistant.providers.compatible_drivers import (
     OpenAIChatCompletionsDriver,
     OpenAIResponsesDriver,
@@ -30,13 +28,13 @@ class TestOpenAIChatCompletionsDriver:
         return OpenAIChatCompletionsDriver(
             api_key="test-api-key",
             base_url="https://api.example.com",
-            provider_name="test-provider"
+            provider_name="test-provider",
         )
 
     @pytest.fixture
     def mock_client(self, driver):
         """Mock the OpenAI client"""
-        with patch.object(driver, 'client', new_callable=AsyncMock) as mock_client:
+        with patch.object(driver, "client", new_callable=AsyncMock) as mock_client:
             yield mock_client
 
     @pytest.fixture
@@ -51,6 +49,7 @@ class TestOpenAIChatCompletionsDriver:
     @pytest.mark.asyncio
     async def test_generate_success(self, driver, mock_client, test_request):
         """Test successful generate call"""
+
         # Create a proper mock response class
         class MockResponse:
             def __init__(self):
@@ -59,21 +58,21 @@ class TestOpenAIChatCompletionsDriver:
                 self.usage = {
                     "total_tokens": 10,
                     "prompt_tokens": 5,
-                    "completion_tokens": 5
+                    "completion_tokens": 5,
                 }
                 self.id = "test-response-id"
                 self.created = 1234567890
-            
+
             class MockChoice:
                 def __init__(self):
                     self.message = self.MockMessage()
                     self.finish_reason = "stop"
-                
+
                 class MockMessage:
                     def __init__(self):
                         self.role = "assistant"
                         self.content = "Test response"
-        
+
         mock_client.chat.completions.create.return_value = MockResponse()
 
         # Call the method
@@ -95,21 +94,21 @@ class TestOpenAIChatCompletionsDriver:
             model="test-model",
             messages=[{"role": "user", "content": "What's the weather?"}],
             parameters={
-                "tools": [{
-                    "type": "function",
-                    "function": {
-                        "name": "get_weather",
-                        "description": "Get the weather",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "location": {"type": "string"}
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "description": "Get the weather",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"location": {"type": "string"}},
+                                "required": ["location"],
                             },
-                            "required": ["location"]
-                        }
+                        },
                     }
-                }]
-            }
+                ]
+            },
         )
 
         # Create a proper mock response class
@@ -120,40 +119,40 @@ class TestOpenAIChatCompletionsDriver:
                 self.usage = {
                     "total_tokens": 20,
                     "prompt_tokens": 10,
-                    "completion_tokens": 10
+                    "completion_tokens": 10,
                 }
                 self.id = "test-response-id"
                 self.created = 1234567890
-            
+
             class MockChoice:
                 def __init__(self):
                     self.message = self.MockMessage()
                     self.finish_reason = "tool_calls"
-                
+
                 class MockMessage:
                     def __init__(self):
                         self.role = "assistant"
                         self.content = None
                         self.tool_calls = [self.MockToolCall()]
-                    
+
                     class MockToolCall:
                         def __init__(self):
                             self.id = "call_123"
                             self.type = "function"
                             self.function = self.MockFunction()
-                        
+
                         class MockFunction:
                             def __init__(self):
                                 self.name = "get_weather"
                                 self.arguments = '{"location": "San Francisco"}'
-                            
+
                             def get(self, key, default=None):
                                 if key == "name":
                                     return self.name
                                 elif key == "arguments":
                                     return self.arguments
                                 return default
-        
+
         mock_client.chat.completions.create.return_value = MockResponse()
 
         # Call the method
@@ -169,6 +168,7 @@ class TestOpenAIChatCompletionsDriver:
     @pytest.mark.asyncio
     async def test_stream_success(self, driver, mock_client, test_request):
         """Test successful streaming"""
+
         # Create a proper mock chunk class
         class MockChunk:
             def __init__(self):
@@ -176,20 +176,20 @@ class TestOpenAIChatCompletionsDriver:
                 self.created = 1234567890
                 self.model = "test-model"
                 self.choices = [self.MockChoice()]
-            
+
             class MockChoice:
                 def __init__(self):
                     self.delta = self.MockDelta()
                     self.finish_reason = None
-                
+
                 class MockDelta:
                     def __init__(self):
                         self.content = "Hello"
-        
+
         # Create an async generator for the mock response
         async def mock_stream():
             yield MockChunk()
-        
+
         mock_client.chat.completions.create.return_value = mock_stream()
 
         # Call the method
@@ -214,27 +214,40 @@ class TestOpenAIChatCompletionsDriver:
         mock_client.models.list.side_effect = Exception("API error")
         assert await driver.health_check() is False
 
-    @pytest.mark.parametrize("status_code,error_class,error_message_suffix", [
-        (401, ProviderAuthError, "Invalid API key (HTTP 401)"),
-        (429, ProviderRateLimitError, "Rate limit exceeded (HTTP 429)"),
-        (500, ProviderError, "Server error (HTTP 500)"),
-    ])
+    @pytest.mark.parametrize(
+        "status_code,error_class,error_message_suffix",
+        [
+            (401, ProviderAuthError, "Invalid API key (HTTP 401)"),
+            (429, ProviderRateLimitError, "Rate limit exceeded (HTTP 429)"),
+            (500, ProviderError, "Server error (HTTP 500)"),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_error_handling(self, driver, mock_client, test_request, status_code, error_class, error_message_suffix):
+    async def test_error_handling(
+        self,
+        driver,
+        mock_client,
+        test_request,
+        status_code,
+        error_class,
+        error_message_suffix,
+    ):
         """Test error handling for different status codes"""
         # Create a proper HTTPError with status code
         from httpx import HTTPStatusError, Request, Response
-        
+
         request = Request("POST", "https://api.example.com/chat/completions")
-        response = Response(status_code=status_code, request=request, text="Error message")
+        response = Response(
+            status_code=status_code, request=request, text="Error message"
+        )
         error = HTTPStatusError("Test error", request=request, response=response)
-        
+
         mock_client.chat.completions.create.side_effect = error
 
         # Assert the appropriate exception is raised with the correct message
         with pytest.raises(error_class) as exc_info:
             await driver.generate(test_request)
-            
+
         # Verify the error message contains the expected suffix
         error_message = str(exc_info.value)
         assert error_message_suffix in error_message
@@ -249,13 +262,13 @@ class TestOpenAIResponsesDriver:
         return OpenAIResponsesDriver(
             api_key="test-api-key",
             base_url="https://api.example.com",
-            provider_name="test-provider"
+            provider_name="test-provider",
         )
 
     @pytest.fixture
     def mock_client(self, driver):
         """Mock the OpenAI client"""
-        with patch.object(driver, 'client', new_callable=AsyncMock) as mock_client:
+        with patch.object(driver, "client", new_callable=AsyncMock) as mock_client:
             yield mock_client
 
     @pytest.fixture
@@ -270,6 +283,7 @@ class TestOpenAIResponsesDriver:
     @pytest.mark.asyncio
     async def test_generate_success(self, driver, mock_client, test_request):
         """Test successful generate call"""
+
         # Mock response
         class MockResponse:
             def __init__(self):
@@ -281,9 +295,9 @@ class TestOpenAIResponsesDriver:
                 self.usage = {
                     "total_tokens": 10,
                     "prompt_tokens": 5,
-                    "completion_tokens": 5
+                    "completion_tokens": 5,
                 }
-        
+
         mock_client.responses.create.return_value = MockResponse()
 
         # Call the method
@@ -304,33 +318,35 @@ class TestOpenAIResponsesDriver:
         request = ProviderLLMRequest(
             model="test-model",
             messages=[{"role": "user", "content": "What's the weather?"}],
-            tools=[{
-                "type": "function",
-                "function": {
-                    "name": "get_weather",
-                    "description": "Get the weather",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "location": {"type": "string"}
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        "description": "Get the weather",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"location": {"type": "string"}},
+                            "required": ["location"],
                         },
-                        "required": ["location"]
-                    }
+                    },
                 }
-            }]
+            ],
         )
 
         # Create a proper mock response class
         class MockResponse:
             def __init__(self):
                 self.output_text = ""  # Must be a string, not None
-                self.output = [{
-                    "type": "function_call",
-                    "function": {
-                        "name": "get_weather",
-                        "arguments": '{"location": "San Francisco"}'
+                self.output = [
+                    {
+                        "type": "function_call",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": '{"location": "San Francisco"}',
+                        },
                     }
-                }]
+                ]
                 self.finish_reason = "tool_calls"
                 self.model = "test-model"
                 self.id = "test-response-id"
@@ -338,9 +354,9 @@ class TestOpenAIResponsesDriver:
                 self.usage = {
                     "total_tokens": 20,
                     "prompt_tokens": 10,
-                    "completion_tokens": 10
+                    "completion_tokens": 10,
                 }
-        
+
         mock_client.responses.create.return_value = MockResponse()
 
         # Call the method
@@ -363,11 +379,11 @@ class TestOpenAIResponsesDriver:
         mock_chunk.id = "test-chunk-123"
         mock_chunk.created = 1234567890
         mock_chunk.model = "test-model"
-        
+
         # Create an async generator for the mock response
         async def mock_stream():
             yield mock_chunk
-            
+
         mock_client.responses.create.return_value = mock_stream()
 
         # Call the method
@@ -392,27 +408,40 @@ class TestOpenAIResponsesDriver:
         mock_client.models.list.side_effect = Exception("API error")
         assert await driver.health_check() is False
 
-    @pytest.mark.parametrize("status_code,error_class,error_message_suffix", [
-        (401, ProviderAuthError, "Invalid API key (HTTP 401)"),
-        (429, ProviderRateLimitError, "Rate limit exceeded (HTTP 429)"),
-        (500, ProviderError, "Server error (HTTP 500)"),
-    ])
+    @pytest.mark.parametrize(
+        "status_code,error_class,error_message_suffix",
+        [
+            (401, ProviderAuthError, "Invalid API key (HTTP 401)"),
+            (429, ProviderRateLimitError, "Rate limit exceeded (HTTP 429)"),
+            (500, ProviderError, "Server error (HTTP 500)"),
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_error_handling(self, driver, mock_client, test_request, status_code, error_class, error_message_suffix):
+    async def test_error_handling(
+        self,
+        driver,
+        mock_client,
+        test_request,
+        status_code,
+        error_class,
+        error_message_suffix,
+    ):
         """Test error handling for different status codes"""
         # Create a proper HTTPError with status code
         from httpx import HTTPStatusError, Request, Response
-        
+
         request = Request("POST", "https://api.example.com/responses")
-        response = Response(status_code=status_code, request=request, text="Error message")
+        response = Response(
+            status_code=status_code, request=request, text="Error message"
+        )
         error = HTTPStatusError("Test error", request=request, response=response)
-        
+
         mock_client.responses.create.side_effect = error
 
         # Assert the appropriate exception is raised with the correct message
         with pytest.raises(error_class) as exc_info:
             await driver.generate(test_request)
-            
+
         # Verify the error message contains the expected suffix
         error_message = str(exc_info.value)
         assert error_message_suffix in error_message
@@ -425,14 +454,12 @@ class TestOpenAIResponsesDriver:
                 "function": {
                     "name": "get_weather",
                     "description": "Get the weather",
-                    "parameters": {"type": "object"}
-                }
+                    "parameters": {"type": "object"},
+                },
             }
         ]
-        
+
         formatted = driver._format_tools_for_responses_api(tools)
         assert len(formatted) == 1
         assert formatted[0]["name"] == "get_weather"
         assert formatted[0]["type"] == "function"
-
-

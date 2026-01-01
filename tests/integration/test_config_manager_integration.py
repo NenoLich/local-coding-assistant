@@ -1,7 +1,5 @@
 """Integration tests for the ConfigManager system."""
 
-from unittest.mock import patch
-
 from local_coding_assistant.agent.llm_manager import LLMManager
 from local_coding_assistant.config import ConfigManager
 from local_coding_assistant.config.schemas import LLMConfig
@@ -18,14 +16,14 @@ class TestConfigManagerIntegration:
         llm_manager = LLMManager(manager)
 
         # Should be able to get LLM config through config_manager
-        resolved_config = llm_manager.config_manager.resolve()
+        resolved_config = llm_manager.config_manager.global_config
         llm_config = resolved_config.llm
         assert isinstance(llm_config, LLMConfig)
         # The model_name is not a direct field in LLMConfig, it's resolved through providers
         # The default model would come from the provider system or agent policies
 
         # Should be able to get config with overrides
-        resolved_config_with_override = llm_manager.config_manager.resolve(
+        resolved_config_with_override = llm_manager.config_manager.get_config(
             model_name="gpt-4"
         )
         llm_config_with_override = resolved_config_with_override.llm

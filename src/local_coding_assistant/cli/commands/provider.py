@@ -13,7 +13,7 @@ import typer
 import yaml
 
 from local_coding_assistant.config.env_manager import EnvManager
-from local_coding_assistant.core import bootstrap
+from local_coding_assistant.core.bootstrap import bootstrap
 from local_coding_assistant.core.error_handler import safe_entrypoint
 from local_coding_assistant.utils.logging import get_logger
 

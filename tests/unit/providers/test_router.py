@@ -1,8 +1,8 @@
 """Unit tests for ProviderRouter."""
 
-import pytest
-
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from local_coding_assistant.providers.base import OptionalParameters, ProviderLLMRequest
 from local_coding_assistant.providers.exceptions import (
@@ -70,7 +70,9 @@ async def test_get_provider_for_request_falls_back_to_policy_when_provider_inval
     fallback_provider = MagicMock()
     fallback_provider.name = "fallback"
 
-    router._route_by_policy = AsyncMock(return_value=(fallback_provider, "fallback-model"))
+    router._route_by_policy = AsyncMock(
+        return_value=(fallback_provider, "fallback-model")
+    )
 
     result_provider, result_model = await router.get_provider_for_request(
         provider_request, role="general", provider="primary"

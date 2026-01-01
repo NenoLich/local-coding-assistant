@@ -5,7 +5,7 @@ import pytest
 from local_coding_assistant.config.path_manager import PathManager
 
 
-@pytest.fixture()
+@pytest.fixture
 def path_manager(path_manager_integration: PathManager) -> PathManager:
     """Alias fixture providing integration PathManager instance."""
     return path_manager_integration
@@ -27,7 +27,9 @@ def test_initializes_environment_directories(path_manager: PathManager) -> None:
         assert directory.is_dir(), f"Expected {name} directory to exist at {directory}"
 
 
-def test_resolve_special_paths_uses_environment_directories(path_manager: PathManager) -> None:
+def test_resolve_special_paths_uses_environment_directories(
+    path_manager: PathManager,
+) -> None:
     """Special @-prefixed paths should resolve to environment-specific directories."""
     cases = {
         "@config/settings.yaml": path_manager.get_config_dir() / "settings.yaml",
@@ -35,7 +37,9 @@ def test_resolve_special_paths_uses_environment_directories(path_manager: PathMa
         "@cache/state.db": path_manager.get_cache_dir() / "state.db",
         "@log/run.log": path_manager.get_log_dir() / "run.log",
         "@module/tool.py": path_manager.get_module_dir() / "tool.py",
-        "@project/docs/readme.md": path_manager.get_project_root() / "docs" / "readme.md",
+        "@project/docs/readme.md": path_manager.get_project_root()
+        / "docs"
+        / "readme.md",
     }
 
     for raw, expected in cases.items():

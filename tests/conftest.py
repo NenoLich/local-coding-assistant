@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
-
 import os
-from typing import Dict, Iterator, Any
+import sys
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any
 
 import pytest
 
-from local_coding_assistant.config import PathManager, EnvManager
+from local_coding_assistant.config import EnvManager, PathManager
 
 # Add project src/ to sys.path for imports like `local_coding_assistant.*`
 ROOT = Path(__file__).resolve().parents[1]
@@ -25,17 +25,19 @@ def ensure_test_environment():
     # Force test environment
     os.environ["LOCCA_ENV"] = "test"
     os.environ["LOCCA_TEST_MODE"] = "true"
-    
+
     # Verify the environment is set correctly
-    assert os.environ.get("LOCCA_ENV") == "test", \
+    assert os.environ.get("LOCCA_ENV") == "test", (
         f"Test environment not set correctly. LOCCA_ENV={os.environ.get('LOCCA_ENV')}"
+    )
 
 
 def test_environment_setup():
     """Verify the test environment is properly configured."""
-    assert os.environ.get("LOCCA_ENV") == "test", \
-        f"Expected LOCCA_ENV='test', got '{os.environ.get('LOCCA_ENV')}'. " \
+    assert os.environ.get("LOCCA_ENV") == "test", (
+        f"Expected LOCCA_ENV='test', got '{os.environ.get('LOCCA_ENV')}'. "
         "Check if environment is being overridden in test setup or fixtures."
+    )
 
 
 def pytest_configure(config):
@@ -58,20 +60,17 @@ def path_manager():
 
 
 @pytest.fixture
-def test_configs(tmp_path: Path) -> Iterator[Dict[str, Any]]:
+def test_configs(tmp_path: Path) -> Iterator[dict[str, Any]]:
     """Fixture that provides test config files and directories."""
     # Create a new PathManager instance for testing
     test_path_manager = PathManager(
         is_development=False,
         is_testing=True,
-        project_root=tmp_path  # Use tmp_path as the project root
+        project_root=tmp_path,  # Use tmp_path as the project root
     )
 
     # Create an EnvManager that uses our test PathManager
-    test_env_manager = EnvManager.create(
-        load_env=False,
-        path_manager=test_path_manager
-    )
+    test_env_manager = EnvManager.create(load_env=False, path_manager=test_path_manager)
 
     # Get the test config directory
     test_config_dir = test_path_manager.get_config_dir()
@@ -85,14 +84,15 @@ def test_configs(tmp_path: Path) -> Iterator[Dict[str, Any]]:
     modules_dir = test_path_manager.get_module_dir()
     modules_dir.mkdir(parents=True, exist_ok=True)
 
-    yield {
+    return {
         "default": default_config,
         "local": local_config,
         "config_dir": test_config_dir,
         "modules_dir": modules_dir,
         "path_manager": test_path_manager,
-        "env_manager": test_env_manager  # Include the test env manager
+        "env_manager": test_env_manager,  # Include the test env manager
     }
+
 
 @pytest.fixture(scope="session")
 def event_loop():

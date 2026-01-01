@@ -1,7 +1,8 @@
 tools:
   - id: sum
     source: builtin
-    path: '@project/src/local_coding_assistant/tools/builtin_tools/math_tools.py'
+    path: '@tools/builtin_tools/math_tools.py'
+    tool_class: SumTool
     description: "Adds two or more numbers together"
     permissions: [compute]
     tags: [math, utility]
@@ -9,12 +10,37 @@ tools:
 
   - id: multiply
     source: builtin
-    path: '@project/src/local_coding_assistant/tools/builtin_tools/math_tools.py'
+    path: '@tools/builtin_tools/math_tools.py'
+    tool_class: MultiplyTool
     description: "Multiplies two or more numbers together"
     permissions: [compute]
     tags: [math, utility]
     enabled: true
     category: math
+
+  - id: execute_python_code
+    source: builtin
+    path: '@tools/builtin_tools/ptc_tools.py'
+    tool_class: ExecutePythonCodeTool
+    description: >-
+      Execute Python code in an isolated sandbox environment. This is the primary way to run
+      arbitrary Python code that may include tool orchestration, data processing, or complex
+      computations. The code runs in a secure, restricted environment with access to standard
+      Python libraries and any explicitly allowed tools.
+    permissions: [compute]
+    tags: [utility, security]
+    enabled: true
+    category: ptc
+
+  - id: run_shell_command
+    source: builtin
+    path: '@tools/builtin_tools/ptc_tools.py'
+    tool_class: RunShellCommandTool
+    description: "Execute shell commands inside the sandbox environment"
+    permissions: [compute]
+    tags: [utility, security]
+    enabled: true
+    category: ptc
 
   - id: doc_classifier
     source: mcp

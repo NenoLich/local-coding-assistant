@@ -7,7 +7,10 @@ import types
 import pytest
 
 from local_coding_assistant.providers.base import OptionalParameters, ProviderLLMRequest
-from local_coding_assistant.providers.exceptions import ProviderTimeoutError, ProviderValidationError
+from local_coding_assistant.providers.exceptions import (
+    ProviderTimeoutError,
+    ProviderValidationError,
+)
 from local_coding_assistant.providers.router import ProviderRouter
 
 
@@ -54,7 +57,7 @@ class DummyConfigManager:
         self._policies = policies
         self.global_config = DummyGlobalConfig(policies)
 
-    def resolve(self, overrides: dict | None = None) -> DummyGlobalConfig:
+    def resolve(self, call_overrides: dict | None = None) -> DummyGlobalConfig:
         # In these tests overrides are not relevant; simply return the global config.
         return self.global_config
 
@@ -81,7 +84,9 @@ class FakeProvider:
         self.validate_calls.append(request.model)
         if request.model not in self._supported_models:
             raise ProviderValidationError(
-                f"Model '{request.model}' is not supported", provider=self.name, model=request.model
+                f"Model '{request.model}' is not supported",
+                provider=self.name,
+                model=request.model,
             )
 
 

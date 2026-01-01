@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-
 import pytest
 from pydantic import BaseModel
 
-from local_coding_assistant.tools.tool_manager import ToolInputTransformer
+from local_coding_assistant.tools.tool_runtime import ToolInputTransformer
 
 
 class MultiValueModel(BaseModel):

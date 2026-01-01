@@ -1,8 +1,8 @@
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
+from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse, ToolCall
 from local_coding_assistant.config.schemas import AppConfig, LLMConfig, ProviderConfig
 from local_coding_assistant.providers.base import ProviderLLMResponseDelta
 from local_coding_assistant.providers.exceptions import (
@@ -138,16 +138,20 @@ class TestLLMResponse:
 
     def test_valid_response_creation(self):
         """Test creating a valid LLMResponse."""
+        tool_call = ToolCall(id="call_1", name="test_tool", type="function")
         response = LLMResponse(
             content="Test response",
             model_used="gpt-3.5-turbo",
             tokens_used=100,
-            tool_calls=[{"id": "call_1", "type": "function"}],
+            tool_calls=[tool_call],
         )
         assert response.content == "Test response"
         assert response.model_used == "gpt-3.5-turbo"
         assert response.tokens_used == 100
-        assert response.tool_calls == [{"id": "call_1", "type": "function"}]
+        assert len(response.tool_calls) == 1
+        assert response.tool_calls[0].id == "call_1"
+        assert response.tool_calls[0].name == "test_tool"
+        assert response.tool_calls[0].type == "function"
 
     def test_response_defaults(self):
         """Test LLMResponse default values."""
@@ -304,54 +308,82 @@ class TestLLMManager:
 
     @pytest.mark.asyncio
     async def test_generate_with_tools_using_provider_system(
-        self, mock_provider_manager, mock_config_manager
+            self, mock_provider_manager, mock_config_manager
     ):
         """Test response generation with tool calls using provider system."""
-        # Mock provider and response with tool calls
+        # Create a tool call in the format expected by the provider
+        tool_call_dict = {
+            "id": "call_123",
+            "type": "function",
+            "function": {
+                "name": "test_tool",
+                "arguments": '{"param1": "value1"}'
+            }
+        }
+
+        # Create a mock provider response with string content
+        mock_provider_response = MagicMock()
+        mock_provider_response.content = "I'll use the tool"
+        mock_provider_response.model = "gpt-3.5-turbo"
+        mock_provider_response.tokens_used = 75
+        mock_provider_response.tool_calls = [tool_call_dict]
+        # Ensure content is a string by setting it directly on the mock
+        mock_provider_response.configure_mock(**{
+            "content": "I'll use the tool",
+            "tool_calls": [tool_call_dict]  # Ensure this is set as an attribute
+        })
+
+        # Setup mock provider with proper async method mocking
         mock_provider = MagicMock()
-        mock_provider.name = "openai"
-        mock_provider.generate_with_retry = AsyncMock(
-            return_value=Mock(
-                content="I'll use the tool",
-                model="gpt-3.5-turbo",
-                tokens_used=75,
-                tool_calls=[
-                    {
-                        "id": "call_123",
-                        "type": "function",
-                        "function": {
-                            "name": "test_tool",
-                            "arguments": '{"arg": "value"}',
-                        },
-                    }
-                ],
-            )
-        )
+        mock_provider.name = "test_provider"
+        # Mock both generate and generate_with_retry methods
+        mock_provider.generate = AsyncMock(return_value=mock_provider_response)
+        mock_provider.generate_with_retry = AsyncMock(return_value=mock_provider_response)
 
-        # Mock router
-        mock_router = MagicMock()
-        mock_router.get_provider_for_request = AsyncMock(
-            return_value=(mock_provider, "gpt-3.5-turbo")
-        )
-        mock_router.mark_provider_success = MagicMock()
-        mock_router.mark_provider_failure = MagicMock()
+        # Create a coroutine that returns the mock provider and model
+        async def mock_get_provider(*args, **kwargs):
+            return mock_provider, "test_model"
 
+        # Setup router with the async mock
+        mock_router = AsyncMock()
+        mock_router.get_provider_for_request = mock_get_provider
+        mock_router.is_critical_error.return_value = False
+
+        # Create LLMManager with mocks
         llm = LLMManager(
-            config_manager=mock_config_manager, provider_manager=mock_provider_manager
+            mock_config_manager, provider_manager=mock_provider_manager
         )
         llm.router = mock_router
 
+        # Create a request with tools
         request = LLMRequest(
-            prompt="Use the tool",
-            tools=[{"type": "function", "function": {"name": "test_tool"}}],
+            prompt="Do something with a tool",
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "test_tool",
+                        "description": "A test tool",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "param1": {"type": "string"},
+                            },
+                            "required": ["param1"],
+                        },
+                    },
+                }
+            ],
         )
+
+        # Call the method
         response = await llm.generate(request)
 
         assert response is not None
         assert response.tool_calls is not None
         assert len(response.tool_calls) == 1
-        assert response.tool_calls[0]["id"] == "call_123"
-        assert response.tool_calls[0]["function"]["name"] == "test_tool"
+        assert response.tool_calls[0].id == "call_123"
+        assert response.tool_calls[0].name == "test_tool"
 
     @pytest.mark.asyncio
     async def test_generate_fallback_on_provider_error(

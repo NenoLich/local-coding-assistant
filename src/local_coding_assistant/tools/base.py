@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
@@ -37,7 +37,7 @@ class Tool(ABC):
         super().__init_subclass__(**kwargs)
 
         # Skip validation for abstract classes
-        if cls.__dict__.get("__abstractmethods__", None):
+        if inspect.isabstract(cls):
             return
 
         # Check if run method is properly implemented
@@ -83,7 +83,7 @@ class Tool(ABC):
         """
         pass
 
-    async def stream(self, input_data: Input) -> AsyncIterator[Output | dict]:
+    async def stream(self, input_data: Input) -> AsyncIterator[dict | Any]:
         """Stream results from the tool (optional).
 
         This method should be overridden by tools that support streaming.
@@ -115,8 +115,9 @@ class Tool(ABC):
         # Handle different result types safely
         try:
             # Check if the result has model_dump method (Pydantic v2+)
-            if hasattr(result, "model_dump") and callable(result.model_dump):
-                yield result.model_dump()
+            model_dump = getattr(result, "model_dump", None)
+            if model_dump is not None and callable(model_dump):
+                yield model_dump()
             else:
                 yield result
         except Exception as e:

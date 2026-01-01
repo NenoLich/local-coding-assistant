@@ -6,9 +6,14 @@ and the bootstrap system, following the same patterns as other CLI commands.
 """
 
 import ast
+import asyncio
 import json
 import logging
+import re
+import time
+import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from typing import Any, TypeVar
@@ -19,12 +24,11 @@ from rich.console import Console
 from rich.table import Table
 
 from local_coding_assistant.config import EnvManager
-from local_coding_assistant.core import bootstrap
+from local_coding_assistant.core.bootstrap import bootstrap
 from local_coding_assistant.core.error_handler import safe_entrypoint
 from local_coding_assistant.core.exceptions import CLIError
 from local_coding_assistant.tools.types import (
     ToolCategory,
-    ToolExecutionRequest,
     ToolPermission,
     ToolTag,
 )
@@ -53,14 +57,38 @@ class ToolCLIContext:
         log_level: str,
         *,
         config_file: str | None = None,
+        sandbox: bool = False,
     ) -> "ToolCLIContext":
-        """Bootstrap the application and return a ready-to-use context."""
+        """Bootstrap the application and return a ready-to-use context.
 
+        Args:
+            log_level: Logging level as a string (e.g., "INFO", "DEBUG")
+            config_file: Optional path to a configuration file
+            sandbox: Whether to enable sandbox execution
+
+        Returns:
+            An initialized ToolCLIContext instance
+
+        Raises:
+            ToolCLIError: If the tool manager cannot be initialized
+        """
         level = _resolve_log_level(log_level)
+
+        # Bootstrap the application
         ctx = bootstrap(config_path=config_file, log_level=level)
         tool_manager = ctx.get("tools")
         if tool_manager is None:
             raise ToolCLIError("Tool manager not available (initialization failed)")
+
+        config_manager = ctx.get("config")
+        # If sandbox is requested, set the session override
+        if sandbox:
+            if config_manager is None:
+                raise ToolCLIError("Config manager not available in context")
+
+            # Set the sandbox enabled flag using session overrides
+            config_manager.set_session_overrides({"sandbox.enabled": True})
+
         return cls(level=level, app_context=ctx, tool_manager=tool_manager)
 
 
@@ -171,12 +199,16 @@ def _validate_mcp_tool_config(
         raise ToolCLIError("Cannot mix --module/--path with --endpoint/--provider")
 
 
-def _validate_regular_tool_config(module: str | None, path: str | None) -> None:
+def _validate_regular_tool_config(
+    module: str | None, path: str | None, tool_class: str | None
+) -> None:
     """Validate regular tool configuration."""
     if not (module or path):
         raise ToolCLIError("Either --module or --path is required for regular tools")
     if module and path:
         raise ToolCLIError("Cannot provide both --module and --path")
+    if not tool_class:
+        raise ToolCLIError("--tool-class is required for regular tools")
 
 
 def _build_tool_config(
@@ -192,6 +224,7 @@ def _build_tool_config(
     provider: str | None,
     permissions: list[str] | None,
     tags: list[str] | None,
+    tool_class: str | None = None,
 ) -> dict[str, Any]:
     """Construct a validated tool configuration payload."""
     is_mcp = endpoint is not None or provider is not None
@@ -200,7 +233,7 @@ def _build_tool_config(
     if is_mcp:
         _validate_mcp_tool_config(endpoint, provider, module, path)
     else:
-        _validate_regular_tool_config(module, path)
+        _validate_regular_tool_config(module, path, tool_class)
 
     # Build base configuration
     tool_config: dict[str, Any] = {
@@ -221,10 +254,13 @@ def _build_tool_config(
     # Add type-specific configuration
     if is_mcp:
         tool_config.update({"endpoint": endpoint, "provider": provider})
-    elif module:
-        tool_config["module"] = module
-    elif path:
-        tool_config["path"] = path
+    else:
+        if module:
+            tool_config["module"] = module
+        elif path:
+            tool_config["path"] = path
+        if tool_class:
+            tool_config["tool_class"] = tool_class
 
     # Validate the complete configuration
     is_valid, errors = validate_tool_config(tool_config)
@@ -408,38 +444,283 @@ def _collapse_named_values(values: list[Any]) -> Any:
     return merged
 
 
-def _execute_tool(tool_manager: Any, tool_id: str, payload: dict[str, Any]) -> Any:
-    """Execute a tool using the best available manager interface."""
+def _format_duration(seconds: float) -> str:
+    """Format duration in seconds to a human-readable string."""
+    if seconds < 1:
+        return f"{seconds * 1000:.0f}ms"
+    if seconds < 60:
+        return f"{seconds:.2f}s"
+    minutes, seconds = divmod(seconds, 60)
+    return f"{int(minutes)}m {seconds:.1f}s"
 
+
+def _format_timestamp(timestamp: datetime | None) -> str:
+    """Format a timestamp for display."""
+    if not timestamp:
+        return "Never"
+    now = datetime.now(UTC)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    delta = now - timestamp
+
+    if delta < timedelta(minutes=1):
+        return "Just now"
+    if delta < timedelta(hours=1):
+        mins = int(delta.total_seconds() / 60)
+        return f"{mins}m ago"
+    if delta < timedelta(days=1):
+        hours = int(delta.total_seconds() / 3600)
+        return f"{hours}h ago"
+    return timestamp.strftime("%Y-%m-%d %H:%M")
+
+
+def _display_tool_stats(tool_manager: Any, tool_name: str, _console: Console) -> None:
+    """Display statistics for a specific tool.
+
+    Args:
+        tool_manager: The tool manager instance
+        tool_name: Name of the tool to display stats for
+        _console: Rich console instance for output
+    """
     try:
-        if hasattr(tool_manager, "execute"):
-            request = ToolExecutionRequest(tool_name=tool_id, payload=payload)
-            response = tool_manager.execute(request)
-            if hasattr(response, "model_dump"):
-                return response.model_dump()
-            if hasattr(response, "result"):
-                return response.result
-            return response
+        stats = tool_manager.get_execution_stats(tool_name)
 
-        if hasattr(tool_manager, "run_tool"):
-            return tool_manager.run_tool(tool_id, payload)
+        if not stats:
+            _console.print(
+                f"[yellow]No statistics available for tool: {tool_name}[/yellow]"
+            )
+            return
 
-    except Exception as exc:  # pragma: no cover - delegates to manager
-        raise ToolCLIError(str(exc)) from exc
+        _console.print("\n[bold]Execution Statistics:[/bold]")
+        _console.print("-" * 30)
 
-    raise ToolCLIError("Tool manager does not support synchronous execution")
+        # Basic stats
+        _console.print(f"[bold]Tool:[/bold] {tool_name}")
+        _console.print(
+            f"[bold]Total Executions:[/bold] {stats.get('total_executions', 0)}"
+        )
+        _console.print(f"[bold]Success Rate:[/bold] {stats.get('success_rate', 0):.1%}")
+        _console.print(
+            f"[bold]Average Duration:[/bold] {_format_duration(stats.get('avg_duration', 0))}"
+        )
+        _console.print(
+            f"[bold]First Execution:[/bold] {_format_timestamp(stats.get('first_execution'))}"
+        )
+        _console.print(
+            f"[bold]Last Execution:[/bold] {_format_timestamp(stats.get('last_execution'))}"
+        )
+
+        # Metrics summary if available
+        metrics = stats.get("metrics_summary", {})
+        if metrics:
+            _console.print("\n[bold]Metrics:[/bold]")
+            for name, value in metrics.items():
+                _console.print(f"  {name}: {value}")
+
+    except Exception as e:
+        _console.print(f"[yellow]Failed to get statistics: {e}[/yellow]")
 
 
-def _run_tool(tool_manager: Any, tool_id: str, args: list[str]) -> None:
-    """Execute a tool and echo the result."""
+def _display_system_stats(tool_manager: Any, _console: Console) -> None:
+    """Display system-wide statistics.
 
+    Args:
+        tool_manager: The tool manager instance
+        _console: Rich console instance for output
+    """
+    try:
+        stats = tool_manager.get_system_stats()
+        if not stats:
+            _console.print("[yellow]No system statistics available[/yellow]")
+            return
+
+        _console.print("\n[bold]System Statistics:[/bold]")
+        _console.print("-" * 30)
+
+        _console.print(
+            f"[bold]Total Executions:[/bold] {stats.get('total_executions', 0)}"
+        )
+        _console.print(
+            f"[bold]Total Duration:[/bold] {_format_duration(stats.get('total_duration', 0))}"
+        )
+        _console.print(
+            f"[bold]Average Duration:[/bold] {_format_duration(stats.get('avg_duration', 0))}"
+        )
+        _console.print(
+            f"[bold]First Execution:[/bold] {_format_timestamp(stats.get('first_execution'))}"
+        )
+        _console.print(
+            f"[bold]Last Execution:[/bold] {_format_timestamp(stats.get('last_execution'))}"
+        )
+
+        # Metrics summary if available
+        metrics = stats.get("metrics_summary", {})
+        if metrics:
+            _console.print("\n[bold]System Metrics:[/bold]")
+            for name, value in metrics.items():
+                _console.print(f"  {name}: {value}")
+
+    except Exception as e:
+        _console.print(f"[yellow]Failed to get system statistics: {e}[/yellow]")
+
+
+def parse_kv_pairs(s: str) -> dict[str, Any]:
+    """Parse key=value pairs, handling JSON values properly."""
+    result = {}
+    # This regex matches key=value where value can be JSON
+    pattern = r'([a-zA-Z0-9_]+)=({.*?}|\[.*?\]|"[^"]*"|[^,]+)(?=,|$)'
+    for match in re.finditer(pattern, s):
+        key = match.group(1)
+        val = match.group(2).strip()
+        # Try to parse as JSON first
+        try:
+            result[key] = json.loads(val)
+        except json.JSONDecodeError:
+            # If not JSON, handle as string (removing quotes if present)
+            if val.startswith('"') and val.endswith('"'):
+                val = val[1:-1]
+            result[key] = val
+    return result
+
+
+def _parse_tool_specs(specs: str) -> list[tuple[str, dict[str, Any]]]:
+    """Parse tool specifications from a string.
+
+    Args:
+        specs: String in format "tool1:arg1=val1,arg2=val2;tool2:arg1=val1"
+
+    Returns:
+        List of tuples (tool_id, args_list)
+
+    Raises:
+        ToolCLIError: If the specs format is invalid
+    """
+    tools = []
+    if not specs.strip():
+        return tools
+
+    for tool_spec in specs.split(";"):
+        tool_spec = tool_spec.strip()
+        if not tool_spec:
+            continue
+
+        # Split tool name and args
+        if ":" in tool_spec:
+            parts = tool_spec.split(":", 1)
+            if len(parts) != 2 or not parts[0].strip():
+                raise ValueError(
+                    "Invalid tool specification format. Expected 'tool:arg1=val1,arg2=val2'"
+                )
+
+            tool_name, args_str = parts
+            tool_name = tool_name.strip()
+
+            # Validate that args_str is not empty or contains invalid format
+            if args_str.strip() and not any(c in args_str for c in "=, "):
+                raise ValueError(
+                    "Invalid argument format. Expected 'arg1=val1,arg2=val2'"
+                )
+
+            args = parse_kv_pairs(args_str)
+            tools.append((tool_name, args))
+        else:
+            # Tool with no arguments
+            tools.append((tool_spec, {}))
+
+    return tools
+
+
+async def _run_tools(
+    tool_manager: Any,
+    tool_specs: list[tuple[str, dict]],
+    sandbox: bool = False,
+    parallel: bool = False,
+) -> list[tuple[str, bool, str]]:
+    """Run multiple tools and return their results.
+
+    Args:
+        tool_manager: The tool manager instance
+        tool_specs: List of (tool_id, args_dict) tuples where args_dict is a dictionary
+                   of argument names to values
+        sandbox: Whether to run tools in a sandbox
+        parallel: Whether to run tools in parallel
+
+    Returns:
+        List of (tool_id, success, result) tuples
+    """
+    results = []
+
+    if parallel:
+
+        async def run_single(
+            tool_id: str, args: dict, session_id: str
+        ) -> tuple[str, bool, str]:
+            try:
+                _result = await _run_tool(
+                    tool_manager, tool_id, args, sandbox, session_id=session_id
+                )
+                return tool_id, True, str(_result)
+            except Exception as err:
+                return tool_id, False, str(err)
+
+        # Generate a unique session ID for each tool execution in parallel mode
+        session_ids = [str(uuid.uuid4()) for _ in tool_specs]
+
+        # Run all tools in parallel with their own session IDs
+        tasks = [
+            run_single(tool_id, args, session_id)
+            for (tool_id, args), session_id in zip(tool_specs, session_ids, strict=True)
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+    else:
+        # For sequential execution, use a single session ID for all tools
+        session_id = str(uuid.uuid4()) if sandbox else ""
+
+        # Run tools sequentially with the same session ID
+        for tool_id, args in tool_specs:
+            try:
+                result = await _run_tool(
+                    tool_manager, tool_id, args or {}, sandbox, session_id=session_id
+                )
+                results.append((tool_id, True, str(result)))
+            except Exception as e:
+                results.append((tool_id, False, str(e)))
+
+    return results
+
+
+async def _run_tool(
+    tool_manager: Any,
+    tool_id: str,
+    args: dict,
+    sandbox: bool = False,
+    session_id: str = "default",
+) -> Any:
+    """Execute a tool and return the result.
+
+    Args:
+        tool_manager: The tool manager instance
+        tool_id: ID of the tool to run
+        args: Dictionary of arguments to pass to the tool
+        sandbox: Whether to run the tool in a sandbox
+        session_id: Optional session ID for sandbox execution. If None, a default will be used.
+                   In parallel execution, a unique session ID should be provided for each tool.
+
+    Returns:
+        The tool's execution result
+
+    Raises:
+        ToolCLIError: If there's an error executing the tool
+    """
     try:
         tool = tool_manager.get_tool(tool_id)
     except Exception as exc:
         raise ToolCLIError(str(exc)) from exc
 
-    payload = _parse_tool_args(args)
+    # Args are already parsed, use them directly
+    payload = args or {}
 
+    # Get tool info for display
     tool_info = None
     if hasattr(tool_manager, "get_tool_info"):
         try:
@@ -451,11 +732,31 @@ def _run_tool(tool_manager: Any, tool_id: str, args: list[str]) -> None:
         getattr(tool_info, "name", None) or getattr(tool, "name", None) or tool_id
     )
 
-    typer.echo(f"Executing tool: {display_name} ({tool_id})")
+    typer.echo(f"Executing tool: {display_name}")
+    if sandbox:
+        typer.echo(f"Running in sandbox mode (Session: {session_id or 'default'})")
 
-    result = _execute_tool(tool_manager, tool_id, payload)
-    typer.echo("\nTool execution result:")
-    typer.echo(yaml.dump(result, default_flow_style=False, sort_keys=False))
+    try:
+        if sandbox:
+            # Execute in sandbox
+            if not hasattr(tool_manager, "execute_tool_in_sandbox"):
+                raise ToolCLIError("Sandbox execution is not available")
+            # Pass the session_id to the sandbox execution
+            return await tool_manager.execute_tool_in_sandbox(
+                tool_id,
+                payload,
+                session_id=session_id,  # Pass the session_id through
+            )
+        else:
+            # Execute directly
+            result = await tool_manager.arun_tool(tool_id, payload)
+            if result.get("result"):
+                return result.get("result")
+            else:
+                return result
+
+    except Exception as e:
+        raise ToolCLIError(f"Error executing tool: {e}") from e
 
 
 def _remove_tool_from_config(tool_id: str, *, config_file: str | None) -> Path:
@@ -754,6 +1055,10 @@ def validate_tool_config(tool_config: dict) -> tuple[bool, list[str]]:
     if "description" not in tool_config:
         errors.append("Missing required field: description")
 
+    # Validate tool_class for non-MCP tools
+    if tool_config.get("source") != "mcp" and "tool_class" not in tool_config:
+        errors.append("Missing required field: tool_class")
+
     # Validate enum fields
     _category, category_errors = validate_tool_field(
         tool_config, "category", ToolCategory, required=False
@@ -917,6 +1222,11 @@ def add(
         "--path",
         help="Path to Python module file. Not used with --endpoint.",
     ),
+    tool_class: str = typer.Option(
+        None,
+        "--tool-class",
+        help="Name of the tool class to use from the module. Required for regular tools.",
+    ),
     # MCP tool options
     endpoint: str = typer.Option(
         None,
@@ -971,6 +1281,7 @@ def add(
             category=category,
             module=module,
             path=path,
+            tool_class=tool_class,
             endpoint=endpoint,
             provider=provider,
             permissions=permissions,
@@ -1051,25 +1362,265 @@ def run(
     args: list[str] = typer.Argument(  # noqa: B008
         None, help="Arguments to pass to the tool"
     ),
+    sandbox: bool = typer.Option(
+        False, "--sandbox", "-s", help="Execute tool in sandbox environment"
+    ),
+    show_stats: bool = typer.Option(
+        False, "--stats", help="Show execution statistics after running the tool"
+    ),
     log_level: str = typer.Option(
         "INFO",
         "--log-level",
         help="Logging level (e.g., DEBUG, INFO, WARNING, ERROR)",
     ),
-):
-    """Execute a tool with the given arguments."""
+) -> None:
+    """Execute a tool with the given arguments.
+
+    Examples:
+        # Run a tool directly
+        locca tool run my_tool arg1=value1 arg2=value2
+
+        # Run a tool in a sandbox
+        locca tool run --sandbox my_tool arg1=value1 arg2=value2
+
+        # Run a tool and show statistics
+        locca tool run --stats my_tool arg1=value1
+    """
+    # Create the context with sandbox enabled if requested
+    ctx = ToolCLIContext.create(log_level, sandbox=sandbox)
+    tool_manager = ctx.tool_manager
 
     try:
-        context = ToolCLIContext.create(log_level)
-        _run_tool(context.tool_manager, tool_id, args or [])
-    except ToolCLIError as exc:
-        typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(1) from exc
+        # Parse the arguments for the single tool
+        parsed_args = _parse_tool_args(args or [])
+
+        # Run the tool with parsed arguments
+        result = asyncio.run(
+            _run_tool(tool_manager, tool_id, parsed_args, sandbox=sandbox)
+        )
+
+        # Print the result if there is one
+        if result is not None:
+            console.print("\n[bold]Tool execution result:[/bold]")
+            # If the result is a string, print it directly, otherwise dump as YAML
+            if isinstance(result, str):
+                console.print(result)
+            else:
+                console.print(
+                    yaml.dump(result, default_flow_style=False, sort_keys=False)
+                )
+        else:
+            console.print(
+                "\n[green]✓ Tool executed successfully but returned no result[/green]"
+            )
+
+        # Show statistics if requested
+        if show_stats:
+            _display_tool_stats(tool_manager, tool_id, console)
+
+    except ToolCLIError as e:
+        console.print(f"\n[red]Error: {e}[/red]")
+        if show_stats:
+            _display_tool_stats(tool_manager, tool_id, console)
+        raise typer.Exit(1) from e
     except Exception as exc:  # pragma: no cover - unforeseen runtime issues
         log.error(
             "Failed to execute tool: %s", exc, exc_info=log.isEnabledFor(logging.DEBUG)
         )
+        console.print(f"\n[red]Error: {exc}[/red]")
+        if show_stats:
+            _display_tool_stats(tool_manager, tool_id, console)
         raise typer.Exit(1) from exc
+
+
+def _validate_tool_specs(
+    tool_specs_list: list[tuple[str, dict]], parallel: bool
+) -> None:
+    """Validate tool specifications and parallel execution constraints.
+
+    Args:
+        tool_specs_list: List of (tool_id, args_dict) tuples
+        parallel: Whether parallel execution is requested
+
+    Raises:
+        typer.Exit: If validation fails
+    """
+    if not tool_specs_list:
+        typer.echo("Error: No valid tool specifications provided", err=True)
+        raise typer.Exit(1)
+
+    if parallel and len(tool_specs_list) > 4:
+        typer.echo(
+            f"Error: Cannot run {len(tool_specs_list)} tools in parallel. "
+            "Maximum of 4 tools allowed in parallel mode.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+
+def _display_execution_plan(
+    tool_specs_list: list[tuple[str, dict]], parallel: bool
+) -> None:
+    """Display the execution plan to the user.
+
+    Args:
+        tool_specs_list: List of (tool_id, args_dict) tuples
+        parallel: Whether tools will run in parallel
+    """
+    console.print(
+        f"\n[bold]Execution Plan ({'parallel' if parallel else 'sequential'}):[/bold]"
+    )
+    for i, (tool_id, args) in enumerate(tool_specs_list, 1):
+        args_str = f" with args: {args}" if args else ""
+        console.print(f"  {i}. [bold]{tool_id}[/bold]{args_str}")
+
+
+def _display_tool_result(index: int, tool_id: str, success: bool, result: Any) -> int:
+    """Display the result of a single tool execution.
+
+    Args:
+        index: The 1-based index of the tool
+        tool_id: The ID of the tool
+        success: Whether the tool executed successfully
+        result: The result of the tool execution
+
+    Returns:
+        int: 1 if successful, 0 otherwise
+    """
+    status = "[green]✓[/green]" if success else "[red]✗[/red]"
+    console.print(f"\n{status} [bold]{index}. {tool_id}[/bold]")
+    console.print("-" * 50)
+
+    if isinstance(result, str):
+        console.print(result)
+    elif result is not None:
+        console.print(yaml.dump(result, default_flow_style=False, sort_keys=False))
+
+    return 1 if success else 0
+
+
+def _display_summary(success_count: int, total_tools: int, duration: float) -> None:
+    """Display the execution summary.
+
+    Args:
+        success_count: Number of tools that executed successfully
+        total_tools: Total number of tools executed
+        duration: Total execution time in seconds
+    """
+    console.print("\n" + "=" * 50)
+    console.print(
+        f"[bold]Summary:[/bold] {success_count} of {total_tools} tools executed successfully"
+    )
+    console.print(f"Total duration: {_format_duration(duration)}")
+
+
+@app.command()
+@safe_entrypoint("cli.tool.run_multiple")
+def run_multiple(
+    tool_specs: str = typer.Argument(
+        ...,
+        help=(
+            "Tool specifications in format 'tool1:arg1=val1,arg2=val2;tool2:arg1=val1'. "
+            "Separate tools with semicolons and arguments with commas."
+        ),
+    ),
+    sandbox: bool = typer.Option(
+        False, "--sandbox", "-s", help="Execute tools in sandbox environment"
+    ),
+    parallel: bool = typer.Option(
+        False,
+        "--parallel",
+        "-p",
+        help="Execute tools in parallel (max 4 tools at once)",
+    ),
+    show_stats: bool = typer.Option(
+        False, "--stats", help="Show execution statistics after running the tools"
+    ),
+    log_level: str = typer.Option(
+        "INFO",
+        "--log-level",
+        help="Logging level (e.g., DEBUG, INFO, WARNING, ERROR)",
+    ),
+) -> Any:
+    """Execute multiple tools in sequence or parallel.
+    
+    Examples:
+        # Run tools sequentially
+        locca tool run-multiple "tool1:arg1=val1;tool2:arg1=val1"
+        
+        # Run tools in parallel
+        locca tool run-multiple --parallel "tool1:arg1=val1;tool2:arg1=val1"
+        
+        # Run tools in a sandbox
+        locca tool run-multiple --sandbox "tool1:arg1=val1;tool2:arg1=val1"
+        
+        # Complex example with multiple tools and arguments
+        locca tool run-multiple \\
+            "tool1:arg1=val1,arg2=val2;\
+            tool2:arg1=val3;\
+            tool3:arg1=val4,arg2=val5"
+    """
+    tool_specs_list: list[tuple[str, dict[str, Any]]] = []
+    ctx = ToolCLIContext.create(log_level, sandbox=sandbox)
+    tool_manager = ctx.tool_manager
+
+    try:
+        # Parse and validate tool specifications
+        tool_specs_list = _parse_tool_specs(tool_specs)
+        _validate_tool_specs(tool_specs_list, parallel)
+
+        _display_execution_plan(tool_specs_list, parallel)
+
+        # Execute tools and measure duration
+        start_time = time.time()
+        results = asyncio.run(
+            _run_tools(
+                tool_manager=tool_manager,
+                tool_specs=tool_specs_list,
+                sandbox=sandbox,
+                parallel=parallel,
+            )
+        )
+        duration = time.time() - start_time
+
+        # Process and display results
+        console.print("\n[bold]Execution Results:[/bold]")
+        success_count = 0
+        for i, (tool_id, success, result) in enumerate(results, 1):
+            success_count += _display_tool_result(i, tool_id, success, result)
+
+        # Show summary and statistics
+        _display_summary(success_count, len(results), duration)
+
+        if show_stats:
+            console.print("\n[bold]Tool Statistics:[/bold]")
+            for tool_id, _ in tool_specs_list:
+                _display_tool_stats(tool_manager, tool_id, console)
+
+            # Show system-wide stats
+            _display_system_stats(tool_manager, console)
+
+        # Return non-zero exit code if any tool failed
+        if success_count < len(results):
+            # Show which tools failed
+            failed_tools = [tool_id for tool_id, success, _ in results if not success]
+            console.print(
+                f"\n[red]Error: The following tools failed: {', '.join(failed_tools)}[/red]"
+            )
+
+            for _, success, error in results:
+                if not success and error:
+                    console.print(f"\n[red]Error details: {error}[/red]")
+
+            return typer.Exit(1)
+
+    except Exception as e:
+        console.print(f"\n[red]Error: {e!s}[/red]")
+        if "tool_specs_list" in locals() and "ctx" in locals() and show_stats:
+            console.print("\n[bold]Tool Statistics:[/bold]")
+            for tool_id, _ in tool_specs_list:
+                _display_tool_stats(tool_manager, tool_id, console)
+        raise typer.Exit(1) from e
 
 
 @app.command()

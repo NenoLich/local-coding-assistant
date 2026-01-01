@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import typer
-from typer.testing import CliRunner
 import yaml
+from typer.testing import CliRunner
 
 from local_coding_assistant.cli.commands.provider import (
     _get_config_path,
@@ -32,13 +32,12 @@ class TestProviderConfigHelpers:
         """Test getting default config path."""
         # Create a test env manager with the test path manager
         env_manager = EnvManager.create(
-            path_manager=test_configs["path_manager"],
-            load_env=False
+            path_manager=test_configs["path_manager"], load_env=False
         )
-        
+
         # Get the config path using the test environment
         config_path = _get_config_path(env_manager=env_manager)
-        
+
         # The path should be in the test config directory
         expected = test_configs["config_dir"] / "providers.local.yaml"
         assert str(config_path) == str(expected)
@@ -52,13 +51,12 @@ class TestProviderConfigHelpers:
         """Test getting config path in dev mode."""
         # Create a test env manager with the test path manager
         env_manager = EnvManager.create(
-            path_manager=test_configs["path_manager"],
-            load_env=False
+            path_manager=test_configs["path_manager"], load_env=False
         )
-        
+
         # Get the config path in dev mode
         config_path = _get_config_path(env_manager=env_manager)
-        
+
         # The path should be in the test config directory
         expected = test_configs["config_dir"] / "providers.local.yaml"
         assert str(config_path) == str(expected)
@@ -68,7 +66,7 @@ class TestProviderConfigHelpers:
         # Create an invalid YAML file in the test config directory
         config_path = test_configs["config_dir"] / "invalid_config.yaml"
         config_path.write_text("invalid: yaml: file: [")
-        
+
         # Test that loading the invalid YAML raises an error
         with pytest.raises(yaml.YAMLError):
             _load_config(config_path)
@@ -107,13 +105,13 @@ class TestProviderAddCommand:
         self.test_configs = test_configs
         self.config_path = test_configs["config_dir"] / "providers.local.yaml"
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         # Create a test environment with API key
         self.original_env = os.environ.copy()
         os.environ["TEST_API_KEY"] = "env_test_key"
-        
+
         yield
-        
+
         # Cleanup
         os.environ.clear()
         os.environ.update(self.original_env)
@@ -147,11 +145,11 @@ class TestProviderAddCommand:
         # Setup mocks
         mock_llm = MagicMock()
         mock_bootstrap.return_value = {"llm": mock_llm}
-        
+
         mock_get_config_path.return_value = self.config_path
         mock_extract_value.side_effect = self.extract_side_effect
         mock_verify.return_value = True
-        
+
         # Ensure the config directory exists
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -161,8 +159,10 @@ class TestProviderAddCommand:
             [
                 "add",
                 "test_provider",
-                "--base-url", "https://api.test.com",
-                "--api-key-env", "TEST_API_KEY",
+                "--base-url",
+                "https://api.test.com",
+                "--api-key-env",
+                "TEST_API_KEY",
                 "model1",
                 "model2",
             ],
@@ -174,12 +174,12 @@ class TestProviderAddCommand:
         mock_save_config.assert_called_once()
         mock_verify.assert_called_once()
         mock_echo.assert_called()
-        
+
         # Verify _save_config was called with the correct arguments
         args, kwargs = mock_save_config.call_args
         assert kwargs["config_path"] == self.config_path
         assert kwargs["provider_name"] == "test_provider"
-        
+
         # Verify the provider config
         provider_config = kwargs["config"]["providers"]["test_provider"]
         assert provider_config["base_url"] == "https://api.test.com"
@@ -204,24 +204,31 @@ class TestProviderAddCommand:
         mock_llm = MagicMock()
         mock_llm.reload_providers = MagicMock()
         mock_bootstrap.return_value = {"llm": mock_llm}
-        
+
         mock_get_config_path.return_value = self.config_path
         mock_extract_value.side_effect = self.extract_side_effect
         mock_verify.return_value = True
-        
+
         # Call the function via CLI with all options
         result = runner.invoke(
             app,
             [
                 "add",
                 "test_provider",
-                "--base-url", "https://api.test.com",
-                "--api-key", "test_key",
-                "--api-key-env", "TEST_API_KEY",
-                "--driver", "custom_driver",
-                "--health-check-endpoint", "/health",
-                "--log-level", "DEBUG",
-                "model1", "model2"
+                "--base-url",
+                "https://api.test.com",
+                "--api-key",
+                "test_key",
+                "--api-key-env",
+                "TEST_API_KEY",
+                "--driver",
+                "custom_driver",
+                "--health-check-endpoint",
+                "/health",
+                "--log-level",
+                "DEBUG",
+                "model1",
+                "model2",
             ],
         )
 
@@ -231,12 +238,12 @@ class TestProviderAddCommand:
         mock_save_config.assert_called_once()
         mock_verify.assert_called_once()
         mock_echo.assert_called()
-        
+
         # Verify _save_config was called with correct parameters
         args, kwargs = mock_save_config.call_args
         assert kwargs["config_path"] == self.config_path
         assert kwargs["provider_name"] == "test_provider"
-        
+
         # Verify the config contains all the provided options
         config = kwargs["config"]["providers"]["test_provider"]
         assert config["base_url"] == "https://api.test.com"
@@ -266,21 +273,24 @@ class TestProviderAddCommand:
         mock_llm = MagicMock()
         mock_llm.reload_providers = MagicMock()
         mock_bootstrap.return_value = {"llm": mock_llm}
-        
+
         mock_get_config_path.return_value = self.config_path
         mock_extract_value.side_effect = self.extract_side_effect
         mock_verify.return_value = True
-        
+
         # Call the function via CLI with health check endpoint
         result = runner.invoke(
             app,
             [
                 "add",
                 "test_provider",
-                "--base-url", "https://api.test.com",
-                "--api-key-env", "TEST_API_KEY",
-                "--health-check-endpoint", "/health",
-                "model1"
+                "--base-url",
+                "https://api.test.com",
+                "--api-key-env",
+                "TEST_API_KEY",
+                "--health-check-endpoint",
+                "/health",
+                "model1",
             ],
         )
 
@@ -395,13 +405,13 @@ class TestProviderRemoveCommand:
     @patch("local_coding_assistant.cli.commands.provider._get_config_path")
     @patch("local_coding_assistant.cli.commands.provider._verify_provider_health")
     def test_remove_existing_provider(
-            self,
-            mock_verify,
-            mock_get_config_path,
-            mock_load_config,
-            mock_save_config,
-            mock_echo,
-            mock_bootstrap,
+        self,
+        mock_verify,
+        mock_get_config_path,
+        mock_load_config,
+        mock_save_config,
+        mock_echo,
+        mock_bootstrap,
     ):
         """Test removing an existing provider."""
         # Setup mocks
@@ -447,12 +457,15 @@ class TestProviderRemoveCommand:
         assert result.exit_code == 0
 
         # Verify the provider was removed from config
-        updated_config = mock_save_config.call_args[0][1]  # Second argument to _save_config
+        updated_config = mock_save_config.call_args[0][
+            1
+        ]  # Second argument to _save_config
         assert "test_provider" not in updated_config.get("providers", {})
         assert "another_provider" in updated_config.get("providers", {})
 
         # Verify the success message was printed
         mock_echo.assert_any_call("✅ Successfully removed provider 'test_provider'")
+
 
 class TestProviderValidateCommand:
     """Test provider validate command."""

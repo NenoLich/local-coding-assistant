@@ -2,7 +2,8 @@ tools:
 - category: math
   description: Perform basic arithmetic operations (add, subtract, multiply, divide)
   id: math_operations
-  path: '@module\external_tool_example.py'
+  path: '@tools\external_tools\external_tool_example.py'
+  tool_class: MathOperationsTool
   permissions:
   - local
   tags:
@@ -21,6 +22,15 @@ tools:
   enabled: false
   id: disabled_tool
   module: example.tool
+  tool_class: DisabledTool
   name: Disabled Tool
+  source: external
+- category: utility
+  description: This is unavailable
+  enabled: true
+  id: unavailable_tool
+  module: example.tool
+  tool_class: UnavailableTool
+  name: Unavailable Tool
   source: external
 

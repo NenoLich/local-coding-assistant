@@ -3,7 +3,6 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 import yaml
 
 from local_coding_assistant.cli.main import app
@@ -11,7 +10,6 @@ from local_coding_assistant.cli.main import app
 
 class TestProviderCommands:
     """Test cases for provider management CLI commands."""
-
 
     def test_provider_add_basic(self, cli_runner, test_configs):
         """Test adding a basic provider - focus on config file creation."""
@@ -35,10 +33,7 @@ class TestProviderCommands:
         )
 
         # Check if config file was created (core functionality)
-        config_path = (
-            test_configs["config_dir"]
-            / "providers.local.yaml"
-        )
+        config_path = test_configs["config_dir"] / "providers.local.yaml"
         if config_path.exists():
             # Core functionality works - config file was created
             with open(config_path) as f:
@@ -74,10 +69,7 @@ class TestProviderCommands:
         )
 
         # Check if config file was created (core functionality)
-        config_path = (
-            test_configs["config_dir"]
-            / "providers.local.yaml"
-        )
+        config_path = test_configs["config_dir"] / "providers.local.yaml"
         if config_path.exists():
             with open(config_path) as f:
                 config = yaml.safe_load(f)
@@ -104,10 +96,7 @@ class TestProviderCommands:
         )
 
         # Check if config file was created (core functionality)
-        config_path = (
-            test_configs["config_dir"]
-            / "providers.local.yaml"
-        )
+        config_path = test_configs["config_dir"] / "providers.local.yaml"
         if config_path.exists():
             with open(config_path) as f:
                 config = yaml.safe_load(f)
@@ -364,7 +353,6 @@ class TestProviderCommands:
             app, ["provider", "validate", "--config-file", str(config_file)]
         )
 
-
         assert result.exit_code == 0, f"Command failed with output: {result.output}"
         assert "Validating provider configuration..." in result.output
         assert "Found 2 provider(s):" in result.output
@@ -415,7 +403,6 @@ class TestProviderCommands:
         result = cli_runner.invoke(
             app, ["provider", "validate", "--config-file", str(config_file)]
         )
-
 
         # The command should fail with exit code 1 when required fields are missing
         assert result.exit_code == 1, (

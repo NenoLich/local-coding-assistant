@@ -29,7 +29,6 @@ from local_coding_assistant.providers.base import BaseProvider
 class TestProviderCLIIntegration:
     """Test CLI provider management commands integration."""
 
-
     @pytest.fixture
     def sample_provider_config(self):
         """Sample provider configuration for testing."""
@@ -208,33 +207,42 @@ class TestProviderCLIIntegration:
         }
         _save_config(config_file, test_config)
 
-        with patch("pathlib.Path.home") as mock_home, \
-             patch("local_coding_assistant.cli.commands.provider.bootstrap") as mock_bootstrap, \
-             patch("local_coding_assistant.cli.commands.provider.typer.echo") as mock_echo:
-            
+        with (
+            patch("pathlib.Path.home") as mock_home,
+            patch(
+                "local_coding_assistant.cli.commands.provider.bootstrap"
+            ) as mock_bootstrap,
+            patch(
+                "local_coding_assistant.cli.commands.provider.typer.echo"
+            ) as mock_echo,
+        ):
             # Mock home directory
             mock_home.return_value = test_configs["config_dir"].parent.parent
-            
+
             # Create a mock LLM manager with a side effect for get_provider
             mock_llm = MagicMock()
             mock_llm.reload_providers = MagicMock()
-            
+
             # Simulate that after reload, the provider is no longer available
             def get_provider_side_effect(name):
                 if name == "openai":
                     raise ValueError("Provider 'openai' not found")
                 return MagicMock()
-                
+
             mock_llm.get_provider.side_effect = get_provider_side_effect
-            
+
             # Set up bootstrap to return our mock context
             mock_ctx = {"llm": mock_llm}
             mock_bootstrap.return_value = mock_ctx
 
             # Mock the _extract_value function to return the input directly
-            with patch('local_coding_assistant.cli.commands.provider._extract_value') as mock_extract:
-                mock_extract.side_effect = lambda x, default=None: x if x is not None else default
-                
+            with patch(
+                "local_coding_assistant.cli.commands.provider._extract_value"
+            ) as mock_extract:
+                mock_extract.side_effect = (
+                    lambda x, default=None: x if x is not None else default
+                )
+
                 # Call the remove function
                 remove("openai", config_file=str(config_file))
 
@@ -248,10 +256,8 @@ class TestProviderCLIIntegration:
 
             # Verify success message was printed
             mock_echo.assert_any_call("Removing provider: openai")
-            mock_echo.assert_any_call(
-                f"Removed provider 'openai' from {config_file}"
-            )
-            
+            mock_echo.assert_any_call(f"Removed provider 'openai' from {config_file}")
+
             # Verify the provider is no longer in the provider manager
             with pytest.raises(ValueError, match="Provider 'openai' not found"):
                 mock_llm.get_provider("openai")
@@ -517,10 +523,10 @@ class TestProviderPythonModuleIntegration:
         # Create a custom provider module in the test config directory
         modules_dir = test_configs["modules_dir"]
         provider_file = modules_dir / "custom_provider.py"
-        
+
         # Ensure the modules directory exists
         modules_dir.mkdir(parents=True, exist_ok=True)
-        
+
         provider_code = '''
 from local_coding_assistant.providers.base import BaseProvider
 
@@ -546,10 +552,10 @@ class CustomProvider(BaseProvider):
         with open(provider_file, "w") as f:
             f.write(provider_code)
 
-
         try:
             # Use importlib to load the module from the specific path
             import importlib.util
+
             spec = importlib.util.spec_from_file_location(
                 "custom_provider", provider_file
             )
@@ -574,25 +580,25 @@ class CustomProvider(BaseProvider):
         finally:
             # Clean up
             import sys
+
             if str(modules_dir) in sys.path:
                 sys.path.remove(str(modules_dir))
             # Remove from sys.modules if it exists
             if "custom_provider" in sys.modules:
                 del sys.modules["custom_provider"]
 
-
     """Test provider manager integration with LLM manager and CLI."""
 
     def test_provider_manager_with_llm_manager_integration(self, mock_provider_manager):
         """Test provider manager integration with LLM manager."""
         from local_coding_assistant.config import ConfigManager
-        
+
         # Create a mock config manager
         mock_config = MagicMock(spec=ConfigManager)
         mock_config.global_config = {
             "llm": {
                 "default_provider": "test_provider",
-                "providers": {"test_provider": {"type": "test_provider"}}
+                "providers": {"test_provider": {"type": "test_provider"}},
             }
         }
         llm_manager = LLMManager(
@@ -606,29 +612,23 @@ class CustomProvider(BaseProvider):
         assert "google" in providers
 
         # Test provider sources
-        assert (
-            llm_manager.provider_manager.get_provider_source("openai")
-            == "builtin"
-        )
-        assert (
-            llm_manager.provider_manager.get_provider_source("google")
-            == "global"
-        )
+        assert llm_manager.provider_manager.get_provider_source("openai") == "builtin"
+        assert llm_manager.provider_manager.get_provider_source("google") == "global"
 
     @pytest.mark.asyncio
     async def test_provider_status_integration(self, mock_provider_manager):
         """Test provider status integration with health checks."""
         from local_coding_assistant.config import ConfigManager
-        
+
         # Create a mock config manager
         mock_config = MagicMock(spec=ConfigManager)
         mock_config.global_config = {
             "llm": {
                 "default_provider": "test_provider",
-                "providers": {"test_provider": {"type": "test_provider"}}
+                "providers": {"test_provider": {"type": "test_provider"}},
             }
         }
-        
+
         # Create LLM manager with mock config and provider manager
         llm_manager = LLMManager(
             config_manager=mock_config,
@@ -803,7 +803,6 @@ class TestProviderEndToEndIntegration:
                     }
                 },
             ]
-
 
             for i, config in enumerate(test_configs):
                 test_config_file = config_dir / f"test_config_{i}.yaml"

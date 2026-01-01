@@ -7,15 +7,15 @@ providers:
     models:
       qwen/qwen3-coder:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty"]
-      qwen/qwen3-235b-a22b:free:
+      xiaomi/mimo-v2-flash:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format"]
-      minimax/minimax-m2:free:
+      nvidia/nemotron-3-nano-30b-a3b:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p"]
-      meta-llama/llama-3.3-70b-instruct:free:
+      mistralai/devstral-2512:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty" ]
       z-ai/glm-4.5-air:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p" ]
-      openrouter/polaris-alpha:
+      kwaipilot/kat-coder-pro:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "response_format", "structured outputs", "stream"]
   google_gemini:
     driver: "openai_chat"

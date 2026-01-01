@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
 from types import MethodType
-from typing import Callable
 from unittest.mock import MagicMock
 
 from pydantic import BaseModel
@@ -144,8 +144,8 @@ def build_manager(
 __all__ = [
     "AsyncTestTool",
     "FailingTestTool",
-    "StubToolConfig",
     "StreamingTestTool",
+    "StubToolConfig",
     "SyncTestTool",
     "build_manager",
     "make_tool_info",

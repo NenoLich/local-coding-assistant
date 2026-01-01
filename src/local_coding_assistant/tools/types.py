@@ -1,5 +1,6 @@
 """Shared data structures and enums for tool management."""
 
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -13,6 +14,7 @@ class ToolSource(str, Enum):
     BUILTIN = "builtin"
     EXTERNAL = "external"
     MCP = "mcp"
+    SANDBOX = "sandbox"
 
 
 class ToolPermission(str, Enum):
@@ -39,6 +41,7 @@ class ToolCategory(str, Enum):
     CODING = "coding"
     UTILITY = "utility"
     AI = "ai"
+    PTC = "ptc"
     OTHER = "other"
 
 
@@ -55,6 +58,7 @@ class ToolTag(str, Enum):
     VERSION_CONTROL = "version_control"
     SECURITY = "security"
     UTILITY = "utility"
+    FILESYSTEM = "filesystem"
 
 
 @dataclass
@@ -100,6 +104,30 @@ class ToolInfo:
         default_factory=lambda: {"type": "object", "properties": {}, "required": []}
     )
 
+    def __str__(self) -> str:
+        """Return a JSON-formatted string representation of the ToolInfo with all fields.
+
+        Returns:
+            A JSON-formatted string showing all fields and their values with proper indentation.
+        """
+        # Create a clean dictionary of the object's attributes
+        data = {}
+        for field_name, field_value in self.__dict__.items():
+            # Convert enums to their values for better readability
+            if hasattr(field_value, "value"):
+                data[field_name] = field_value.value
+            elif isinstance(field_value, (list, tuple)):
+                # Handle lists of enums
+                data[field_name] = [
+                    item.value if hasattr(item, "value") else item
+                    for item in field_value
+                ]
+            else:
+                data[field_name] = field_value
+
+        # Convert to nicely formatted JSON with 2-space indentation
+        return f"{self.__class__.__name__}:\n{json.dumps(data, indent=2, default=str)}"
+
     def __post_init__(self):
         """Convert string enums to proper enum types."""
         if self.category is not None and isinstance(self.category, str):
@@ -122,6 +150,7 @@ class ToolExecutionRequest(BaseModel):
     """
 
     tool_name: str
+    tool_type: str = "function"  # "function" or "code"
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -134,13 +163,34 @@ class ToolExecutionResponse(BaseModel):
         result: Output from the tool (if successful)
         error_message: Error message (if execution failed)
         execution_time_ms: Time taken to execute the tool in milliseconds
+        format: Format of the response (e.g., 'text', 'markdown', 'json')
+        metadata: Additional metadata about the response
+        is_final: Whether this is the final response
     """
 
     tool_name: str
     success: bool
-    result: dict[str, Any] | None = None
+    result: Any | None = None
     error_message: str | None = None
     execution_time_ms: float | None = None
+    stdout: str | None = None
+    stderr: str | None = None
+    files_created: list[str] | None = None
+    files_modified: list[str] | None = None
+    format: str = "text"
+    metadata: dict[str, Any] = {}
+    is_final: bool = False
+
+    def dried_out(self) -> dict[str, Any]:
+        output = {}
+        for field_name, field_value in self.__dict__.items():
+            if (
+                field_name
+                not in ["tool_name", "success", "format", "metadata", "is_final"]
+                and field_value
+            ):
+                output[field_name] = field_value
+        return output
 
 
 @dataclass

@@ -191,6 +191,23 @@ class PathManager:
                 )
             return Path(site_packages) / "local_coding_assistant" / "modules"
 
+    def get_tools_dir(self) -> Path:
+        """Get the tools directory for the current environment."""
+        if self.is_testing:
+            return self._project_root / "tests" / "tools"
+
+        return self._project_root / "src" / "local_coding_assistant" / "tools"
+
+    def get_sandbox_guest_dir(self) -> Path:
+        """Get the sandbox guest directory path.
+
+        Returns:
+            Path to the sandbox's guest directory where the agent code is mounted in the container.
+        """
+        return (
+            self._project_root / "src" / "local_coding_assistant" / "sandbox" / "guest"
+        )
+
     def resolve_path(
         self,
         path: str | Path,
@@ -243,6 +260,7 @@ class PathManager:
             "log": self.get_log_dir,
             "module": self.get_module_dir,
             "project": lambda: self._project_root,
+            "tools": self.get_tools_dir,
         }
 
         # Split on the first path separator

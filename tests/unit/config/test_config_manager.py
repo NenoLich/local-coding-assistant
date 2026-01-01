@@ -69,41 +69,41 @@ class TestConfigManager:
 
         assert resolved.llm.temperature == 0.5  # Session override applied
 
-    def test_resolve_with_call_overrides(self):
+    def test_get_config_with_call_overrides(self):
         """Test resolving configuration with call overrides."""
         manager = ConfigManager()
         manager.load_global_config()
 
         call_overrides = {"llm.temperature": 0.3}
-        resolved = manager.resolve(overrides=call_overrides)
+        resolved = manager.get_config(overrides=call_overrides)
 
         assert resolved.llm.temperature == 0.3  # Call override applied
 
-    def test_resolve_with_provider_override(self):
+    def test_get_config_with_provider_override(self):
         """Test resolving configuration with provider override."""
         manager = ConfigManager()
         manager.load_global_config()
 
-        resolved = manager.resolve(provider="anthropic")
+        resolved = manager.get_config(provider="anthropic")
 
         # Provider override is applied via ConfigManager but not stored in LLMConfig
         # The LLMConfig doesn't have provider/model_name fields, so we test that
         # the resolve method completes without error and temperature is preserved
         assert resolved.llm.temperature == 0.7  # Should keep global value
 
-    def test_resolve_with_model_override(self):
+    def test_get_config_with_model_override(self):
         """Test resolving configuration with model override."""
         manager = ConfigManager()
         manager.load_global_config()
 
-        resolved = manager.resolve(model_name="gpt-4")
+        resolved = manager.get_config(model_name="gpt-4")
 
         # Model override is applied via ConfigManager but not stored in LLMConfig
         # The LLMConfig doesn't have provider/model_name fields, so we test that
         # the resolve method completes without error and temperature is preserved
         assert resolved.llm.temperature == 0.7  # Should keep global value
 
-    def test_resolve_priority_order(self):
+    def test_get_config_priority_order(self):
         """Test that call overrides take priority over session overrides."""
         manager = ConfigManager()
         manager.load_global_config()
@@ -114,7 +114,7 @@ class TestConfigManager:
 
         # Call override should win
         call_overrides = {"llm.temperature": 0.3}
-        resolved = manager.resolve(overrides=call_overrides)
+        resolved = manager.get_config(overrides=call_overrides)
 
         assert resolved.llm.temperature == 0.3  # Call override wins
 
@@ -130,7 +130,6 @@ class TestConfigManager:
         resolved = manager.resolve()
 
         assert resolved.llm.temperature == 0.8  # Session override wins
-
 
     def test_config_manager_properties(self):
         """Test ConfigManager property accessors."""
@@ -164,7 +163,7 @@ class TestConfigManager:
 
         # Test nested override
         overrides = {"runtime.enable_logging": False}
-        resolved = manager.resolve(overrides=overrides)
+        resolved = manager.get_config(overrides=overrides)
 
         assert resolved.runtime.enable_logging is False
         assert resolved.llm.temperature == 0.7  # Should keep global value

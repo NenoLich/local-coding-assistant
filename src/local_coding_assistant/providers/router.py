@@ -367,7 +367,7 @@ class ProviderRouter:
 
         # Get agent config
         resolved_config = self.config_manager.resolve(
-            overrides=request.parameters.model_dump() if request.parameters else {}
+            call_overrides=request.parameters.model_dump() if request.parameters else {}
         )
         agent_config = resolved_config.agent
 
@@ -508,10 +508,12 @@ class ProviderRouter:
 
         # Try to get role-specific policy from config
         try:
-            if hasattr(self.config_manager, "get_agent_config"):
-                agent_config = self.config_manager.get_agent_config(role)
-                if hasattr(agent_config, "llm_policy"):
-                    return agent_config.llm_policy
+            if hasattr(self.config_manager, "global_config"):
+                models = self.config_manager.global_config.agents.get_policy_by_role(
+                    role
+                )
+                if models:
+                    return {"models": models}
         except Exception as e:
             logger.warning(f"Error getting policy for role '{role}': {e}")
 

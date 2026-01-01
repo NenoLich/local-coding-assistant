@@ -1,18 +1,26 @@
 import asyncio
 import json
-
+import time
 from collections.abc import AsyncIterator
-
-from typing import Any, Optional
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
+import yaml
 from typer.testing import CliRunner
 
 from local_coding_assistant.agent.agent_loop import AgentLoop
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse
-
+from local_coding_assistant.agent.llm_manager import (
+    LLMManager,
+    LLMRequest,
+    LLMResponse,
+    ToolCall,
+)
+from local_coding_assistant.cli.commands import sandbox as sandbox_cli
+from local_coding_assistant.config.path_manager import PathManager
+from local_coding_assistant.config.schemas import AppConfig, SandboxConfig
 from local_coding_assistant.core.bootstrap import bootstrap
 from local_coding_assistant.core.protocols import IConfigManager
 from local_coding_assistant.providers import (
@@ -23,17 +31,52 @@ from local_coding_assistant.providers import (
     ProviderRouter,
 )
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
-
-from pathlib import Path
-import yaml
-
-from local_coding_assistant.config.path_manager import PathManager
+from local_coding_assistant.tools.types import (
+    ToolExecutionRequest,
+    ToolExecutionResponse,
+    ToolInfo,
+)
 
 
 @pytest.fixture
 def path_manager_integration(tmp_path: Path) -> PathManager:
     """PathManager configured for integration tests with temporary project root."""
     return PathManager(is_testing=True, project_root=tmp_path)
+
+
+@pytest.fixture
+def sandbox_config_manager(tmp_path: Path):
+    """Provide a stub config manager wired with a PathManager and sandbox config."""
+
+    project_root = tmp_path / "sandbox-project"
+    project_root.mkdir(parents=True, exist_ok=True)
+
+    path_manager = PathManager(is_testing=True, project_root=project_root)
+    sandbox_config = SandboxConfig(
+        enabled=True,
+        image="integration-sandbox:latest",
+        memory_limit="256m",
+        cpu_limit=0.25,
+        network_enabled=False,
+        allowed_imports=["json"],
+        blocked_patterns=[r"eval"],
+        blocked_shell_commands=["rm"],
+        session_timeout=123,
+        max_sessions=3,
+    )
+    app_config = AppConfig(sandbox=sandbox_config)
+
+    class StubConfigManager:
+        def __init__(self, config: AppConfig, path_manager: PathManager, project_root: Path):
+            self._global_config = config
+            self.path_manager = path_manager
+            self.project_root = project_root
+
+        @property
+        def global_config(self) -> AppConfig:
+            return self._global_config
+
+    return StubConfigManager(app_config, path_manager, project_root)
 
 
 class MockStreamingLLMManager(LLMManager):
@@ -71,15 +114,7 @@ class MockStreamingLLMManager(LLMManager):
 
         self.call_count += 1
 
-        # Create proper LLMResponse object instead of MagicMock
-        tool_calls_data = response_data.get("tool_calls", [])
-        # Ensure tool_calls is either a list of dicts or None
-        if isinstance(tool_calls_data, list) and all(
-            isinstance(tc, dict) for tc in tool_calls_data
-        ):
-            tool_calls = tool_calls_data
-        else:
-            tool_calls = None
+        tool_calls = self._parse_tool_calls(response_data.get("tool_calls", []))
 
         return LLMResponse(
             content=str(response_data.get("content", "")),
@@ -115,22 +150,58 @@ class MockStreamingLLMManager(LLMManager):
                 yield current_chunk.strip()
                 await asyncio.sleep(0.01)  # Simulate streaming delay
 
-        # Yield tool calls if present
-        tool_calls_data = response_data.get("tool_calls", [])
-        # Ensure tool_calls is either a list of dicts or None
-        if isinstance(tool_calls_data, list) and all(
-            isinstance(tc, dict) for tc in tool_calls_data
-        ):
-            tool_calls = tool_calls_data
-        else:
-            tool_calls = None
+        tool_calls = self._parse_tool_calls(response_data.get("tool_calls", []))
 
         if tool_calls:
-            yield f"\n\nTool calls: {json.dumps(tool_calls)}"
+            serializable_calls = [
+                tc.model_dump() if hasattr(tc, "model_dump") else tc for tc in tool_calls
+            ]
+            yield f"\n\nTool calls: {json.dumps(serializable_calls)}"
 
     async def ainvoke(self, request: LLMRequest) -> LLMResponse:
         """Async invoke (alias for generate)."""
         return await self.generate(request)
+
+    def _parse_tool_calls(
+        self, tool_calls_data: list[dict[str, Any]] | None
+    ) -> list[ToolCall] | None:
+        """Normalize raw tool call payloads into ToolCall objects."""
+        if not tool_calls_data:
+            return None
+
+        parsed_calls: list[ToolCall] = []
+        for index, tool_call in enumerate(tool_calls_data):
+            if isinstance(tool_call, ToolCall):
+                parsed_calls.append(tool_call)
+                continue
+
+            function_payload = tool_call.get("function", {}) if isinstance(
+                tool_call, dict
+            ) else {}
+            name = function_payload.get("name") or tool_call.get("name") or f"tool_{index}"
+            raw_arguments = function_payload.get("arguments") or tool_call.get(
+                "arguments", {}
+            )
+
+            if isinstance(raw_arguments, str):
+                try:
+                    arguments = json.loads(raw_arguments)
+                except json.JSONDecodeError:
+                    arguments = {}
+            elif isinstance(raw_arguments, dict):
+                arguments = raw_arguments
+            else:
+                arguments = {}
+
+            parsed_calls.append(
+                ToolCall(
+                    id=tool_call.get("id") if isinstance(tool_call, dict) else None,
+                    name=name,
+                    arguments=arguments,
+                )
+            )
+
+        return parsed_calls
 
 
 class MockCalculatorTool:
@@ -195,54 +266,47 @@ class MockFinalAnswerTool:
 class MockToolManager:
     """Mock tool manager with calculator, weather, and final answer tools."""
 
-    def __init__(self, config_manager: Optional[IConfigManager] = None):
+    def __init__(self, config_manager: IConfigManager | None = None):
         # Use TestConfigManager if no config_manager is provided
         if config_manager is None:
             config_manager = TestConfigManager()
-        
+
         # Store config manager
         self.config_manager = config_manager
-        
+
         # Create tool instances
         self.calculator = MockCalculatorTool()
         self.weather = MockWeatherTool()
         self.final_answer = MockFinalAnswerTool()
-        
+
         # Store tools in a list for iteration
         self.tools = [self.calculator, self.weather, self.final_answer]
-        
+
         # Create a mapping of tool names to tool instances
         self._tools_map = {tool.name: tool for tool in self.tools}
-        
+        self._tool_info_map = {tool.name: self._build_tool_info(tool) for tool in self.tools}
+
     def __iter__(self):
         """Iterate over all registered tools."""
         return iter(self.tools)
-        
+
     def list_tools(self, available_only: bool = False, **kwargs):
-        """List all registered tool names.
-        
-        Args:
-            available_only: If True, only return tools that are currently available.
-                           In this mock implementation, all tools are considered available.
-            **kwargs: Additional keyword arguments for compatibility.
-            
-        Returns:
-            List of tool names.
-        """
-        # In the mock implementation, we don't track tool availability,
-        # so we just return all tool names regardless of the available_only flag
-        return list(self._tools_map.keys())
-        
+        """Return ToolInfo metadata consistent with real ToolManager."""
+        tools = list(self._tool_info_map.values())
+        if available_only:
+            tools = [tool for tool in tools if tool.available]
+        return tools
+
     def get_tool(self, tool_name: str):
         """Get a tool by name."""
         return self._tools_map.get(tool_name)
-        
+
     def register_tool(self, tool):
         """Register a new tool."""
         self.tools.append(tool)
         self._tools_map[tool.name] = tool
+        self._tool_info_map[tool.name] = self._build_tool_info(tool)
         return tool
-
 
     def run_tool(
         self,
@@ -251,7 +315,7 @@ class MockToolManager:
         **kwargs: Any,
     ) -> Any:
         """Run a tool by name.
-        
+
         Args:
             tool_name: Name of the tool to run
             parameters: Parameters to pass to the tool
@@ -268,6 +332,84 @@ class MockToolManager:
             return self.final_answer.run(answer)
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
+
+    def execute(self, request: ToolExecutionRequest) -> ToolExecutionResponse:
+        """Sync execution API used by ToolManager."""
+        start = time.perf_counter()
+        result = self.run_tool(request.tool_name, request.payload or {})
+        return self._build_execution_response(request.tool_name, result, start)
+
+    async def execute_async(
+        self, request: ToolExecutionRequest
+    ) -> ToolExecutionResponse:
+        await asyncio.sleep(0)
+        return self.execute(request)
+
+    def _build_tool_info(self, tool: Any) -> ToolInfo:
+        """Construct ToolInfo for mock tools."""
+        parameter_templates = {
+            "calculator": {
+                "type": "object",
+                "properties": {
+                    "expression": {
+                        "type": "string",
+                        "description": "Math expression to evaluate",
+                    }
+                },
+                "required": ["expression"],
+            },
+            "weather": {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "Location to fetch weather for",
+                    }
+                },
+                "required": ["location"],
+            },
+            "final_answer": {
+                "type": "object",
+                "properties": {
+                    "answer": {
+                        "type": "string",
+                        "description": "Final response to share",
+                    }
+                },
+                "required": ["answer"],
+            },
+        }
+
+        return ToolInfo(
+            name=tool.name,
+            description=tool.description,
+            available=True,
+            parameters=parameter_templates.get(
+                tool.name, {"type": "object", "properties": {}, "required": []}
+            ),
+        )
+
+    def _build_execution_response(
+        self, tool_name: str, result: dict[str, Any], start_time: float
+    ) -> ToolExecutionResponse:
+        elapsed = (time.perf_counter() - start_time) * 1000
+        success = result.get("success", True)
+
+        if tool_name == "final_answer":
+            return ToolExecutionResponse(
+                tool_name=tool_name,
+                success=success,
+                result=result.get("answer"),
+                execution_time_ms=elapsed,
+                is_final=True,
+            )
+
+        return ToolExecutionResponse(
+            tool_name=tool_name,
+            success=success,
+            result=result,
+            execution_time_ms=elapsed,
+        )
 
 
 # Integration test fixtures
@@ -314,32 +456,35 @@ def mock_llm_with_tools():
             ],
         },
     ]
-    
+
     # Create a test config manager
     config_manager = TestConfigManager()
-    
+
     # Create a custom MockStreamingLLMManager that validates the model
     class ValidatingMockStreamingLLMManager(MockStreamingLLMManager):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
-            self.valid_models = {'gpt-4', 'gpt-3.5-turbo'}  # Add other valid models as needed
-        
+            self.valid_models = {
+                "gpt-4",
+                "gpt-3.5-turbo",
+            }  # Add other valid models as needed
+
         async def generate(self, *args, **kwargs):
-            model = kwargs.get('model')
-            if model == 'invalid-model':
+            model = kwargs.get("model")
+            if model == "invalid-model":
                 raise ValueError("Model 'invalid-model' not found")
             if model not in self.valid_models:
-                raise ValueError(f"Model '{model}' not found. Available models: {', '.join(self.valid_models)}")
+                raise ValueError(
+                    f"Model '{model}' not found. Available models: {', '.join(self.valid_models)}"
+                )
             return await super().generate(*args, **kwargs)
-        
+
         # Alias generate to chat_completion for backward compatibility
         chat_completion = generate
-    
+
     # Return our validating mock LLM manager
     return ValidatingMockStreamingLLMManager(
-        responses=responses, 
-        config_manager=config_manager, 
-        provider_manager=None
+        responses=responses, config_manager=config_manager, provider_manager=None
     )
 
 
@@ -348,36 +493,47 @@ def tool_manager():
     """Create tool manager with calculator, weather, and final answer tools."""
     # Create a TestConfigManager instance
     config_manager = TestConfigManager()
-    
+
     # Create a MockToolManager with the config manager
     tool_manager = MockToolManager(config_manager=config_manager)
-    
+
     # Verify the tools are properly registered
-    assert hasattr(tool_manager, 'final_answer'), "final_answer tool not registered in MockToolManager"
-    assert hasattr(tool_manager, 'calculator'), "calculator tool not registered in MockToolManager"
-    assert hasattr(tool_manager, 'weather'), "weather tool not registered in MockToolManager"
-    
+    assert hasattr(tool_manager, "final_answer"), (
+        "final_answer tool not registered in MockToolManager"
+    )
+    assert hasattr(tool_manager, "calculator"), (
+        "calculator tool not registered in MockToolManager"
+    )
+    assert hasattr(tool_manager, "weather"), (
+        "weather tool not registered in MockToolManager"
+    )
+
     # Verify tools are registered in the tool manager
-    registered_tools = list(tool_manager.list_tools())
-    tool_names = {tool.name for tool in tool_manager}
+    registered_tool_names = {info.name for info in tool_manager.list_tools()}
     for tool in tool_manager:
-        assert tool.name in registered_tools, f"{tool.name} not registered in tool manager"
-    
+        assert tool.name in registered_tool_names, (
+            f"{tool.name} not registered in tool manager"
+        )
+
     return tool_manager
 
 
 class TestConfigManager:
     """Test implementation of IConfigManager for integration tests."""
-    
+
     def __init__(self):
-        from local_coding_assistant.config.schemas import AppConfig, LLMConfig, RuntimeConfig
         from local_coding_assistant.config.env_manager import EnvManager
         from local_coding_assistant.config.path_manager import PathManager
-        
+        from local_coding_assistant.config.schemas import (
+            AppConfig,
+            LLMConfig,
+            RuntimeConfig,
+        )
+
         # Initialize environment and path managers
         self.env_manager = EnvManager()
         self.path_manager = PathManager()
-        
+
         # Initialize with default config
         self._global_config = AppConfig(
             llm=LLMConfig(
@@ -385,51 +541,55 @@ class TestConfigManager:
                 max_tokens=1000,
                 max_retries=3,
                 retry_delay=1.0,
-                providers=[]
+                providers=[],
             ),
             runtime=RuntimeConfig(
                 persistent_sessions=False,
                 max_session_history=100,
                 enable_logging=True,
-                log_level="INFO"
-            )
+                log_level="INFO",
+            ),
         )
         self._session_overrides = {}
-    
+
     @property
     def global_config(self) -> Any | None:
         return self._global_config
-    
+
     @property
     def session_overrides(self) -> dict[str, Any]:
         return self._session_overrides
-    
+
     def load_global_config(self) -> Any:
         return self._global_config
-    
+
     def get_tools(self) -> dict[str, Any]:
         return {}
-    
+
     def reload_tools(self) -> None:
         pass
-    
+
     def set_session_overrides(self, overrides: dict[str, Any]) -> None:
         self._session_overrides = overrides or {}
-    
-    def resolve(self, provider: str | None = None, model_name: str | None = None, 
-               overrides: dict[str, Any] | None = None) -> Any:
+
+    def resolve(
+        self,
+        provider: str | None = None,
+        model_name: str | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> Any:
         # Create a copy of the global config
         config = self._global_config.model_copy(deep=True)
-        
+
         # Apply session overrides
         if self._session_overrides:
             for key, value in self._session_overrides.items():
-                parts = key.split('.')
+                parts = key.split(".")
                 obj = config
                 for part in parts[:-1]:
                     obj = getattr(obj, part)
                 setattr(obj, parts[-1], value)
-        
+
         # Apply call overrides
         call_overrides = {}
         if provider is not None:
@@ -438,15 +598,15 @@ class TestConfigManager:
             call_overrides["llm.model_name"] = model_name
         if overrides:
             call_overrides.update(overrides)
-            
+
         if call_overrides:
             for key, value in call_overrides.items():
-                parts = key.split('.')
+                parts = key.split(".")
                 obj = config
                 for part in parts[:-1]:
                     obj = getattr(obj, part)
                 setattr(obj, parts[-1], value)
-        
+
         return config
 
 
@@ -455,7 +615,7 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
     """Create runtime manager with mocked dependencies."""
     config_manager = TestConfigManager()
     config_manager.load_global_config()
-    
+
     runtime = MagicMock(spec=RuntimeManager)
     runtime._llm_manager = mock_llm_with_tools
     runtime._tool_manager = tool_manager
@@ -469,7 +629,7 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
     agent_loops = {}
     # Track the last used session ID to maintain it between calls
     last_session_id = None
-    
+
     # Mock the _run_agent_mode method to use our real AgentLoop
     async def mock_run_agent_mode(
         text,
@@ -483,17 +643,17 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
         **kwargs,
     ):
         nonlocal agent_loops, last_session_id
-        
+
         # Use the provided session ID, the last used session ID, or generate a new one
         if session_id is None:
             if last_session_id is not None and last_session_id in agent_loops:
                 session_id = last_session_id
             else:
                 session_id = f"test_session_{len(agent_loops) + 1}"
-        
+
         # Update the last used session ID
         last_session_id = session_id
-        
+
         # Reuse existing agent loop for this session or create a new one
         if session_id not in agent_loops:
             # Create a new mock LLM manager with the same responses
@@ -502,7 +662,7 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
                 config_manager=config_manager,
                 provider_manager=None,
             )
-            
+
             # Create a new agent loop for this session
             agent_loop = AgentLoop(
                 llm_manager=llm_manager,
@@ -522,26 +682,26 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
 
         # Process the request
         result = await agent_loop.run()
-        
+
         # Extract the final answer from the result
         final_answer = None
-        if isinstance(result, dict) and 'final_answer' in result:
-            final_answer = result['final_answer']
+        if isinstance(result, dict) and "final_answer" in result:
+            final_answer = result["final_answer"]
         elif isinstance(result, str):
             final_answer = result
-            
+
         # If we still don't have a final answer, try to get it from the agent's state
-        if final_answer is None and hasattr(agent_loop, 'final_answer'):
+        if final_answer is None and hasattr(agent_loop, "final_answer"):
             final_answer = agent_loop.final_answer
-            
+
         # If we still don't have a final answer, use a default value
         if final_answer is None:
             final_answer = "Mock final answer for testing purposes"
 
         return {
             "final_answer": final_answer,
-            "iterations": getattr(agent_loop, 'current_iteration', 1),
-            "history": getattr(agent_loop, 'get_history', lambda: [])(),
+            "iterations": getattr(agent_loop, "current_iteration", 1),
+            "history": getattr(agent_loop, "get_history", lambda: [])(),
             "session_id": session_id,
             "streaming_enabled": streaming,
         }
@@ -555,7 +715,7 @@ def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
     """Create runtime manager with mocked dependencies and streaming enabled."""
     config_manager = TestConfigManager()
     config_manager.load_global_config()
-    
+
     runtime = MagicMock(spec=RuntimeManager)
     runtime._llm_manager = mock_llm_with_tools
     runtime._tool_manager = tool_manager
@@ -584,7 +744,7 @@ def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
             config_manager=config_manager,
             provider_manager=None,
         )
-        
+
         # Create a new agent loop for each request to ensure clean state
         agent_loop_instance = AgentLoop(
             llm_manager=llm_manager,
@@ -593,7 +753,7 @@ def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
             max_iterations=max_iterations,
             streaming=streaming,
         )
-        
+
         # If we have a previous session ID, set it on the new instance
         if session_id is not None:
             agent_loop_instance._session_id = session_id
@@ -603,7 +763,7 @@ def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
 
         # Process the request
         final_answer = await agent_loop_instance.run()
-        
+
         # Ensure we maintain the same session ID for the next request
         session_id = agent_loop_instance.session_id
 
@@ -660,13 +820,13 @@ def complex_scenario_llm():
             ],
         },
     ]
-    
+
     from local_coding_assistant.core.protocols import IConfigManager
-    
+
     # Create a properly typed config manager mock
     config_manager = MagicMock(spec=IConfigManager)
     config_manager.get_tool_config.return_value = {}
-    
+
     return MockStreamingLLMManager(
         responses, config_manager=config_manager, provider_manager=None
     )
@@ -705,14 +865,61 @@ def cli_runner():
     return CliRunner()
 
 
+class FakeSandbox:
+    """Simple sandbox double used for CLI integration tests."""
+
+    def __init__(self) -> None:
+        self.executed_requests: list[Any] = []
+        self.stop_calls: list[str] = []
+        self.response: SimpleNamespace = SimpleNamespace(
+            success=True, stdout="", stderr="", error=None
+        )
+
+    async def execute(self, request):
+        self.executed_requests.append(request)
+        return self.response
+
+    async def stop_session(self, session_id: str):
+        self.stop_calls.append(session_id)
+
+
+class FakeSandboxManager:
+    """Provides access to the fake sandbox used by the CLI tests."""
+
+    def __init__(self) -> None:
+        self.sandbox = FakeSandbox()
+        self.get_sandbox_call_count = 0
+        self.bootstrap_levels: list[int | None] = []
+
+    def get_sandbox(self):
+        self.get_sandbox_call_count += 1
+        return self.sandbox
+
+
+@pytest.fixture
+def sandbox_cli_test_env(monkeypatch):
+    """Patch CLI bootstrap to use a deterministic fake sandbox manager."""
+
+    manager = FakeSandboxManager()
+
+    def fake_bootstrap(**kwargs):
+        manager.bootstrap_levels.append(kwargs.get("log_level"))
+        return {"sandbox": manager}
+
+    monkeypatch.setattr(sandbox_cli, "bootstrap", fake_bootstrap)
+    return manager
+
+
 @pytest.fixture
 def tmp_yaml_config(tmp_path):
     """Fixture to create a temporary YAML config file for testing."""
+
     def _create_config(config_data):
         config_path = tmp_path / "test_config.yaml"
-        with open(config_path, 'w') as f:
+        with open(config_path, "w") as f:
             yaml.dump(config_data, f)
         return str(config_path)
+
     return _create_config
 
 
@@ -778,7 +985,7 @@ def mock_llm_manager(mock_llm_response):
                 pass
 
         # Check if we have a model in the request (from orchestrate)
-        if hasattr(request, 'model') and request.model:
+        if hasattr(request, "model") and request.model:
             model_used = request.model
 
         # Check if tool outputs are present and modify response accordingly
@@ -828,66 +1035,71 @@ def ctx_with_mocked_llm(mock_llm_manager):
 
     # Create a TestConfigManager instance
     config_manager = TestConfigManager()
-    
+
     # Set up session overrides
     config_manager.set_session_overrides({"llm.model_name": "gpt-4.1"})
-    
+
     # Create a mock runtime manager
     runtime = MagicMock(spec=RuntimeManager)
     runtime.config_manager = config_manager
     runtime.llm_manager = mock_llm_manager
-    runtime._llm_manager = mock_llm_manager  # Add _llm_manager for backward compatibility
-    
+    runtime._llm_manager = (
+        mock_llm_manager  # Add _llm_manager for backward compatibility
+    )
+
     # Set up the orchestrate method to use the mock LLM manager
-    async def mock_orchestrate(query, model=None, temperature=None, max_tokens=None, **kwargs):
-        from local_coding_assistant.core.exceptions import AgentError
+    async def mock_orchestrate(
+        query, model=None, temperature=None, max_tokens=None, **kwargs
+    ):
         from dataclasses import make_dataclass
-        
+
+        from local_coding_assistant.core.exceptions import AgentError
+
         # Validate temperature
         if temperature is not None and (temperature < 0.0 or temperature > 2.0):
             raise AgentError(
                 "Configuration update validation failed: temperature must be between 0.0 and 2.0"
             )
-            
+
         # Validate max_tokens
         if max_tokens is not None and max_tokens <= 0:
             raise AgentError(
                 "Configuration update validation failed: max_tokens must be greater than 0"
             )
-        
+
         # Use the model from the arguments or the default from the config
         model_used = model or "gpt-5-mini"
-        
+
         # Create a simple request object with model and tool_outputs
-        Request = make_dataclass('Request', ['model', 'tool_outputs'])
+        Request = make_dataclass("Request", ["model", "tool_outputs"])
         request = Request(model=model_used, tool_outputs=None)
-        
+
         # If the LLM manager has a side effect set, let it raise the error
-        if hasattr(mock_llm_manager.generate, 'side_effect'):
+        if hasattr(mock_llm_manager.generate, "side_effect"):
             try:
                 result = await mock_llm_manager.generate(request)
                 # Convert LLMResponse to dict for the test
                 return {
                     "message": str(result.content),
                     "model_used": result.model_used,
-                    "tokens_used": result.tokens_used
+                    "tokens_used": result.tokens_used,
                 }
             except AgentError as e:
                 raise e
-        
+
         return {
             "message": f"Processed query with model: {model_used}",
             "model_used": model_used,
-            "tokens_used": 50
+            "tokens_used": 50,
         }
-    
+
     runtime.orchestrate = mock_orchestrate
-    
+
     # Create and return the context
     ctx = AppContext()
     ctx.register("runtime", runtime)
     ctx.register("config_manager", config_manager)
-    
+
     return ctx
 
 

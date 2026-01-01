@@ -1,11 +1,14 @@
 """Application dependencies container."""
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from local_coding_assistant.agent.llm_manager import LLMManager
 from local_coding_assistant.core.protocols import IConfigManager, IToolManager
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
+
+if TYPE_CHECKING:
+    from local_coding_assistant.sandbox.manager import SandboxManager
 
 
 @dataclass
@@ -21,6 +24,7 @@ class AppDependencies:
     llm_manager: LLMManager | None = field(default=None)
     tool_manager: Optional["IToolManager"] = field(default=None)
     runtime_manager: RuntimeManager | None = field(default=None)
+    sandbox_manager: Optional["SandboxManager"] = field(default=None)
     _initialized: bool = field(default=False, init=False, repr=False)
 
     def mark_initialized(self) -> None:

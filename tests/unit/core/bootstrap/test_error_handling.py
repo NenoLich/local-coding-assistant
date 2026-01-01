@@ -10,17 +10,17 @@ from local_coding_assistant.core.bootstrap import bootstrap
 
 class TestBootstrapErrorHandling:
     """Test error handling during bootstrap."""
-    
+
     @patch("local_coding_assistant.core.bootstrap._setup_environment")
     def test_environment_setup_failure(self, mock_setup_env):
         """Test handling of environment setup failure."""
         # Setup mock to raise an exception
         mock_setup_env.side_effect = Exception("Environment setup failed")
-        
+
         # Verify the exception is wrapped in a RuntimeError
         with pytest.raises(RuntimeError, match="Failed to initialize application"):
             bootstrap()
-    
+
     @patch("local_coding_assistant.core.bootstrap._setup_environment")
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
     def test_config_loading_failure(self, mock_init_config, mock_setup_env):
@@ -28,11 +28,11 @@ class TestBootstrapErrorHandling:
         # Setup mocks
         mock_setup_env.return_value = None
         mock_init_config.side_effect = Exception("Config loading failed")
-        
+
         # Verify the exception is wrapped in a RuntimeError
         with pytest.raises(RuntimeError, match="Failed to initialize application"):
             bootstrap()
-    
+
     @patch("local_coding_assistant.core.bootstrap._setup_environment")
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
     @patch("local_coding_assistant.core.bootstrap._initialize_llm_manager")
@@ -46,19 +46,25 @@ class TestBootstrapErrorHandling:
         mock_setup_env.return_value = None
         mock_init_config.return_value = (mock_config, mock_config_manager)
         mock_init_llm.return_value = None  # Simulate LLM init returns None
-        
+
         # Mock other components to avoid side effects
-        with patch('local_coding_assistant.core.bootstrap._initialize_tool_manager', return_value=Mock()):
-            with patch('local_coding_assistant.core.bootstrap._initialize_runtime_manager', return_value=Mock()):
+        with patch(
+            "local_coding_assistant.core.bootstrap._initialize_tool_manager",
+            return_value=Mock(),
+        ):
+            with patch(
+                "local_coding_assistant.core.bootstrap._initialize_runtime_manager",
+                return_value=Mock(),
+            ):
                 # Call bootstrap
                 ctx = bootstrap()
-        
+
         # Verify it still returns a context
         assert isinstance(ctx, AppContext)
-        
+
         # Verify the LLM manager is not set in the context
         assert ctx.get("llm") is None
-    
+
     @patch("local_coding_assistant.core.bootstrap._setup_environment")
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
     @patch("local_coding_assistant.core.bootstrap._initialize_llm_manager")
@@ -75,18 +81,21 @@ class TestBootstrapErrorHandling:
         mock_init_config.return_value = (mock_config, mock_config_manager)
         mock_init_llm.return_value = mock_llm_manager
         mock_init_tools.return_value = None  # Simulate tool manager init returns None
-        
+
         # Mock runtime manager to avoid side effects
-        with patch('local_coding_assistant.core.bootstrap._initialize_runtime_manager', return_value=Mock()):
+        with patch(
+            "local_coding_assistant.core.bootstrap._initialize_runtime_manager",
+            return_value=Mock(),
+        ):
             # Call bootstrap
             ctx = bootstrap()
-        
+
         # Verify it still returns a context
         assert isinstance(ctx, AppContext)
-        
+
         # Verify the tool manager is not set in the context
         assert ctx.get("tools") is None
-    
+
     @patch("local_coding_assistant.core.bootstrap._setup_environment")
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
     @patch("local_coding_assistant.core.bootstrap._initialize_llm_manager")
@@ -112,16 +121,18 @@ class TestBootstrapErrorHandling:
         mock_init_llm.return_value = mock_llm_manager
         mock_init_tools.return_value = mock_tool_manager
         mock_init_runtime.return_value = None  # Simulate runtime manager init failure
-        
+
         # Call bootstrap
         ctx = bootstrap()
-        
+
         # Verify it still returns a context
         assert isinstance(ctx, AppContext)
-        
+
         # Verify the warning was logged
         log_messages = [record.message for record in caplog.records]
-        assert not any("Failed to initialize runtime manager" in msg for msg in log_messages)
-        
+        assert not any(
+            "Failed to initialize runtime manager" in msg for msg in log_messages
+        )
+
         # The runtime manager is optional, so it's fine if it's None
         assert ctx.get("runtime") is None

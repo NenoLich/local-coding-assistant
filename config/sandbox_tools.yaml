@@ -1,0 +1,25 @@
+tools:
+  - id: math
+    path: '@tools/sandbox_tools/compute_tools.py'
+    tool_class: MathTool
+    description: "Perform the requested arithmetic operation"
+    permissions: [compute, sandbox]
+    tags: [math, utility]
+    enabled: true
+    category: math
+  - id: file_list
+    path: '@tools/sandbox_tools/file_tools.py'
+    tool_class: ListFilesInCwd
+    description: "List all files and directories in the current working directory"
+    permissions: [sandbox]
+    tags: [filesystem, utility]
+    enabled: true
+    category: filesystem
+  - id: final_answer
+    path: '@tools/sandbox_tools/final_answer.py'
+    tool_class: FinalAnswerTool
+    description: "Use this tool to provide the final answer to the user's query. This should be the last tool call in the conversation."
+    permissions: [sandbox]
+    tags: [utility]
+    enabled: true
+    category: utility

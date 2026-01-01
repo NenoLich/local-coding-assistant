@@ -13,10 +13,15 @@ from local_coding_assistant.agent.llm_manager import (
     LLMManager,
     LLMRequest,
     LLMResponse,
+    ToolCall,
 )
 from local_coding_assistant.core.protocols import IConfigManager, IToolManager
 from local_coding_assistant.runtime.session import SessionState
-from local_coding_assistant.tools.types import ToolExecutionRequest
+from local_coding_assistant.tools.types import (
+    ToolCategory,
+    ToolExecutionRequest,
+    ToolExecutionResponse,
+)
 
 if TYPE_CHECKING:
     from local_coding_assistant.tools.tool_manager import ToolManager
@@ -72,6 +77,8 @@ class RuntimeManager:
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        tool_call_mode: str | None = None,
+        sandbox_session: str | None = None,
     ) -> dict[str, Any]:
         """Unified entrypoint: run a single query and return structured output.
 
@@ -82,11 +89,31 @@ class RuntimeManager:
             model: Optional model override
             temperature: Optional temperature override
             max_tokens: Optional max_tokens override
+            tool_call_mode: Optional tool call mode ('classic' or 'ptc'). If None, uses the mode from config.
+            sandbox_session: Optional session ID for sandbox persistence.
 
         Returns:
             Structured output with session_id, message, model_used, tokens_used,
             tool_calls, and history. In agent_mode, returns agent-specific format.
         """
+        # Update the config with the provided tool_call_mode if specified
+        if tool_call_mode is not None:
+            self.config_manager.set_session_overrides(
+                {"runtime.tool_call_mode": tool_call_mode}
+            )
+
+            if tool_call_mode == "ptc":
+                self.config_manager.set_session_overrides({"sandbox.enabled": True})
+
+                # Set up the session with sandbox_session if provided
+                if sandbox_session:
+                    self.config_manager.set_session_overrides(
+                        {
+                            "sandbox.session_id": sandbox_session,
+                            "sandbox.persistence": True,
+                        }
+                    )
+
         if agent_mode or graph_mode:
             return await self._run_agent_mode(
                 text, model, temperature, max_tokens, graph_mode
@@ -102,16 +129,9 @@ class RuntimeManager:
             self.session = SessionState()
 
         session = self.session
-        config = self.config_manager.resolve()
-        # Access runtime config from dictionary
-        if not isinstance(config, dict):
-            # For backward compatibility if resolve() returns an object
-            runtime_config = config.runtime
-        else:
-            runtime_config = config.get("runtime", {})
 
         # Check if persistent_sessions is False or not set (default to False)
-        if not runtime_config.persistent_sessions:
+        if not self.config_manager.global_config.runtime.persistent_sessions:
             session.reset()
 
         return session
@@ -186,13 +206,122 @@ class RuntimeManager:
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> tuple[LLMRequest, dict[str, Any]]:
-        """Prepare the LLM request with context and configuration."""
+        """Prepare the LLM request with context and configuration.
+
+        Args:
+            text: The input text/query to process
+            session: The current session state
+            tool_outputs: Optional tool outputs from previous steps
+            model: Optional model override
+            temperature: Optional temperature override
+            max_tokens: Optional max_tokens override
+
+        Returns:
+            A tuple of (LLMRequest, overrides)
+        """
+        # Get tool_call_mode from config
+        mode = self.config_manager.global_config.runtime.tool_call_mode
+
+        # Get tools based on the current mode
+        tools = self._get_available_tools()
+        system_prompt = session.system_prompt or ""
+
+        # In PTC mode, we need to add tool documentation to the system prompt
+        if mode == "ptc" and self._tool_manager:
+            sandbox_tools_prompt = self._tool_manager.get_sandbox_tools_prompt()
+            if sandbox_tools_prompt:
+                system_prompt = f"""{system_prompt}
+ You are operating in Programmatic Tool Calling (PTC) mode.
+
+In this mode, you DO NOT call tools using JSON.
+Instead, you write a complete Python program that will be executed in a secure sandbox.
+
+────────────────────────────────────────
+HOW TO EXECUTE CODE
+────────────────────────────────────────
+When computation is needed, emit a Python program using the tool:
+
+execute_python_code
+
+The program must:
+- Be valid Python
+- Run top-to-bottom
+- Use only allowed imports
+- Call available tool functions directly
+- Print intermediate values if helpful
+- End by calling `final_answer(...)`
+
+Example structure:
+
+```python
+from tools_api import sum_tool, final_answer
+
+result = sum_tool(a=2, b=5)
+print("Intermediate result:", result)
+
+final_answer(f"The result is {{result}}")
+```
+
+The value passed to final_answer(...) will be shown to the user.
+
+────────────────────────────────────────
+AVAILABLE TOOL FUNCTIONS
+────────────────────────────────────────
+The following Python functions are available for use. You must import them from tools_api to be able to use them.
+ 
+{sandbox_tools_prompt}
+
+When using these tools, you need to import and call them directly in your code.
+
+────────────────────────────────────────
+ENVIRONMENT CONSTRAINTS
+────────────────────────────────────────
+You are running inside a restricted sandbox.
+
+Allowed:
+
+Standard Python syntax
+
+Data processing logic
+
+Loops, conditionals, functions
+
+Imports from the standard library such as:
+math, json, datetime, pathlib, collections, itertools, time
+
+Forbidden:
+
+eval(), exec(), compile()
+
+import or dynamic imports
+
+Accessing files outside /workspace
+
+Modifying system files
+
+Arbitrary shell execution
+
+Network access unless explicitly provided via tools
+
+Violating these rules will cause execution to fail.
+
+────────────────────────────────────────
+IMPORTANT
+────────────────────────────────────────
+
+Do NOT describe what you would do — write the code.
+
+Do NOT return explanations outside of final_answer.
+
+If a task cannot be completed safely, explain why using final_answer.
+"""
+
         request = LLMRequest(
             prompt=text,
             context=self._build_llm_context(session),
-            tools=self._get_available_tools(),
+            tools=tools,
             tool_outputs=tool_outputs or {},
-            system_prompt=session.system_prompt,
+            system_prompt=system_prompt,
         )
 
         overrides = self._apply_overrides(
@@ -235,45 +364,41 @@ class RuntimeManager:
             return
 
         for tool_call in response.tool_calls:
-            if "function" in tool_call:
-                await self._process_single_tool_call(tool_call, session)
+            await self._process_single_tool_call(tool_call, session)
 
     async def _handle_missing_tool_manager(
-        self, session: SessionState, tool_calls: list[dict[str, Any]]
+        self, session: SessionState, tool_calls: list[ToolCall]
     ) -> None:
         """Handle tool calls when tool manager is not available."""
         self._log.warning("Tool calls received but tool manager is not available")
         for tool_call in tool_calls:
-            if "function" in tool_call:
-                func_name = tool_call["function"]["name"]
-                try:
-                    args = json.loads(tool_call["function"]["arguments"])
-                except json.JSONDecodeError:
-                    args = {}
+            func_name = tool_call.name
+            args = tool_call.arguments
 
-                session.add_tool_message(
-                    name=func_name,
-                    args=args,
-                    result={"error": "Tool functionality is not available"},
-                )
-                self._log.warning(
-                    "Tool call '%s' ignored: Tool manager not available", func_name
-                )
+            session.add_tool_message(
+                name=func_name,
+                args=args,
+                result={"error": "Tool functionality is not available"},
+            )
+            self._log.warning(
+                "Tool call '%s' ignored: Tool manager not available", func_name
+            )
 
     async def _process_single_tool_call(
-        self, tool_call: dict[str, Any], session: SessionState
+        self, tool_call: ToolCall, session: SessionState
     ) -> None:
         """Process a single tool call from the LLM response."""
-        func_name = tool_call["function"]["name"]
-        args = {}
+        func_name = tool_call.name
+        args = tool_call.arguments
+        session_id = args.get("session_id", "")
+
+        if tool_call.type == "code" and not session_id:
+            args["session_id"] = self.config_manager.global_config.sandbox.session_id
 
         try:
-            args = json.loads(tool_call["function"]["arguments"])
             tool_result = await self._execute_tool(func_name, args)
+
             self._log_tool_success(func_name, tool_result)
-        except json.JSONDecodeError as e:
-            await self._handle_json_decode_error(e, tool_call, func_name, session)
-            return
         except Exception as e:
             await self._handle_tool_error(e, func_name, args, session)
             return
@@ -295,30 +420,26 @@ class RuntimeManager:
             else "unknown"
         )
 
+        if response.is_final:
+            self._log.info(
+                "Final answer received from tool %s in %s", func_name, exec_time
+            )
+            return {
+                "result": response.result,
+                "is_final": True,
+                "format": getattr(response, "format", "text"),
+                "metadata": getattr(response, "metadata", {}),
+            }
+
         if response.success:
             self._log.debug("Tool %s executed successfully in %s", func_name, exec_time)
-            # Ensure we always return a dictionary
-            if isinstance(response.result, dict):
-                return response.result
-            return {"result": response.result}
+
         else:
-            error_msg = f"Tool execution failed: {response.error_message}"
             self._log.error(
                 "Tool %s execution failed: %s", func_name, response.error_message
             )
-            return {"error": error_msg}
 
-    async def _handle_json_decode_error(
-        self,
-        error: json.JSONDecodeError,
-        tool_call: dict[str, Any],
-        func_name: str,
-        session: SessionState,
-    ) -> None:
-        """Handle JSON decode errors during tool argument parsing."""
-        error_msg = f"Failed to parse tool arguments: {error!s}"
-        self._log.error("%s: %s", error_msg, tool_call["function"]["arguments"])
-        session.add_tool_message(name=func_name, args={}, result={"error": error_msg})
+        return response.dried_out()
 
     async def _handle_tool_error(
         self,
@@ -356,9 +477,9 @@ class RuntimeManager:
             user_message,
             session,
             tool_outputs,
-            model,
-            temperature,
-            max_tokens,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
         )
 
         llm_manager = self._require_llm_manager()
@@ -393,7 +514,7 @@ class RuntimeManager:
         )
 
         # Determine which agent implementation to use
-        runtime_config = self.config_manager.resolve().runtime
+        runtime_config = self.config_manager.global_config.runtime
         use_graph_mode = graph_mode or runtime_config.use_graph_mode
         stream_mode = streaming if streaming is not None else runtime_config.stream
 
@@ -502,13 +623,21 @@ class RuntimeManager:
         }
 
     def _get_available_tools(self) -> list[dict[str, Any]] | None:
-        """Return registered tools in OpenAI function-calling format."""
+        """Return registered tools in OpenAI function-calling format.
+
+        In PTC mode, only returns sandbox tools. In classic mode, returns all tools.
+        """
         if self._tool_manager is None:
             return None
 
-        tool_specs: list[dict[str, Any]] = []
+        # Get tool_call_mode from config
+        mode = self.config_manager.global_config.runtime.tool_call_mode
 
-        for entry in self._tool_manager.list_tools(available_only=True):
+        tool_specs: list[dict[str, Any]] = []
+        category = ToolCategory.PTC if mode == "ptc" else None
+        for entry in self._tool_manager.list_tools(
+            available_only=True, category=category
+        ):
             resolved = self._resolve_tool_entry(entry)
             if resolved is None:
                 continue
@@ -639,3 +768,45 @@ class RuntimeManager:
             getattr(tool_obj, "__name__", str(tool_obj)),
         )
         return {"type": "object", "properties": {}, "required": []}
+
+    async def run_programmatic_tool_call(
+        self,
+        code: str,
+        session_id: str | None = None,
+        env_vars: dict[str, str] | None = None,
+    ) -> ToolExecutionResponse:
+        """Execute code using the programmatic tool calling interface.
+
+        Args:
+            code: The Python code to execute.
+            session_id: Optional session ID (uses current session if None).
+            env_vars: Optional environment variables.
+
+        Returns:
+            The execution result.
+        """
+        if self._tool_manager is None:
+            return ToolExecutionResponse(
+                success=False,
+                tool_name="execute_python_code",
+                error_message="Tool functionality is not available",
+                execution_time_ms=0.0,
+            )
+
+        if session_id is None:
+            session_id = self.config_manager.global_config.sandbox.session_id
+
+        try:
+            # Now we can call it directly as it's part of the interface
+            return await self._tool_manager.run_programmatic_tool_call(
+                code=code, session_id=session_id, env_vars=env_vars
+            )
+
+        except Exception as e:
+            self._log.error(f"Programmatic tool call failed: {e}")
+            return ToolExecutionResponse(
+                success=False,
+                tool_name="execute_python_code",
+                error_message=str(e),
+                execution_time_ms=0.0,
+            )

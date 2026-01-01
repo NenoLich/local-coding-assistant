@@ -2,20 +2,121 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections.abc import Callable
 from copy import deepcopy
+from functools import wraps
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import yaml
 from pydantic import ValidationError
 
 from local_coding_assistant.config.env_manager import EnvManager
+from local_coding_assistant.config.path_manager import PathManager
 from local_coding_assistant.config.schemas import AppConfig, ToolConfig
 from local_coding_assistant.core.exceptions import ConfigError
 from local_coding_assistant.core.protocols import IConfigManager
 from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("config.config_manager")
+
+T = TypeVar("T")
+
+
+def dict_cache(maxsize: int = 32):
+    """Cache decorator that can handle dictionary arguments by converting them to a stable key.
+
+    Args:
+        maxsize: Maximum number of entries to keep in the cache
+    """
+
+    def decorator(func: Callable) -> Callable:
+        cache: dict[str, Any] = {}
+        hits = 0
+        misses = 0
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            nonlocal hits, misses
+
+            # Skip caching if the first argument is 'self'
+            instance = args[0] if args and hasattr(args[0], "__class__") else None
+            method_args = args[1:] if instance is not None else args
+
+            # Create a stable key from the arguments
+            cache_key = _generate_cache_key(method_args, kwargs)
+
+            # Check cache
+            if cache_key in cache:
+                hits += 1
+                return cache[cache_key]
+
+            # Cache miss - call the function
+            misses += 1
+            result = func(*args, **kwargs)
+
+            # Cache the result if we're under the limit
+            if len(cache) < maxsize:
+                cache[cache_key] = result
+
+            return result
+
+        def cache_clear() -> None:
+            """Clear the cache and reset statistics."""
+            nonlocal hits, misses
+            cache.clear()
+            hits = 0
+            misses = 0
+
+        def cache_info() -> dict:
+            """Get cache statistics.
+
+            Returns:
+                dict: Dictionary containing cache statistics including:
+                    - 'hits': Number of cache hits
+                    - 'misses': Number of cache misses
+                    - 'maxsize': Maximum cache size
+                    - 'currsize': Current cache size
+            """
+            return {
+                "hits": hits,
+                "misses": misses,
+                "maxsize": maxsize,
+                "currsize": len(cache),
+            }
+
+        # Attach cache management methods
+        wrapper.cache_clear = cache_clear  # type: ignore
+        wrapper.cache_info = cache_info  # type: ignore
+        wrapper.cache = cache  # type: ignore  # For debugging/inspection
+
+        return wrapper
+
+    return decorator
+
+
+def _generate_cache_key(args: tuple, kwargs: dict) -> str:
+    """Generate a stable cache key from function arguments."""
+
+    def _to_hashable(value: Any) -> Any:
+        if isinstance(value, (str, int, float, bool, type(None))):
+            return value
+        elif isinstance(value, (list, tuple)):
+            return tuple(_to_hashable(v) for v in value)
+        elif isinstance(value, dict):
+            return tuple(sorted((k, _to_hashable(v)) for k, v in value.items()))
+        elif hasattr(value, "__dict__"):
+            return _to_hashable(vars(value))
+        return str(value)  # Fallback for other types
+
+    # Convert all arguments to hashable types
+    key_parts = (_to_hashable(args), _to_hashable(kwargs))
+
+    # Create a stable string representation and hash it
+    key_str = json.dumps(key_parts, sort_keys=True)
+    return hashlib.sha256(key_str.encode("utf-8")).hexdigest()
 
 
 class ConfigManager(IConfigManager):
@@ -35,26 +136,22 @@ class ConfigManager(IConfigManager):
             tool_config_paths: Optional list of paths to tool YAML config files
         """
         self.env_manager: EnvManager = env_manager or EnvManager()
-        self.path_manager = self.env_manager.path_manager
+        self._path_manager = self.env_manager.path_manager
 
         # Resolve config paths
         self.config_paths = [
-            self.path_manager.resolve_path(p) for p in (config_paths or [])
+            self._path_manager.resolve_path(p) for p in (config_paths or [])
         ]
 
-        # Default tool config paths if none provided
-        if tool_config_paths is None:
+        # Default tool config paths resolved by tool_loader if none provided
+        self.tool_config_paths = []
+        if tool_config_paths is not None:
             self.tool_config_paths = [
-                self.path_manager.resolve_path("@config/tools.default.yaml"),
-                self.path_manager.resolve_path("@config/tools.local.yaml"),
-            ]
-        else:
-            self.tool_config_paths = [
-                self.path_manager.resolve_path(p) for p in tool_config_paths
+                self._path_manager.resolve_path(p) for p in tool_config_paths
             ]
 
         # 3-layer configuration storage
-        self._defaults_path = self.path_manager.resolve_path("@config/defaults.yaml")
+        self._defaults_path = self._path_manager.resolve_path("@config/defaults.yaml")
         self._global_config: AppConfig | None = None
         self._session_overrides: dict[str, Any] = {}
         self._loaded_tools: dict[str, ToolConfig] = {}
@@ -164,6 +261,8 @@ class ConfigManager(IConfigManager):
             config = AppConfig.from_dict(config_data)
             logger.info("Global configuration loaded and validated successfully")
             self._global_config = config
+            self._resolve_dicts.cache_clear()
+
             return config
         except ValidationError as e:
             error_msg = f"Invalid global configuration: {e}"
@@ -183,119 +282,37 @@ class ConfigManager(IConfigManager):
         Raises:
             LLMError: If the overrides contain invalid LLM configuration values
         """
+        if not overrides:
+            return
+
         logger.info(f"Setting session overrides: {list(overrides.keys())}")
 
-        # Validate overrides by attempting to resolve configuration with them
-        if overrides:
-            try:
-                # Apply overrides to global config (similar to resolve method)
-                if self._global_config is not None:
-                    resolved_data = self._global_config.to_dict()
+        # Create a copy of current overrides and update with new ones
+        new_overrides = deepcopy(self._session_overrides or {})
+        new_overrides.update(overrides)
 
-                    # Apply session overrides
-                    session_overrides = self._apply_overrides_to_dict(
-                        resolved_data, overrides
-                    )
-                    resolved_data = self._deep_merge(resolved_data, session_overrides)
-
-                    # Try to create AppConfig to validate the merged configuration
-                    AppConfig.from_dict(resolved_data)
-                else:
-                    # If no global config, just validate the overrides directly
-                    AppConfig.from_dict(overrides)
-
-            except ValidationError as e:
-                error_msg = f"Invalid resolved configuration: {e}"
-                logger.error(error_msg)
-
-                # Check if this is an LLM configuration validation error
-                error_details = str(e)
-                if any(
-                    field in error_details.lower()
-                    for field in ["temperature", "max_tokens", "llm"]
-                ):
-                    from local_coding_assistant.core.exceptions import LLMError
-
-                    raise LLMError(
-                        f"Configuration update validation failed: {e}"
-                    ) from e
-                else:
-                    raise ConfigError(error_msg) from e
-
-        # Only set overrides if validation passed (or if no overrides provided)
-        self._session_overrides = deepcopy(overrides)
-
-    def clear_session_overrides(self) -> None:
-        """Clear all session-level configuration overrides."""
-        logger.info("Clearing all session overrides")
-        self._session_overrides.clear()
-
-    def resolve(
-        self,
-        provider: str | None = None,
-        model_name: str | None = None,
-        overrides: dict[str, Any] | None = None,
-    ) -> AppConfig:
-        """Resolve configuration with all 3 layers applied.
-
-        Layer priority (highest to lowest):
-        1. Call overrides (function parameters)
-        2. Session overrides (runtime session settings)
-        3. Global defaults (persistent base config)
-
-        Args:
-            provider: Optional provider override for this call
-            model_name: Optional model_name override for this call
-            overrides: Optional additional overrides for this call
-
-        Returns:
-            Resolved AppConfig with all layers merged
-
-        Raises:
-            ConfigError: If no global config is loaded or resolution fails
-        """
-        if self._global_config is None:
-            raise ConfigError(
-                "Global configuration not loaded. Call load_global_config() first."
-            )
-
-        # Start with global config
-        resolved_data = self._global_config.to_dict()
-
-        # Apply session overrides
-        if self._session_overrides:
-            session_overrides = self._apply_overrides_to_dict(
-                resolved_data, self._session_overrides
-            )
-            resolved_data = self._deep_merge(resolved_data, session_overrides)
-            logger.debug(f"Applied {len(self._session_overrides)} session overrides")
-
-        # Apply call overrides
-        call_overrides = {}
-        if provider is not None or model_name is not None or overrides:
-            if provider is not None:
-                call_overrides["llm.provider"] = provider
-            if model_name is not None:
-                call_overrides["llm.model_name"] = model_name
-            if overrides:
-                call_overrides.update(overrides)
-
-            if call_overrides:
-                call_overrides = self._apply_overrides_to_dict(
-                    resolved_data, call_overrides
-                )
-                resolved_data = self._deep_merge(resolved_data, call_overrides)
-                logger.debug(f"Applied {len(call_overrides)} call overrides")
-
-        # Create final config
         try:
-            return AppConfig.from_dict(resolved_data)
+            # Apply overrides to global config (similar to resolve method)
+            if self._global_config is not None:
+                resolved_data = self._global_config.to_dict()
+
+                # Apply session overrides
+                session_overrides = self._apply_overrides_to_dict(
+                    resolved_data, new_overrides
+                )
+                resolved_data = self._deep_merge(resolved_data, session_overrides)
+
+                # Try to create AppConfig to validate the merged configuration
+                AppConfig.from_dict(resolved_data)
+            else:
+                # If no global config, just validate the overrides directly
+                AppConfig.from_dict(new_overrides)
+
         except ValidationError as e:
             error_msg = f"Invalid resolved configuration: {e}"
             logger.error(error_msg)
 
             # Check if this is an LLM configuration validation error
-            # If so, raise LLMError instead of ConfigError since it's a llm-level concern
             error_details = str(e)
             if any(
                 field in error_details.lower()
@@ -306,6 +323,178 @@ class ConfigManager(IConfigManager):
                 raise LLMError(f"Configuration update validation failed: {e}") from e
             else:
                 raise ConfigError(error_msg) from e
+
+        # Only set overrides if validation passed (or if no overrides provided)
+        self._session_overrides = new_overrides
+        self._resolve_dicts.cache_clear()
+
+    def clear_session_overrides(self) -> None:
+        """Clear all session-level configuration overrides."""
+        if self._session_overrides:
+            logger.info("Clearing all session overrides")
+            self._session_overrides.clear()
+            self._resolve_dicts.cache_clear()
+
+    @dict_cache(maxsize=32)
+    def _resolve_dicts(
+        self,
+        global_config: dict,
+        session_overrides: dict,
+        call_overrides: dict,
+    ) -> AppConfig:
+        """Internal method that resolves configuration dictionaries into an AppConfig.
+
+        This method is cached based on the input dictionaries.
+
+        Args:
+            global_config: Base configuration dictionary
+            session_overrides: Session-level overrides
+            call_overrides: Call-specific overrides (highest priority)
+
+        Returns:
+            AppConfig: The resolved and validated configuration
+
+        Raises:
+            ConfigError: If configuration resolution or validation fails
+            LLMError: If LLM-specific validation fails
+        """
+        # Start with global config
+        resolved_data = deepcopy(global_config)
+
+        # Apply session overrides
+        if session_overrides:
+            session_overrides = self._apply_overrides_to_dict(
+                resolved_data, session_overrides
+            )
+            resolved_data = self._deep_merge(resolved_data, session_overrides)
+
+        # Apply call overrides
+        if call_overrides:
+            call_overrides = self._apply_overrides_to_dict(
+                resolved_data, call_overrides
+            )
+            resolved_data = self._deep_merge(resolved_data, call_overrides)
+
+        # Convert to AppConfig and validate
+        try:
+            return AppConfig.from_dict(resolved_data)
+        except ValidationError as e:
+            error_msg = f"Invalid resolved configuration: {e}"
+            logger.error(error_msg)
+
+            # Handle LLM-specific validation errors
+            error_details = str(e).lower()
+            if any(
+                field in error_details for field in ["temperature", "max_tokens", "llm"]
+            ):
+                from local_coding_assistant.core.exceptions import LLMError
+
+                raise LLMError(f"Configuration validation failed: {e}") from e
+            raise ConfigError(error_msg) from e
+
+    def resolve(
+        self,
+        global_config: dict | None = None,
+        session_overrides: dict | None = None,
+        call_overrides: dict | None = None,
+    ) -> AppConfig:
+        """Resolve configuration with all layers applied.
+
+        Layer priority (highest to lowest):
+        1. Call overrides (highest priority)
+        2. Session overrides
+        3. Global config (lowest priority)
+
+        Args:
+            global_config: Base configuration dictionary. If None, uses instance's global config.
+            session_overrides: Session-level overrides. If None, uses instance's session overrides.
+            call_overrides: Call-specific overrides (highest priority). If None, uses empty dict.
+
+        Returns:
+            AppConfig: The resolved and validated configuration
+
+        Raises:
+            ConfigError: If no global config is available or resolution fails
+            LLMError: If LLM-specific validation fails
+        """
+        # Use instance values if not provided
+        if global_config is None:
+            if self._global_config is None:
+                raise ConfigError("No global config available")
+            global_config = self._global_config.to_dict()
+
+        session_overrides = (
+            session_overrides
+            if session_overrides is not None
+            else self._session_overrides
+        )
+        call_overrides = call_overrides if call_overrides is not None else {}
+
+        return self._resolve_dicts(global_config, session_overrides, call_overrides)
+
+    def get_cache_info(self) -> dict:
+        """Get cache statistics for the _resolve_dicts method.
+
+        Returns:
+            dict: Dictionary containing cache statistics including:
+                - 'hits': Number of cache hits
+                - 'misses': Number of cache misses
+                - 'maxsize': Maximum cache size
+                - 'currsize': Current cache size
+        """
+        if not hasattr(self._resolve_dicts, "cache_info"):
+            return {
+                "hits": 0,
+                "misses": 0,
+                "maxsize": 0,
+                "currsize": 0,
+                "enabled": False,
+            }
+        return self._resolve_dicts.cache_info()
+
+    def get_config(
+        self,
+        provider: str | None = None,
+        model_name: str | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> AppConfig:
+        """Get configuration with all layers applied.
+
+        This is the main public method that maintains backward compatibility.
+
+        Args:
+            provider: Optional provider override
+            model_name: Optional model name override
+            overrides: Optional additional overrides
+
+        Returns:
+            AppConfig: The resolved configuration
+
+        Raises:
+            ConfigError: If configuration is not loaded or resolution fails
+        """
+        if self._global_config is None:
+            raise ConfigError(
+                "Global configuration not loaded. Call load_global_config() first."
+            )
+
+        # Prepare call overrides
+        call_overrides = {}
+        if provider is not None:
+            call_overrides["llm.provider"] = provider
+        if model_name is not None:
+            call_overrides["llm.model_name"] = model_name
+        if overrides:
+            call_overrides.update(overrides)
+
+        # Apply all layers
+        resolved_dict = self.resolve(
+            global_config=self._global_config.to_dict(),
+            session_overrides=self._session_overrides,
+            call_overrides=call_overrides,
+        )
+
+        return resolved_dict
 
     def _load_config_file(self, path: Path | str) -> dict[str, Any]:
         """Load configuration from a YAML file.
@@ -320,7 +509,7 @@ class ConfigManager(IConfigManager):
             ConfigError: If the file cannot be loaded or parsed
         """
         # Resolve path using PathManager
-        resolved_path = self.path_manager.resolve_path(path)
+        resolved_path = self._path_manager.resolve_path(path)
         try:
             with open(resolved_path, encoding="utf-8") as f:
                 config = yaml.safe_load(f)
@@ -380,25 +569,29 @@ class ConfigManager(IConfigManager):
         Returns:
             Dictionary with overrides applied
         """
+        if not isinstance(base_dict, dict):
+            base_dict = {}
+
         result = deepcopy(base_dict)
 
-        for key, value in overrides.items():
-            if "." not in key:
-                # Simple top-level key
-                result[key] = value
-            else:
-                # Dot-notation nested key
-                key_parts = key.split(".")
-                current = result
+        for key_path, value in overrides.items():
+            if not key_path:
+                continue
 
-                # Navigate/create nested structure
-                for part in key_parts[:-1]:
-                    if part not in current:
-                        current[part] = {}
-                    current = current[part]
+            parts = key_path.split(".")
+            current = result
 
-                # Set the final value
-                current[key_parts[-1]] = value
+            # Navigate to the parent of the target key
+            for part in parts[:-1]:
+                if not isinstance(current, dict):
+                    current = {}
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+
+            # Set the final value
+            if parts:
+                current[parts[-1]] = value
 
         return result
 
@@ -429,9 +622,20 @@ class ConfigManager(IConfigManager):
         return result
 
     @property
-    def global_config(self) -> AppConfig | None:
-        """Get the current global configuration."""
-        return self._global_config
+    def global_config(self) -> AppConfig:
+        """Get the current global configuration with automatic session override resolution.
+
+        Returns:
+            A wrapped AppConfig that automatically resolves session overrides when accessed.
+
+        Raises:
+            ConfigError: If no configuration is loaded.
+        """
+        if self._global_config is None:
+            raise ConfigError(
+                "No configuration loaded. Call load_global_config() first."
+            )
+        return self.resolve()
 
     def save_config(self, path: Path | str | None = None) -> None:
         """Save the current configuration to a file.
@@ -450,7 +654,7 @@ class ConfigManager(IConfigManager):
 
         try:
             # Resolve path using PathManager and ensure parent directory exists
-            resolved_path = self.path_manager.resolve_path(path, ensure_parent=True)
+            resolved_path = self._path_manager.resolve_path(path, ensure_parent=True)
 
             # Ensure global config is loaded
             if self._global_config is None:
@@ -478,3 +682,7 @@ class ConfigManager(IConfigManager):
     def session_overrides(self) -> dict[str, Any]:
         """Get the current session overrides."""
         return deepcopy(self._session_overrides)
+
+    @property
+    def path_manager(self) -> PathManager:
+        return self._path_manager

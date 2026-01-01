@@ -220,7 +220,7 @@ class TestProviderLLMResponseDelta:
 
 class TestBaseProvider:
     """Test BaseProvider abstract base class."""
-    
+
     @pytest.fixture(autouse=True)
     def setup(self):
         """Setup mock EnvManager for tests."""
@@ -334,9 +334,7 @@ class TestBaseProvider:
             async def generate(self, request):
                 # Mock the generate method to return a test response
                 return ProviderLLMResponse(
-                    content="Test response", 
-                    model=request.model,
-                    finish_reason="stop"
+                    content="Test response", model=request.model, finish_reason="stop"
                 )
 
             async def health_check(self):
@@ -628,7 +626,9 @@ class TestProviderManager:
 
         # Initialize with default providers
         manager._instances = {
-            "google_gemini": MockProvider("google_gemini", env_manager=self.mock_env_manager),
+            "google_gemini": MockProvider(
+                "google_gemini", env_manager=self.mock_env_manager
+            ),
             "local": MockProvider("local", env_manager=self.mock_env_manager),
             "openrouter": MockProvider("openrouter", env_manager=self.mock_env_manager),
         }
@@ -636,11 +636,15 @@ class TestProviderManager:
         # Register and create instances for test providers
         manager._providers["provider1"] = MockProvider
         manager._provider_sources["provider1"] = "source1"
-        manager._instances["provider1"] = MockProvider("provider1", env_manager=self.mock_env_manager)
+        manager._instances["provider1"] = MockProvider(
+            "provider1", env_manager=self.mock_env_manager
+        )
 
         manager._providers["provider2"] = MockProvider
         manager._provider_sources["provider2"] = "source2"
-        manager._instances["provider2"] = MockProvider("provider2", env_manager=self.mock_env_manager)
+        manager._instances["provider2"] = MockProvider(
+            "provider2", env_manager=self.mock_env_manager
+        )
 
         # Get the list of providers
         providers = manager.list_providers()
@@ -751,9 +755,9 @@ class TestGoogleGeminiProvider:
     def test_initialization(self):
         """Test GoogleGeminiProvider initialization."""
         provider = GoogleGeminiProvider(
-            api_key="test_key", 
+            api_key="test_key",
             models=["gemini-pro", "gemini-pro-vision"],
-            env_manager=self.mock_env_manager
+            env_manager=self.mock_env_manager,
         )
 
         assert provider.name == "google_gemini"
@@ -764,11 +768,12 @@ class TestGoogleGeminiProvider:
         """Test GoogleGeminiProvider initialization with environment key."""
         with patch.dict("os.environ", {"GOOGLE_API_KEY": "env_key"}):
             # Mock the _get_api_key method to return a test key
-            with patch('local_coding_assistant.providers.google_provider.GoogleGeminiProvider._get_api_key', 
-                      return_value="test_api_key"):
+            with patch(
+                "local_coding_assistant.providers.google_provider.GoogleGeminiProvider._get_api_key",
+                return_value="test_api_key",
+            ):
                 provider = GoogleGeminiProvider(
-                    api_key_env="GOOGLE_API_KEY",
-                    env_manager=self.mock_env_manager
+                    api_key_env="GOOGLE_API_KEY", env_manager=self.mock_env_manager
                 )
 
                 assert provider.api_key_env == "GOOGLE_API_KEY"
@@ -778,8 +783,7 @@ class TestGoogleGeminiProvider:
     async def test_health_check_with_driver(self):
         """Test health check when driver is available."""
         provider = GoogleGeminiProvider(
-            api_key="test_key",
-            env_manager=self.mock_env_manager
+            api_key="test_key", env_manager=self.mock_env_manager
         )
 
         # Mock driver
@@ -797,8 +801,7 @@ class TestGoogleGeminiProvider:
     async def test_health_check_without_driver(self):
         """Test health check when no driver is available."""
         provider = GoogleGeminiProvider(
-            api_key="test_key",
-            env_manager=self.mock_env_manager
+            api_key="test_key", env_manager=self.mock_env_manager
         )
 
         # Mock driver health_check to return False or be unavailable
@@ -818,8 +821,7 @@ class TestGoogleGeminiProvider:
     def test_stream_method(self):
         """Test GoogleGeminiProvider stream method."""
         provider = GoogleGeminiProvider(
-            api_key="test_key",
-            env_manager=self.mock_env_manager
+            api_key="test_key", env_manager=self.mock_env_manager
         )
 
         # Mock driver
@@ -857,9 +859,9 @@ class TestOpenRouterProvider:
     def test_initialization(self):
         """Test OpenRouterProvider initialization."""
         provider = OpenRouterProvider(
-            api_key="test_key", 
+            api_key="test_key",
             models=["auto", "gpt-4", "claude-3"],
-            env_manager=self.mock_env_manager
+            env_manager=self.mock_env_manager,
         )
 
         assert provider.name == "openrouter"
@@ -870,8 +872,7 @@ class TestOpenRouterProvider:
     async def test_health_check(self):
         """Test OpenRouterProvider health check."""
         provider = OpenRouterProvider(
-            api_key="test_key",
-            env_manager=self.mock_env_manager
+            api_key="test_key", env_manager=self.mock_env_manager
         )
 
         # Mock driver
@@ -888,8 +889,7 @@ class TestOpenRouterProvider:
     def test_stream_method(self):
         """Test OpenRouterProvider stream method."""
         provider = OpenRouterProvider(
-            api_key="test_key",
-            env_manager=self.mock_env_manager
+            api_key="test_key", env_manager=self.mock_env_manager
         )
 
         # Mock driver

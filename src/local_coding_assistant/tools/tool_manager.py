@@ -7,22 +7,20 @@ and module loading.
 
 import asyncio
 import inspect
-import json
 import logging
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
-from dataclasses import dataclass
-from typing import (
-    TYPE_CHECKING,
-    Any,
-)
+from collections.abc import AsyncIterator, Awaitable, Iterable, Iterator
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ValidationError
-from pydantic.fields import FieldInfo
+from pydantic import BaseModel
 
 from local_coding_assistant.core.exceptions import ToolRegistryError
 from local_coding_assistant.core.protocols import IToolManager
 from local_coding_assistant.tools.base import Tool
+from local_coding_assistant.tools.statistics import StatisticsManager, ToolStatistics
+from local_coding_assistant.tools.tool_api_generator import ToolAPIGenerator
+from local_coding_assistant.tools.tool_runtime import ToolRuntime
 from local_coding_assistant.tools.types import (
     ToolCategory,
     ToolExecutionRequest,
@@ -30,671 +28,14 @@ from local_coding_assistant.tools.types import (
     ToolInfo,
     ToolSource,
 )
-from local_coding_assistant.utils.logging import get_logger
 
 if TYPE_CHECKING:
     from local_coding_assistant.core.protocols import IConfigManager
+    from local_coding_assistant.sandbox.manager import SandboxManager
+
+from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("tools.tool_manager")
-
-
-class ToolInputTransformer:
-    """Transforms input data to match a tool's expected format.
-
-    This class handles common input transformations to make tool usage more flexible.
-    """
-
-    @classmethod
-    def transform(
-        cls,
-        input_data: Any,
-        tool_info: ToolInfo | None = None,
-        tool_instance: Any | None = None,
-    ) -> Any:
-        """Transform input data to match the tool's expected format.
-
-        Args:
-            input_data: The input data to transform
-            tool_info: Optional ToolInfo for the tool
-            tool_instance: Optional tool instance for inspection
-
-        Returns:
-            Transformed input data
-        """
-        if input_data is None or not (tool_info or tool_instance):
-            return input_data
-
-        # Try to get the input model from the tool instance
-        input_model = None
-        if tool_instance and hasattr(tool_instance, "Input"):
-            input_model = tool_instance.Input
-
-        # If we have an input model, use it to guide the transformation
-        if input_model and hasattr(input_model, "model_fields"):
-            return cls._transform_with_model(input_data, input_model)
-
-        # Fall back to tool info if available
-        if (
-            tool_info
-            and hasattr(tool_info, "tool_class")
-            and hasattr(tool_info.tool_class, "Input")
-        ):
-            input_model = tool_info.tool_class.Input
-            if hasattr(input_model, "model_fields"):
-                return cls._transform_with_model(input_data, input_model)
-
-        return input_data
-
-    @classmethod
-    def _get_multi_value_handler(
-        cls, input_data: Any
-    ) -> Callable[[str], list[Any]] | None:
-        """Get a function to handle multi-value form data if available.
-
-        Returns:
-            A callable that takes a field name and returns a list of values, or None if no
-            suitable handler is found.
-        """
-        if hasattr(input_data, "getall") and callable(input_data.getall):
-            return (
-                lambda key: input_data.getall(key)
-                if hasattr(input_data, "getall")
-                else []
-            )
-        if hasattr(input_data, "getlist") and callable(input_data.getlist):
-            return (
-                lambda key: input_data.getlist(key)
-                if hasattr(input_data, "getlist")
-                else []
-            )
-        return None
-
-    @classmethod
-    def _process_multi_value_field(
-        cls,
-        data: dict[str, Any],
-        field_name: str,
-        field_info: FieldInfo,
-        get_multi_value: Callable[[str], list[Any]] | None,
-    ) -> None:
-        """Process a field that might have multiple values."""
-        if field_name not in data or not isinstance(data[field_name], str):
-            return
-
-        # Get all values for this field (handles multiple parameters with same name)
-        if get_multi_value:
-            values = get_multi_value(field_name)
-        else:
-            values = [data[field_name]]
-
-        if len(values) <= 1:
-            return
-
-        # Convert all values to the appropriate type
-        try:
-            if cls._is_list_or_tuple_field(field_info):
-                data[field_name] = [float(v) for v in values]
-            else:
-                data[field_name] = values[0] if len(values) == 1 else values
-        except (ValueError, TypeError):
-            # If conversion fails, keep the original value
-            pass
-
-    @classmethod
-    def _transform_dict_input(
-        cls, input_data: dict, model_fields: dict[str, FieldInfo]
-    ) -> dict:
-        """Transform dictionary input according to the model."""
-        data = dict(input_data)
-        get_multi_value = cls._get_multi_value_handler(input_data)
-
-        # Process each field in the model
-        for field_name, field_info in model_fields.items():
-            if field_name in data and isinstance(data[field_name], list):
-                # Already in the correct format
-                continue
-            cls._process_multi_value_field(
-                data, field_name, field_info, get_multi_value
-            )
-
-        # Handle positional arguments if present
-        if "args" in data and isinstance(data["args"], list) and data["args"]:
-            return cls._transform_positional_args(data, model_fields)
-
-        return data
-
-    @classmethod
-    def _transform_sequence_input(
-        cls, input_data: list | tuple, model_fields: dict[str, FieldInfo]
-    ) -> dict:
-        """Transform sequence input (list/tuple) into a dictionary."""
-        return cls._transform_positional_args({"args": input_data}, model_fields)
-
-    @classmethod
-    def _transform_with_model(
-        cls, input_data: Any, input_model: type[BaseModel]
-    ) -> Any:
-        """Transform input data using the provided Pydantic model."""
-        model_fields = getattr(input_model, "model_fields", {})
-
-        if isinstance(input_data, dict):
-            return cls._transform_dict_input(input_data, model_fields)
-        if isinstance(input_data, list | tuple):
-            return cls._transform_sequence_input(input_data, model_fields)
-
-        return input_data
-
-    @classmethod
-    def _handle_numbers_field(cls, args: list) -> dict[str, list[float]] | None:
-        """Handle case where tool expects a 'numbers' field with positional args."""
-        try:
-            return {"numbers": [float(arg) for arg in args]}
-        except (ValueError, TypeError):
-            return None
-
-    @classmethod
-    def _handle_single_field(
-        cls, args: list, field_name: str, field_info: FieldInfo
-    ) -> dict[str, Any]:
-        """Handle case where tool has a single field that can accept a list."""
-        # If the field is a list/tuple, pass all args as a list
-        if cls._is_list_or_tuple_field(field_info):
-            return {field_name: list(args)}
-
-        # If there's only one arg, pass it directly
-        if len(args) == 1:
-            return {field_name: args[0]}
-
-        # Otherwise, pass all args as a list (may raise validation error)
-        return {field_name: list(args)}
-
-    @classmethod
-    def _map_args_to_fields(
-        cls, args: list, model_fields: dict[str, FieldInfo]
-    ) -> dict[str, Any]:
-        """Map positional arguments to field names by position."""
-        result = {}
-        for i, (field_name, field_info) in enumerate(model_fields.items()):
-            if i < len(args):
-                result[field_name] = args[i]
-            elif hasattr(field_info, "default") and field_info.default is not None:
-                # For missing args, use default if available
-                result[field_name] = field_info.default
-        return result
-
-    @classmethod
-    def _transform_positional_args(
-        cls, input_data: dict[str, Any], model_fields: dict[str, FieldInfo]
-    ) -> dict[str, Any]:
-        """Transform positional arguments to named fields based on the model."""
-        args = input_data.get("args", [])
-        if not args or not model_fields:
-            return input_data
-
-        # Case 1: Tool expects a 'numbers' field but got positional args
-        if "numbers" in model_fields and cls._is_list_or_tuple_field(
-            model_fields["numbers"]
-        ):
-            if result := cls._handle_numbers_field(args):
-                return result
-
-        # Case 2: Tool has a single field that can accept a list
-        if len(model_fields) == 1:
-            field_name = next(iter(model_fields))
-            return cls._handle_single_field(args, field_name, model_fields[field_name])
-
-        # Case 3: Try to map positional args to field names by position
-        return cls._map_args_to_fields(args, model_fields)
-
-    @staticmethod
-    def _is_list_or_tuple_field(field_info: FieldInfo) -> bool:
-        """Check if a field is a list or tuple type."""
-        if not hasattr(field_info, "annotation"):
-            return False
-
-        annotation = field_info.annotation
-
-        # Handle direct type annotation
-        if annotation in (list, list, tuple, tuple):
-            return True
-
-        # Handle generic types like List[int]
-        if hasattr(annotation, "__origin__"):
-            return annotation.__origin__ in (list, list, tuple, tuple)
-
-        return False
-
-
-@dataclass
-class ToolRuntime:
-    """Runtime wrapper encapsulating execution and validation behavior for a tool."""
-
-    info: ToolInfo
-    instance: Any
-    kind: str  # "tool", "callable", or "mcp"
-    run_is_async: bool
-    supports_streaming: bool
-    has_input_validation: bool
-    has_output_validation: bool
-
-    async def execute(self, payload: dict[str, Any]) -> Any:
-        """Execute the tool with the provided payload."""
-        input_data = self._prepare_input(payload)
-        result = await self._invoke_run(input_data)
-        return self._normalize_output(result)
-
-    async def stream(self, payload: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-        """Stream results from the tool if supported."""
-        if self.kind != "tool":
-            raise ToolRegistryError(
-                f"Tool '{self.info.name}' does not support streaming operations"
-            )
-
-        if not self.supports_streaming:
-            raise ToolRegistryError(
-                f"Tool '{self.info.name}' does not support streaming"
-            )
-
-        input_data = self._prepare_input(payload)
-        async for chunk in self._invoke_stream(input_data):
-            yield self._normalize_output(chunk)
-
-    def _get_parameters_schema(self) -> dict[str, Any] | None:
-        schema = getattr(self.info, "parameters", None)
-        return schema or None
-
-    def _ensure_mapping(self, payload: Any) -> dict[str, Any]:
-        """Coerce the payload into a dictionary-like structure."""
-        if isinstance(payload, dict):
-            return dict(payload)
-
-        if hasattr(payload, "model_dump") and callable(payload.model_dump):
-            return dict(payload.model_dump())
-
-        if hasattr(payload, "dict") and callable(payload.dict):
-            return dict(payload.dict())
-
-        if isinstance(payload, str | bytes | bytearray):
-            try:
-                decoded = json.loads(payload)
-            except json.JSONDecodeError as err:
-                raise ValueError(
-                    "Could not parse string/bytes payload as JSON"
-                ) from err
-
-            if isinstance(decoded, dict):
-                return decoded
-            raise ValueError("JSON payload must decode to an object")
-
-        try:
-            return dict(payload)
-        except (TypeError, ValueError) as err:
-            raise ValueError(f"Cannot convert payload to dict: {err}") from err
-
-    def _transform_payload(self, payload: Any) -> Any:
-        """Transform input payload to match the expected format."""
-        if self.kind != "tool" or not self.has_input_validation:
-            return payload
-
-        try:
-            return ToolInputTransformer.transform(
-                payload, tool_info=self.info, tool_instance=self.instance
-            )
-        except Exception as e:
-            logger.warning(
-                "Error transforming input for tool '%s': %s",
-                self.info.name,
-                str(e),
-                exc_info=logger.isEnabledFor(logging.DEBUG),
-            )
-            return payload
-
-    def _validate_payload_against_model(
-        self, payload: Any, input_model: type[BaseModel]
-    ) -> Any:
-        """Validate and convert payload using the tool's input model."""
-        if not isinstance(input_model, type):
-            raise ValueError(
-                f"Expected a class/type for input_model, got {type(input_model).__name__}"
-            )
-
-        if isinstance(payload, input_model):
-            return payload
-
-        payload_dict = self._ensure_mapping(payload)
-
-        try:
-            return input_model.model_validate(payload_dict)
-        except ValidationError as model_error:
-            schema = self._get_parameters_schema()
-            if schema:
-                try:
-                    return self._validate_with_parameters_schema(payload_dict, schema)
-                except Exception as schema_error:
-                    logger.debug(
-                        "Falling back to parameters schema validation failed: %s",
-                        str(schema_error),
-                    )
-
-            raise model_error
-
-    def _validate_field_type(
-        self, value: Any, field_type: str, field_schema: dict
-    ) -> bool:
-        """Validate a field value against its declared type in the schema."""
-        if value is None:
-            return field_schema.get("nullable", False)
-
-        type_checkers = {
-            "string": lambda x: isinstance(x, str),
-            "number": lambda x: isinstance(x, int | float) and not isinstance(x, bool),
-            "integer": lambda x: isinstance(x, int) and not isinstance(x, bool),
-            "boolean": lambda x: isinstance(x, bool),
-            "array": lambda x: isinstance(x, list | tuple),
-            "object": lambda x: isinstance(x, dict),
-        }
-
-        # Handle union types (e.g., "string|null")
-        if "|" in field_type:
-            return any(
-                self._validate_field_type(value, t.strip(), field_schema)
-                for t in field_type.split("|")
-            )
-
-        # Handle array type with items schema
-        if field_type == "array" and "items" in field_schema:
-            if not isinstance(value, list | tuple):
-                return False
-
-            item_schema = field_schema["items"]
-            item_type = item_schema.get("type", "any")
-
-            return all(
-                self._validate_field_type(item, item_type, item_schema)
-                for item in value
-            )
-
-        # Handle standard types
-        checker = type_checkers.get(field_type, lambda x: True)
-        return checker(value)
-
-    def _validate_with_parameters_schema(self, payload: Any, schema: dict) -> dict:
-        """
-        Validate the payload against the parameters schema.
-
-        Args:
-            payload: The input payload to validate
-            schema: The parameters schema to validate against
-
-        Returns:
-            The validated payload as a dictionary
-
-        Raises:
-            ValueError: If validation fails
-        """
-        payload_dict = self._ensure_mapping(payload)
-
-        properties = schema.get("properties", {})
-        required_fields = schema.get("required", [])
-
-        missing_fields = [
-            field
-            for field in required_fields
-            if field not in payload_dict or payload_dict[field] is None
-        ]
-
-        if missing_fields:
-            raise ValueError(f"Missing required fields: {', '.join(missing_fields)}")
-
-        for field_name, field_schema in properties.items():
-            if field_name not in payload_dict:
-                continue
-
-            value = payload_dict[field_name]
-            if value is None:
-                continue
-
-            field_type = field_schema.get("type")
-            if field_type and not self._validate_field_type(
-                value, field_type, field_schema
-            ):
-                raise ValueError(
-                    f"Field '{field_name}' has invalid type. "
-                    f"Expected {field_type}, got {type(value).__name__}"
-                )
-
-            if "enum" in field_schema and value not in field_schema["enum"]:
-                raise ValueError(
-                    f"Field '{field_name}' must be one of {field_schema['enum']}"
-                )
-
-        return payload_dict
-
-    def _format_validation_error(self, exc: ValidationError) -> str:
-        """
-        Format validation error messages into a user-friendly string.
-
-        Args:
-            exc: The ValidationError to format
-
-        Returns:
-            A formatted error message string
-        """
-        errors = []
-        for error in exc.errors():
-            loc = ".".join(str(loc_part) for loc_part in error.get("loc", []))
-            msg = error.get("msg", "Validation error")
-            if loc:
-                errors.append(f"{loc}: {msg}")
-            else:
-                errors.append(msg)
-
-        if not errors:
-            return "Unknown validation error"
-
-        return "\n  - " + "\n  - ".join(errors)
-
-    def _prepare_input(self, payload: Any) -> Any:
-        """Validate and transform tool input."""
-        # Early return for non-tools
-        if self.kind != "tool":
-            return payload
-
-        # Transform the input to match the expected format
-        try:
-            payload = self._transform_payload(payload)
-        except Exception as e:
-            logger.warning(
-                "Error transforming input for tool '%s': %s",
-                self.info.name,
-                str(e),
-                exc_info=logger.isEnabledFor(logging.DEBUG),
-            )
-            # Continue with the original payload if transformation fails
-            pass
-
-        schema = self._get_parameters_schema()
-
-        input_model = getattr(self.instance, "Input", None)
-        if input_model is not None and issubclass(input_model, BaseModel):
-            try:
-                return self._validate_payload_against_model(payload, input_model)
-            except ValidationError as model_error:
-                error_msg = self._format_validation_error(model_error)
-                raise ToolRegistryError(
-                    f"Invalid input for tool '{self.info.name}':{error_msg}"
-                ) from model_error
-            except (ValueError, AttributeError) as exc:
-                raise ToolRegistryError(
-                    f"Invalid input for tool '{self.info.name}': {exc}"
-                ) from exc
-
-        if schema:
-            try:
-                return self._validate_with_parameters_schema(payload, schema)
-            except Exception as exc:
-                raise ToolRegistryError(
-                    f"Input validation failed for tool '{self.info.name}': {exc}"
-                ) from exc
-
-        # No validation to perform
-        return payload
-
-    async def _invoke_run(self, input_data: Any) -> Any:
-        """Invoke the underlying tool execution."""
-        if self.kind == "tool":
-            runner = getattr(self.instance, "run", None)
-            if runner is None:
-                raise ToolRegistryError(
-                    f"Tool '{self.info.name}' is missing a run implementation"
-                )
-
-            if self.run_is_async:
-                return await runner(input_data)
-
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, runner, input_data)
-
-        if self.kind == "mcp":
-            if not isinstance(input_data, dict):
-                raise ToolRegistryError(
-                    f"MCP tool '{self.info.name}' expects dictionary payloads"
-                )
-
-            runner = getattr(self.instance, "execute", None)
-            if runner is None:
-                raise ToolRegistryError(
-                    f"MCP tool '{self.info.name}' is missing an execute implementation"
-                )
-
-            if asyncio.iscoroutinefunction(runner):
-                return await runner(**input_data)
-
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, runner, input_data)
-
-        # Fallback for plain callables
-        runner = self.instance
-        if asyncio.iscoroutinefunction(runner):
-            return await runner(input_data)
-
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, runner, input_data)
-
-    async def _invoke_stream(self, input_data: Any) -> AsyncIterator[Any]:
-        """Invoke the streaming interface on the tool."""
-        stream_method = getattr(self.instance, "stream", None)
-        if stream_method is None:
-            raise ToolRegistryError(
-                f"Tool '{self.info.name}' does not implement streaming"
-            )
-
-        stream_obj = stream_method(input_data)
-
-        if inspect.isawaitable(stream_obj) and not inspect.isasyncgen(stream_obj):
-            stream_obj = await stream_obj
-
-        if hasattr(stream_obj, "__aiter__"):
-            async for chunk in stream_obj:
-                yield chunk
-            return
-
-        if inspect.isasyncgen(stream_obj):
-            async for chunk in stream_obj:
-                yield chunk
-            return
-
-        raise ToolRegistryError(
-            f"Streaming tool '{self.info.name}' must return an async iterator"
-        )
-
-    def _convert_to_dict(self, obj: Any) -> dict:
-        """Convert an object to a dictionary using the appropriate method.
-
-        Args:
-            obj: The object to convert to a dictionary
-
-        Returns:
-            The object converted to a dictionary
-        """
-        if hasattr(obj, "model_dump"):
-            return obj.model_dump()
-        if hasattr(obj, "dict"):
-            return obj.dict()
-        return self._coerce_to_serializable(obj)
-
-    def _validate_with_model(self, output_model: type[BaseModel], result: Any) -> Any:
-        """Validate the result against the output model.
-
-        Args:
-            output_model: The Pydantic model to validate against
-            result: The result to validate
-
-        Returns:
-            The validated result as a dictionary
-        """
-        if result is None:
-            validated = output_model()
-        elif isinstance(result, dict):
-            validated = output_model.model_validate(result)
-        elif hasattr(result, "model_dump"):
-            validated = output_model.model_validate(result.model_dump())
-        elif hasattr(result, "dict"):
-            validated = output_model.model_validate(result.dict())
-        else:
-            # Last resort - try to convert to dict
-            try:
-                validated = output_model.model_validate(dict(result))
-            except (TypeError, ValueError):
-                # If we can't convert to dict, try to create with the raw value
-                validated = output_model.model_validate({"result": result})
-
-        return self._convert_to_dict(validated)
-
-    def _normalize_output(self, result: Any) -> Any:
-        """Normalize tool outputs to dictionaries when appropriate.
-
-        Args:
-            result: The raw result from the tool execution
-
-        Returns:
-            The normalized result (usually a dictionary for Pydantic models)
-
-        Raises:
-            ToolRegistryError: If output validation fails
-        """
-        # If we don't have output validation, or it's not a tool, just make it serializable
-        if self.kind != "tool" or not self.has_output_validation:
-            return self._coerce_to_serializable(result)
-
-        # Get the output model from the tool
-        output_model = getattr(self.instance, "Output", None)
-        if output_model is None:
-            return self._coerce_to_serializable(result)
-
-        # Handle case where result is already the correct model
-        if isinstance(result, output_model):
-            return self._convert_to_dict(result)
-
-        try:
-            return self._validate_with_model(output_model, result)
-        except (ValidationError, ValueError, TypeError) as exc:
-            logger.error(
-                "Output validation failed for tool '%s': %s",
-                self.info.name,
-                str(exc),
-                exc_info=logger.isEnabledFor(logging.DEBUG),
-            )
-            # Return the original result if validation fails
-            return self._coerce_to_serializable(result)
-
-    @staticmethod
-    def _coerce_to_serializable(result: Any) -> Any:
-        if hasattr(result, "model_dump"):
-            return result.model_dump()
-        if hasattr(result, "dict"):
-            return result.dict()
-        return result
 
 
 class ToolManager(IToolManager, Iterable[Any]):
@@ -710,6 +51,7 @@ class ToolManager(IToolManager, Iterable[Any]):
     def __init__(
         self,
         config_manager: "IConfigManager",
+        sandbox_manager: "SandboxManager | None" = None,
         auto_load: bool = True,
         *,
         auto_load_registry: bool | None = None,
@@ -719,13 +61,24 @@ class ToolManager(IToolManager, Iterable[Any]):
         Args:
             config_manager: IConfigManager instance for tool configurations.
                 If not provided, a default one will be created.
+            sandbox_manager: Optional SandboxManager instance.
             auto_load: Whether to automatically load tools
             auto_load_registry: Legacy flag for tests/backwards compatibility
         """
         self._tools: dict[str, ToolInfo] = {}
         self._runtimes: dict[str, ToolRuntime] = {}
-        self._execution_stats: dict[str, dict[str, Any]] = {}
+        self._sandbox_tools: dict[str, ToolRuntime] = {}
+        self._statistics = StatisticsManager()
         self._config_manager: IConfigManager = config_manager
+        self._sandbox_manager = sandbox_manager
+
+        # Initialize the API generator with the sandbox's workspace if available
+        tools_api_output_dir = None
+        if sandbox_manager and self._config_manager.path_manager:
+            tools_api_output_dir = (
+                self._config_manager.path_manager.get_sandbox_guest_dir()
+            )
+        self._api_generator = ToolAPIGenerator(output_dir=tools_api_output_dir)
 
         if auto_load_registry is not None:
             auto_load = auto_load_registry
@@ -833,7 +186,7 @@ class ToolManager(IToolManager, Iterable[Any]):
         """
         self._tools.clear()
         self._runtimes.clear()
-        self._execution_stats.clear()
+        self._sandbox_tools.clear()
 
         try:
             # Get tool configs from ConfigManager
@@ -859,7 +212,6 @@ class ToolManager(IToolManager, Iterable[Any]):
                         logger.debug(
                             "Skipping instance creation for disabled tool: %s", tool_id
                         )
-                        self._execution_stats[tool_id] = self._create_stats_bucket()
                         continue
 
                     # Skip instance creation for unavailable tools
@@ -868,12 +220,16 @@ class ToolManager(IToolManager, Iterable[Any]):
                             "Skipping instance creation for unavailable tool: %s",
                             tool_id,
                         )
-                        self._execution_stats[tool_id] = self._create_stats_bucket()
                         continue
 
                     runtime = self._build_runtime(tool_id, tool_info)
+
+                    # Track sandbox tools separately
+                    if tool_info.source == ToolSource.SANDBOX:
+                        self._sandbox_tools[tool_id] = runtime
+                        logger.debug("Registered sandbox tool: %s", tool_id)
+
                     self._runtimes[tool_id] = runtime
-                    self._execution_stats[tool_id] = self._create_stats_bucket()
                     logger.debug("Successfully initialized tool runtime: %s", tool_id)
 
                 except Exception as e:
@@ -887,6 +243,24 @@ class ToolManager(IToolManager, Iterable[Any]):
         except Exception as e:
             logger.error("Error loading tools: %s", str(e), exc_info=True)
             raise RuntimeError(f"Failed to load tools: {e}") from e
+
+        # Generate tools API for sandbox tools if any exist
+        if self._sandbox_tools and self._sandbox_manager:
+            try:
+                logger.info(
+                    "Generating tools API for %d sandbox tools",
+                    len(self._sandbox_tools),
+                )
+                self.generate_tools_api(self._sandbox_tools)
+                logger.info("Successfully generated tools API for sandbox tools")
+            except Exception as e:
+                logger.error(
+                    "Failed to generate tools API for sandbox tools: %s",
+                    str(e),
+                    exc_info=True,
+                )
+                # Don't fail the entire tool loading process if API generation fails
+                # The sandbox may still work with direct tool imports
 
     def reload_tools(self) -> None:
         """Reload tools from configuration files.
@@ -960,17 +334,53 @@ class ToolManager(IToolManager, Iterable[Any]):
             runtime = self._get_runtime(tool_name)
             result = self._run_sync(runtime.execute(request.payload))
             execution_time_ms = (time.perf_counter() - start_time) * 1000
-            self._record_success(tool_name, execution_time_ms / 1000.0)
+            self._run_sync(self._record_success(tool_name, execution_time_ms / 1000.0))
 
+            # Handle sandbox tool responses
+            if hasattr(runtime.instance, "sandbox_manager") and isinstance(
+                result, dict
+            ):
+                # Check for final answer from sandbox
+                if "final_answer" in result and result["final_answer"] is not None:
+                    final_answer = result["final_answer"]
+                    return ToolExecutionResponse(
+                        success=True,
+                        tool_name="final_answer",
+                        result=final_answer.get("answer"),
+                        format=final_answer.get("format", "text"),
+                        metadata=final_answer.get("metadata", {}),
+                        is_final=True,
+                        execution_time_ms=execution_time_ms,
+                        stdout=result.get("stdout"),
+                        stderr=result.get("stderr"),
+                    )
+
+                # Handle regular sandbox responses
+                error_message = result.get("error_message", result.get("error"))
+                return ToolExecutionResponse(
+                    success=result.get("success", True),
+                    tool_name=tool_name,
+                    result=result.get("result"),
+                    error_message=error_message,
+                    execution_time_ms=execution_time_ms,
+                    stdout=result.get("stdout"),
+                    stderr=result.get("stderr"),
+                    files_created=result.get("files_created"),
+                    files_modified=result.get("files_modified"),
+                )
+
+            # Handle standard tool responses
             return ToolExecutionResponse(
                 success=True,
-                result=result,
                 tool_name=tool_name,
+                result=result,
                 execution_time_ms=execution_time_ms,
             )
         except Exception as exc:
             execution_time_ms = (time.perf_counter() - start_time) * 1000
-            self._record_error(tool_name, execution_time_ms / 1000.0, exc)
+            self._run_sync(
+                self._record_error(tool_name, execution_time_ms / 1000.0, exc)
+            )
             error_msg = f"Error executing tool '{tool_name}': {exc}"
             logger.exception(error_msg)
 
@@ -992,24 +402,103 @@ class ToolManager(IToolManager, Iterable[Any]):
         Returns:
             ToolExecutionResponse with execution results.
         """
-        tool_name = request.tool_name
         start_time = time.perf_counter()
+        tool_name = request.tool_name
+        payload = request.payload or {}
 
         try:
+            # Get the tool runtime
             runtime = self._get_runtime(tool_name)
-            result = await runtime.execute(request.payload)
+            result = await runtime.execute(payload)
             execution_time_ms = (time.perf_counter() - start_time) * 1000
-            self._record_success(tool_name, execution_time_ms / 1000.0)
 
-            return ToolExecutionResponse(
-                success=True,
-                result=result,
-                tool_name=tool_name,
-                execution_time_ms=execution_time_ms,
-            )
+            # Handle sandbox responses
+            if result and result.get("response"):
+                result = result.get("response")
+                # Extract tool_calls and system_metrics from result
+                tool_calls = (
+                    result.get("tool_calls") if result.get("tool_calls") else None
+                )
+                system_metrics = (
+                    result.get("system_metrics")
+                    if result.get("system_metrics")
+                    else None
+                )
+
+                # If no tool_calls, but we have a result, create a synthetic tool call
+                if not tool_calls and result.get("result"):
+                    tool_calls = [
+                        {
+                            "tool_name": tool_name,
+                            "result": result.get("result"),
+                            "start_time": datetime.now(UTC)
+                            - timedelta(seconds=execution_time_ms / 1000.0),
+                            "end_time": datetime.now(UTC),
+                            "success": True,
+                            "resource_metrics": system_metrics or [],
+                        }
+                    ]
+
+                await self._record_success(
+                    tool_name,
+                    execution_time_ms / 1000.0,
+                    tool_calls=tool_calls,
+                    system_metrics=system_metrics,
+                )
+
+                # Check for final answer from sandbox
+                if result.get("final_answer"):
+                    final_answer = result.get("final_answer")
+                    return ToolExecutionResponse(
+                        success=True,
+                        tool_name="final_answer",
+                        result=final_answer.get("answer"),
+                        format=final_answer.get("format", "text"),
+                        metadata=final_answer.get("metadata", {}),
+                        is_final=True,
+                        execution_time_ms=execution_time_ms,
+                        stdout=result.get("stdout"),
+                        stderr=result.get("stderr"),
+                    )
+
+                # Handle regular sandbox responses
+                return ToolExecutionResponse(
+                    success=result.get("success"),
+                    tool_name=tool_name,
+                    result=result.get("result"),
+                    error_message=result.get("error"),
+                    execution_time_ms=execution_time_ms,
+                    stdout=result.get("stdout"),
+                    stderr=result.get("stderr"),
+                    files_created=result.get("files_created"),
+                    files_modified=result.get("files_modified"),
+                )
+
+            else:
+                # Handle non-SandboxExecutionResponse results (legacy)
+                await self._record_success(tool_name, execution_time_ms / 1000.0)
+
+                return ToolExecutionResponse(
+                    success=True,
+                    tool_name=tool_name,
+                    result=result,
+                    execution_time_ms=execution_time_ms,
+                )
+
         except Exception as exc:
             execution_time_ms = (time.perf_counter() - start_time) * 1000
-            self._record_error(tool_name, execution_time_ms / 1000.0, exc)
+            # Get resource_usage from exception if it's a SandboxExecutionError
+            resource_usage = (
+                getattr(exc, "resource_usage", None)
+                if hasattr(exc, "resource_usage")
+                else None
+            )
+            await self._record_error(
+                tool_name,
+                execution_time_ms / 1000.0,
+                exc,
+                resource_usage=resource_usage,
+            )
             error_msg = f"Error executing tool '{tool_name}': {exc}"
             logger.exception(error_msg)
 
@@ -1061,9 +550,80 @@ class ToolManager(IToolManager, Iterable[Any]):
 
         return [info for info in filtered_tools if info.category == category]
 
-    def get_execution_stats(self) -> dict[str, dict[str, Any]]:
-        """Get execution statistics for all tools."""
-        return self._execution_stats.copy()
+    def get_execution_stats(self, tool_name: str | None = None) -> dict:
+        """Get execution statistics for tools.
+
+        Args:
+            tool_name: Optional name of the tool to get stats for. If None, returns all stats.
+
+        Returns:
+            Dictionary containing execution statistics.
+        """
+        if tool_name:
+            tool_stats = self._statistics.get_tool_stats(tool_name)
+            if tool_stats and isinstance(tool_stats, ToolStatistics):
+                return {
+                    "total_executions": tool_stats.total_executions,
+                    "success_count": tool_stats.success_count,
+                    "error_count": tool_stats.error_count,
+                    "success_rate": tool_stats.success_rate,
+                    "avg_duration": tool_stats.avg_duration,
+                    "first_execution": tool_stats.first_execution,
+                    "last_execution": tool_stats.last_execution,
+                    "metrics_summary": tool_stats.get_metrics_summary(),
+                }
+            return {}
+
+        # Return all tools' stats
+        result = {}
+        for name in self._tools:
+            tool_stats = self._statistics.get_tool_stats(name)
+            if tool_stats and isinstance(tool_stats, ToolStatistics):
+                result[name] = {
+                    "total_executions": tool_stats.total_executions,
+                    "success_count": tool_stats.success_count,
+                    "error_count": tool_stats.error_count,
+                    "success_rate": tool_stats.success_rate,
+                    "avg_duration": tool_stats.avg_duration,
+                    "first_execution": tool_stats.first_execution,
+                    "last_execution": tool_stats.last_execution,
+                    "metrics_summary": tool_stats.get_metrics_summary(),
+                }
+        return result
+
+    def get_metric_history(
+        self,
+        metric_name: str,
+        tool_name: str | None = None,
+        time_range: tuple[datetime, datetime] | None = None,
+    ) -> list[dict]:
+        """Get historical data for a specific metric.
+
+        Args:
+            metric_name: Name of the metric to retrieve
+            tool_name: Optional tool name to filter by
+            time_range: Optional (start, end) datetime range to filter by
+
+        Returns:
+            List of metric values with timestamps
+        """
+        return self._statistics.get_metric_history(metric_name, tool_name, time_range)
+
+    def get_system_stats(self) -> dict:
+        """Get system-wide statistics.
+
+        Returns:
+            Dictionary containing system statistics
+        """
+        stats = self._statistics.get_system_stats()
+        return {
+            "total_executions": stats.total_executions,
+            "total_duration": stats.total_duration,
+            "avg_duration": stats.avg_duration,
+            "first_execution": stats.first_execution,
+            "last_execution": stats.last_execution,
+            "metrics_summary": stats.get_metrics_summary(),
+        }
 
     def run_tool(
         self,
@@ -1111,55 +671,102 @@ class ToolManager(IToolManager, Iterable[Any]):
         try:
             result = await runtime.execute(parameters)
             execution_time = time.perf_counter() - start_time
-            self._record_success(tool_name, execution_time)
+            await self._record_success(tool_name, execution_time)
             return result
         except Exception as exc:
             execution_time = time.perf_counter() - start_time
-            self._record_error(tool_name, execution_time, exc)
+            await self._record_error(tool_name, execution_time, exc)
             raise ToolRegistryError(
                 f"Error executing tool '{tool_name}': {exc}"
             ) from exc
 
-    def _create_stats_bucket(self) -> dict[str, Any]:
-        return {
-            "call_count": 0,
-            "error_count": 0,
-            "last_called": None,
-            "average_duration": 0.0,
-            "last_error": None,
-            "last_error_time": None,
-        }
+    async def _record_success(
+        self,
+        tool_name: str,
+        duration_sec: float,
+        tool_calls: list[dict] | None = None,
+        system_metrics: list[dict] | None = None,
+    ) -> None:
+        """Record a successful tool execution with detailed metrics.
 
-    def _ensure_stats_bucket(self, tool_name: str) -> dict[str, Any]:
-        return self._execution_stats.setdefault(tool_name, self._create_stats_bucket())
-
-    def _record_invocation(self, stats: dict[str, Any], duration_sec: float) -> None:
-        stats["call_count"] += 1
-        stats["last_called"] = time.time()
-        stats["average_duration"] = (
-            duration_sec
-            if stats["average_duration"] == 0.0
-            else 0.8 * stats["average_duration"] + 0.2 * duration_sec
+        Args:
+            tool_name: Name of the tool that was executed
+            duration_sec: Total execution time in seconds
+            tool_calls: List of tool calls with their individual metrics
+            system_metrics: List of system-level metrics from the sandbox
+        """
+        # Log basic execution info
+        logger.debug(
+            "Tool '%s' executed successfully in %.2fs", tool_name, duration_sec
         )
 
-    def _record_success(self, tool_name: str, duration_sec: float) -> None:
-        stats = self._ensure_stats_bucket(tool_name)
-        self._record_invocation(stats, duration_sec)
+        # Record system metrics if available
+        if system_metrics:
+            logger.debug("Recording %d system metrics", len(system_metrics))
+            await self._statistics.record_system_metrics(system_metrics, duration_sec)
 
-    def _record_error(
-        self, tool_name: str, duration_sec: float, error: Exception
+        # Record tool calls if available
+        if tool_calls:
+            logger.debug("Recording %d tool calls", len(tool_calls))
+            for call in tool_calls:
+                try:
+                    # Create a unique call ID by hashing a string representation of the call
+                    call_id = call.get("call_id")
+                    if not call_id:
+                        # Create a stable string representation of the call
+                        call_repr = f"{call.get('tool_name', tool_name)}:{call.get('start_time')}:{call.get('end_time')}"
+                        call_id = str(hash(call_repr))
+
+                    await self._statistics.record_tool_call(
+                        tool_name=call.get("tool_name", tool_name),
+                        call_id=call_id,
+                        start_time=call.get("start_time", datetime.now(UTC)),
+                        end_time=call.get("end_time", datetime.now(UTC)),
+                        success=call.get("success", True),
+                        error=call.get("error"),
+                        resource_metrics=call.get("resource_metrics", []),
+                        metadata=call.get("metadata", {}),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Failed to record tool call metrics: %s", str(e), exc_info=True
+                    )
+        else:
+            # If no tool calls, record the main tool execution
+            await self._statistics.record_tool_call(
+                tool_name=tool_name,
+                call_id=str(hash((tool_name, time.time()))),
+                start_time=datetime.now(UTC) - timedelta(seconds=duration_sec),
+                end_time=datetime.now(UTC),
+                success=True,
+                resource_metrics=system_metrics or [],
+            )
+
+    async def _record_error(
+        self,
+        tool_name: str,
+        duration_sec: float,
+        error: Exception,
+        resource_usage: dict | None = None,
     ) -> None:
-        stats = self._ensure_stats_bucket(tool_name)
-        self._record_invocation(stats, duration_sec)
-        stats["error_count"] += 1
-        stats["last_error"] = str(error)
-        stats["last_error_time"] = time.time()
-
         logger.error(
             "Error in tool '%s': %s",
             tool_name,
             str(error),
             exc_info=logger.isEnabledFor(logging.DEBUG),
+        )
+
+        # Record the error in the statistics system
+        await self._statistics.record_tool_call(
+            tool_name=tool_name,
+            call_id=str(hash((tool_name, time.time()))),
+            start_time=datetime.now(UTC) - timedelta(seconds=duration_sec),
+            end_time=datetime.now(UTC),
+            success=False,
+            error=str(error),
+            resource_metrics=[resource_usage]
+            if resource_usage and isinstance(resource_usage, dict)
+            else [],
         )
 
     def _build_runtime(self, tool_id: str, tool_info: "ToolInfo") -> "ToolRuntime":
@@ -1206,6 +813,10 @@ class ToolManager(IToolManager, Iterable[Any]):
             run_is_async = tool_info.is_async
             supports_streaming = tool_info.supports_streaming
 
+            # Inject sandbox_manager into tools that need it
+            if hasattr(tool_instance, "sandbox_manager") and self._sandbox_manager:
+                tool_instance.sandbox_manager = self._sandbox_manager
+
             # Check for input/output validation models
             has_input_validation = (
                 hasattr(tool_instance, "Input")
@@ -1221,8 +832,8 @@ class ToolManager(IToolManager, Iterable[Any]):
                 else False
             )
 
-            # Create and return the runtime
-            return ToolRuntime(
+            # Create the runtime
+            tool_runtime = ToolRuntime(
                 info=tool_info,
                 instance=tool_instance,
                 kind=kind,
@@ -1231,6 +842,9 @@ class ToolManager(IToolManager, Iterable[Any]):
                 has_input_validation=has_input_validation,
                 has_output_validation=has_output_validation,
             )
+
+            # Return the runtime
+            return tool_runtime
 
         except Exception as e:
             logger.error(
@@ -1296,6 +910,261 @@ class ToolManager(IToolManager, Iterable[Any]):
             has_output_validation=has_output_validation,
         )
 
+    def get_sandbox_tools_prompt(self) -> str:
+        """Generate prompt segment for non-sandbox tools in PTC mode.
+
+        Returns:
+            Formatted string containing tool documentation and usage examples
+            for non-sandbox tools, or an empty string if no tools found.
+        """
+        prompt_segments = []
+
+        for tool_name, tool_info in self._tools.items():
+            # Skip none-sandbox tools
+            if tool_info.source != ToolSource.SANDBOX:
+                continue
+
+            if not tool_info.available:
+                continue
+
+            # Use tool_info.description as the main description
+            description = tool_info.description or "No description available."
+
+            # Generate parameter documentation
+            parameters = tool_info.parameters.get("properties", {})
+            required_params = tool_info.parameters.get("required", [])
+
+            # Format parameters section
+            params_doc = []
+            for param_name, param_schema in parameters.items():
+                param_type = param_schema.get("type", "Any")
+                param_desc = param_schema.get(
+                    "description", "No description available."
+                )
+                is_required = param_name in required_params
+                req_text = " (required)" if is_required else " (optional)"
+                params_doc.append(
+                    f"  - {param_name}: {param_desc} [Type: {param_type}]{req_text}"
+                )
+
+            # Format the tool documentation
+            tool_doc = f"""
+## {tool_name}
+
+{description}
+
+### Parameters:
+{"\n".join(params_doc) if params_doc else "No parameters."}
+
+### Usage Example:
+```python
+from tools_api import {tool_name}
+"""
+
+            # Generate example with individual parameters instead of a dictionary
+            if parameters:
+                # Create a list of parameter assignments
+                param_assignments = []
+                for param_name, param_schema in parameters.items():
+                    param_type = param_schema.get("type", "Any")
+                    if isinstance(param_type, list):
+                        param_type = param_type[0] if param_type else "Any"
+                    param_assignments.append(
+                        f"{param_name}=<{param_name}: {param_type}>"
+                    )
+
+                # Add the function call with individual parameters
+                tool_doc += f"\nresult = {tool_name}({', '.join(param_assignments)})"
+            else:
+                tool_doc += f"\nresult = {tool_name}()"
+
+            # Add the rest of the example
+            tool_doc += """
+print(result)
+```"""
+
+            prompt_segments.append(tool_doc.strip())
+
+        return "\n\n".join(prompt_segments) if prompt_segments else ""
+
+    async def _build_sandbox_result_string(
+        self, sandbox_result: dict, tool_name: str, session_id: str
+    ) -> str:
+        """Build a detailed result string from sandbox execution.
+
+        Args:
+            sandbox_result: The result dictionary from sandbox execution
+            tool_name: Name of the executed tool
+            session_id: ID of the sandbox session
+
+        Returns:
+            Formatted string with execution details
+        """
+        result = [
+            "=== Sandbox Execution Details ===",
+            f"Tool: {tool_name}",
+            f"Session: {session_id}",
+            f"Duration: {sandbox_result.get('duration', 0):.2f}s",
+            f"Exit Code: {sandbox_result.get('return_code', 'N/A')}",
+        ]
+
+        # Add the actual result if present
+        if sandbox_result.get("result"):
+            result.extend(["\n--- Result ---", str(sandbox_result.get("result"))])
+
+        # Add stdout if present
+        if sandbox_result.get("stdout"):
+            result.extend(
+                ["\n--- Standard Output ---", sandbox_result.get("stdout", "").strip()]
+            )
+
+        # Add stderr if present
+        if sandbox_result.get("stderr"):
+            result.extend(
+                ["\n--- Standard Error ---", sandbox_result.get("stderr", "").strip()]
+            )
+
+        # Add file operations if present
+        files_created = sandbox_result.get("files_created")
+        if files_created and isinstance(files_created, list):
+            result.append("\n--- Files Created ---")
+            result.extend(f"- {f}" for f in files_created)
+
+        files_modified = sandbox_result.get("files_modified")
+        if files_modified and isinstance(files_modified, list):
+            result.append("\n--- Files Modified ---")
+            result.extend(f"- {f}" for f in files_modified)
+
+        return "\n".join(result)
+
+    async def execute_tool_in_sandbox(
+        self, tool_name: str, payload: dict[str, Any], session_id: str = "default"
+    ) -> str:
+        """Execute a tool in a sandboxed environment.
+
+        Args:
+            tool_name: Name of the tool to execute
+            payload: Input parameters for the tool
+            session_id: Session ID for the sandbox
+
+        Returns:
+            A formatted string with all sandbox execution details
+
+        Raises:
+            ToolRegistryError: If sandbox execution fails or sandbox is not available
+        """
+        start_time = time.perf_counter()
+
+        # Get the tool's runtime
+        runtime = self._get_runtime("execute_python_code")
+
+        # Generate code that imports and calls the tool
+        tool_call_code = await self._generate_tool_call_code(tool_name, payload)
+
+        if (
+            not runtime.instance
+            or not hasattr(runtime.instance, "sandbox_manager")
+            or not runtime.instance.sandbox_manager
+        ):
+            error_msg = "Sandbox execution is not available. Make sure the sandbox tools are registered."
+            execution_time = (time.perf_counter() - start_time) * 1000
+            await self._record_error(
+                "execute_python_code", execution_time / 1000.0, Exception(error_msg)
+            )
+            raise ToolRegistryError(error_msg)
+
+        # Execute the code in the sandbox
+        try:
+            # The ExecutePythonCodeTool returns a dict with success, result, stdout, stderr, error
+            sandbox_result = await runtime.execute(
+                {"code": tool_call_code, "session_id": session_id}
+            )
+            sandbox_result = sandbox_result.get("response")
+            logger.debug(f"sandbox_result: {sandbox_result}")
+
+            execution_time = (time.perf_counter() - start_time) * 1000  # in ms
+
+            # If the sandbox execution itself failed
+            if not isinstance(sandbox_result, dict) or not sandbox_result.get(
+                "success"
+            ):
+                error = (
+                    sandbox_result.get("error", "Unknown error in sandbox execution")
+                    if isinstance(sandbox_result, dict)
+                    else "Invalid response from sandbox"
+                )
+                error_msg = f"Sandbox execution failed: {error}"
+                await self._record_error(
+                    "execute_python_code", execution_time / 1000.0, Exception(error_msg)
+                )
+                raise ToolRegistryError(f"Sandbox execution failed: {error_msg}")
+
+            # Extract resource metrics
+            resource_metrics = []
+            if sandbox_result.get("tool_calls"):
+                tool_call = next(iter(sandbox_result.get("tool_calls")))
+                if tool_call.get("resource_metrics"):
+                    resource_metrics = tool_call.get("resource_metrics")
+
+            # Record successful execution
+            await self._record_success(
+                tool_name,
+                execution_time / 1000.0,  # Convert to seconds
+                tool_calls=[
+                    {
+                        "tool_name": tool_name,
+                        "result": sandbox_result.get("result"),
+                        "start_time": sandbox_result.get("start_time"),
+                        "end_time": sandbox_result.get("end_time") or datetime.now(UTC),
+                        "success": True,
+                        "resource_metrics": resource_metrics,
+                    }
+                ],
+                system_metrics=sandbox_result.get("system_metrics"),
+            )
+
+            # Build and return the result string
+            return await self._build_sandbox_result_string(
+                sandbox_result, tool_name, session_id
+            )
+
+        except ToolRegistryError as e:
+            # Re-raise ToolRegistryError as is, but record the error first
+            execution_time = (time.perf_counter() - start_time) * 1000
+            await self._record_error(tool_name, execution_time / 1000.0, e)
+            raise
+
+        except Exception as e:
+            execution_time = (time.perf_counter() - start_time) * 1000
+            await self._record_error(tool_name, execution_time / 1000.0, e)
+            raise ToolRegistryError(f"Error during sandbox execution: {e!s}") from e
+
+    async def _generate_tool_call_code(
+        self, tool_name: str, payload: dict[str, Any]
+    ) -> str:
+        """Generate Python code to call a tool with the given payload.
+
+        Args:
+            tool_name: Name of the tool to call
+            payload: Arguments to pass to the tool
+
+        Returns:
+            Python code as a string
+        """
+        # Convert payload to a properly formatted dictionary string
+        args_str = ", ".join(f"{k}={v!r}" for k, v in payload.items())
+
+        tool_call_code = f"""
+from tools_api import {tool_name}
+
+# Call the tool with the provided arguments
+result = {tool_name}({args_str})
+
+print(result)
+        """
+
+        return tool_call_code
+
     def _get_runtime(self, tool_name: str) -> ToolRuntime:
         """Get the runtime instance for a tool.
 
@@ -1343,32 +1212,12 @@ class ToolManager(IToolManager, Iterable[Any]):
         Raises:
             ToolRegistryError: If tool execution fails or tool is not async
         """
-        start_time = time.time()
 
-        try:
-            runtime = self._get_runtime(tool_name)
+        response = await self.execute_async(
+            ToolExecutionRequest(tool_name=tool_name, payload=payload)
+        )
 
-            if runtime.supports_streaming:
-                raise ToolRegistryError(
-                    f"Tool '{tool_name}' supports streaming. Use stream_tool() instead."
-                )
-
-            logger.info("Executing async tool: %s", tool_name)
-            result = await runtime.execute(payload)
-
-            # Record success with execution time in ms
-            execution_time = (time.time() - start_time) * 1000
-            self._record_success(tool_name, execution_time)
-            logger.info("Async tool '%s' executed in %.2fms", tool_name, execution_time)
-
-            return result if result is not None else {}
-
-        except Exception as e:
-            execution_time = (time.time() - start_time) * 1000
-            self._record_error(tool_name, execution_time, e)
-            error_msg = f"Error executing async tool '{tool_name}': {e!s}"
-            logger.exception(error_msg)
-            raise ToolRegistryError(error_msg) from e
+        return response.model_dump()
 
     async def stream_tool(
         self, tool_name: str, payload: dict[str, Any]
@@ -1406,14 +1255,84 @@ class ToolManager(IToolManager, Iterable[Any]):
 
             # Record success with execution time in ms
             execution_time = (time.time() - start_time) * 1000
-            self._record_success(tool_name, execution_time)
+            await self._record_success(tool_name, execution_time)
             logger.info(
                 "Streaming tool '%s' completed in %.2fms", tool_name, execution_time
             )
 
         except Exception as e:
             execution_time = (time.time() - start_time) * 1000
-            self._record_error(tool_name, execution_time, e)
+            await self._record_error(tool_name, execution_time, e)
             error_msg = f"Error streaming from tool '{tool_name}': {e!s}"
             logger.exception(error_msg)
             raise ToolRegistryError(error_msg) from e
+
+    async def run_programmatic_tool_call(
+        self,
+        code: str,
+        session_id: str | None = None,
+        env_vars: dict[str, str] | None = None,
+    ) -> ToolExecutionResponse:
+        """Execute code using the programmatic tool calling interface (sandbox).
+
+        Args:
+            code: The Python code to execute.
+            session_id: The session ID for context persistence.
+            env_vars: Optional environment variables.
+
+        Returns:
+            The execution response.
+        """
+        if not self._sandbox_manager:
+            return ToolExecutionResponse(
+                tool_name="execute_python_code",
+                success=False,
+                error_message="Sandbox manager is not initialized",
+                result="",
+                execution_time_ms=0,
+            )
+
+        if not session_id:
+            session_id = self._config_manager.global_config.sandbox.session_id
+
+        request = ToolExecutionRequest(
+            tool_name="execute_python_code",
+            payload={"code": code, "session_id": session_id, "env_vars": env_vars},
+        )
+
+        return await self.execute_async(request)
+
+    def generate_tools_api(
+        self, tools: dict[str, "ToolRuntime"], output_dir: str | None = None
+    ) -> str:
+        """Generate the tools API module.
+
+        Args:
+            tools: Dictionary of tools to generate the API for.
+            output_dir: Directory to generate the API in. If None, uses the sandbox workspace.
+
+        Returns:
+            Path to the generated API directory
+
+        Note:
+            If sandbox is enabled, the tools will be available at /app/tools in the container.
+            The directory structure will be:
+            - /app/tools/tools_api/__init__.py
+            - /app/tools/tools_api/tools_api.py
+        """
+        return self._api_generator.generate(tools, output_dir)
+
+    def cleanup(self) -> None:
+        """Clean up any resources used by the tool manager."""
+        if hasattr(self, "_api_generator"):
+            self._api_generator.cleanup()
+
+        # Clear all tool collections
+        self._tools.clear()
+        self._runtimes.clear()
+        self._sandbox_tools.clear()
+
+    # Update __del__ to call cleanup
+    def __del__(self):
+        """Clean up when the tool manager is destroyed."""
+        self.cleanup()
