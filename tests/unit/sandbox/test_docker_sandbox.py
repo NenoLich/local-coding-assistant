@@ -10,6 +10,7 @@ import pytest
 
 from local_coding_assistant.config.schemas import SandboxConfig, SandboxLoggingConfig
 from local_coding_assistant.sandbox.docker_sandbox import DockerSandbox
+from local_coding_assistant.sandbox.exceptions import SandboxRuntimeError
 from local_coding_assistant.sandbox.sandbox_types import (
     ResourceType,
     SandboxExecutionResponse,
@@ -94,7 +95,7 @@ async def test_logs_directory_sanitizes_configured_path(sandbox_project_root: Pa
 def test_paths_access_requires_initialization(sandbox_project_root: Path) -> None:
     sandbox = DockerSandbox(path_manager=FakePathManager(sandbox_project_root))
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(SandboxRuntimeError):
         _ = sandbox._project_root
 
 
@@ -173,7 +174,7 @@ def test_validate_persistent_capacity_enforces_limit(
     )
     sandbox._containers["active"] = DummyContainer()
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(SandboxRuntimeError):
         sandbox._validate_persistent_capacity()
 
 

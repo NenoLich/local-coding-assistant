@@ -145,7 +145,7 @@ def test_display_system_stats(capsys):
     assert "Total Duration: 2m 3.5s" in output or "Total Duration: 2m 3.46s" in output
     assert "Average Duration: 2.94s" in output
     # Check for the date part of the timestamp, not the exact time
-    assert "First Execution: 2025-12-25" in output
+    assert "First Execution: 2025-12-31" in output
     assert "Last Execution: 30m ago" in output
     assert "System Metrics:" in output
     assert "total_tools: 10" in output

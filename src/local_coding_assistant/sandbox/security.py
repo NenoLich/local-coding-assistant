@@ -1,7 +1,11 @@
 """Security manager for the sandbox environment."""
 
+from __future__ import annotations
+
 import ast
 import re
+
+from .exceptions import SandboxSecurityError, SandboxToolImportError
 
 
 class SecurityManager:
@@ -55,7 +59,7 @@ class SecurityManager:
             skip_validation: If True, skip validation (use with caution)
 
         Raises:
-            SecurityError: If code violates security rules and skip_validation is False.
+            SandboxSecurityViolation: If code violates security rules.
         """
         if skip_validation:
             return
@@ -63,7 +67,7 @@ class SecurityManager:
         # Check blocked patterns
         for pattern in self.blocked_patterns:
             if re.search(pattern, code):
-                raise SecurityError(f"Code contains blocked pattern: {pattern}")
+                raise SandboxSecurityError(f"Code contains blocked pattern: {pattern}")
 
         # Rest of the validation remains the same...
         try:
@@ -88,11 +92,7 @@ class SecurityManager:
         # Simple check: is the top-level module allowed?
         top_level = module_name.split(".")[0]
         if top_level not in self.allowed_imports:
-            # Check if it's a sub-module of an allowed import
-            pass  # TODO: Implement stricter checking if needed
-            # For now, if allowed_imports is set, we enforce it strictly.
-            if top_level not in self.allowed_imports:
-                raise SecurityError(f"Import not allowed: {module_name}")
+            raise SandboxToolImportError(f"Import not allowed: {module_name}")
 
     def validate_command(self, command: str) -> None:
         """Validate shell command."""
@@ -102,10 +102,4 @@ class SecurityManager:
 
         base_cmd = cmd_parts[0]
         if base_cmd in self.blocked_shell_commands:
-            raise SecurityError(f"Shell command not allowed: {base_cmd}")
-
-
-class SecurityError(Exception):
-    """Exception raised for security violations."""
-
-    pass
+            raise SandboxSecurityError(f"Shell command not allowed: {base_cmd}")

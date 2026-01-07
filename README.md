@@ -167,6 +167,17 @@ All paths in configuration files can use the `@` aliases (e.g., `@data/models`) 
 │       ├── core/             # Core infrastructure
 │       ├── providers/        # LLM provider implementations
 │       ├── runtime/          # Runtime and session management
+│       ├── sandbox/          # Secure code execution environment
+│       │   ├── guest/        # Guest-side sandbox components
+│       │   │   ├── agent.py  # Guest agent implementation
+│       │   │   ├── resource_tracker.py # Resource usage monitoring
+│       │   │   ├── session.py # Session management
+│       │   │   └── tools_api.py # Tool API for guest environment
+│       │   ├── base.py       # Base sandbox interfaces
+│       │   ├── docker_sandbox.py # Docker-based sandbox implementation
+│       │   ├── manager.py    # Sandbox lifecycle management
+│       │   ├── sandbox_types.py # Type definitions for sandbox
+│       │   └── security.py   # Security policies and validations
 │       ├── tools/            # Tool system
 │       │   ├── base/         # Base tool classes and schemas
 │       │   └── tool_registry.py # Tool registration and management

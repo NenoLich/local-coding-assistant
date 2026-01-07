@@ -36,6 +36,12 @@ from local_coding_assistant.config.path_manager import PathManager
 from local_coding_assistant.utils.logging import get_logger
 
 from .base import ISandbox
+from .exceptions import (
+    SandboxOutputFormatError,
+    SandboxRuntimeError,
+    SandboxSecurityError,
+    SandboxTimeoutError,
+)
 from .sandbox_types import (
     ResourceMetric,
     ResourceType,
@@ -43,7 +49,7 @@ from .sandbox_types import (
     SandboxExecutionResponse,
     ToolCallMetric,
 )
-from .security import SecurityError, SecurityManager
+from .security import SecurityManager
 
 logger = get_logger("sandbox.docker")
 
@@ -162,7 +168,7 @@ class DockerSandbox(ISandbox):
 
     def _paths_or_raise(self) -> SandboxPaths:
         if not self._state.paths:
-            raise RuntimeError(
+            raise SandboxRuntimeError(
                 "Sandbox paths have not been initialized. Call ensure_directories first."
             )
         return self._state.paths
@@ -252,7 +258,9 @@ class DockerSandbox(ISandbox):
                 self._client.ping()
             except Exception as e:
                 logger.error("Failed to initialize Docker client: %s", e)
-                raise RuntimeError("Docker is not running or not installed") from e
+                raise SandboxRuntimeError(
+                    "Docker is not running or not installed"
+                ) from e
 
     async def ensure_directories(self) -> SandboxPaths:
         """Ensure directories exist and cache resolved paths."""
@@ -381,14 +389,14 @@ class DockerSandbox(ISandbox):
         """Ensure the number of persistent sessions does not exceed the configured limit."""
         persistent_count = sum(1 for cid in self._containers if cid != "default")
         if persistent_count >= self.max_sessions:
-            raise RuntimeError(
+            raise SandboxRuntimeError(
                 f"Max sessions ({self.max_sessions}) reached. Stop some sessions first."
             )
 
     async def _ensure_image_ready(self) -> None:
         """Check that the sandbox image exists and rebuild if necessary."""
         if not self._client:
-            raise RuntimeError("Docker client is not initialized")
+            raise SandboxRuntimeError("Docker client is not initialized")
 
         try:
             self._client.images.get(self.image)
@@ -400,7 +408,7 @@ class DockerSandbox(ISandbox):
                 logger.info(f"Image {self.image} not found. Building...")
                 await self._build_image()
             else:
-                raise RuntimeError(
+                raise SandboxRuntimeError(
                     f"Image {self.image} not found and auto_build is False."
                 ) from e
 
@@ -533,7 +541,7 @@ class DockerSandbox(ISandbox):
     ) -> Container:
         """Create and start a new Docker container."""
         if not self._client:
-            raise RuntimeError("Docker client is not initialized")
+            raise SandboxRuntimeError("Docker client is not initialized")
 
         # Filter out None values from volumes (happens when session_id is empty)
         volumes = {k: v for k, v in volumes.items() if k is not None}
@@ -879,26 +887,21 @@ class DockerSandbox(ISandbox):
                         response, container, start_stats
                     )
                     return response
-                except json.JSONDecodeError:
-                    return SandboxExecutionResponse(
-                        success=False,
-                        error="Failed to parse response from sandbox",
+                except json.JSONDecodeError as exc:
+                    raise SandboxOutputFormatError(
+                        "Failed to parse response from sandbox",
                         stderr="Invalid response format from sandbox",
-                    )
+                    ) from exc
                 except Exception as exc:
-                    return SandboxExecutionResponse(
-                        success=False,
-                        error=f"Error reading response: {exc!s}",
-                        stderr=str(exc),
-                    )
+                    raise SandboxRuntimeError(
+                        f"Error reading response: {exc!s}"
+                    ) from exc
                 finally:
                     with suppress(Exception):
                         response_file.unlink()
 
-            return SandboxExecutionResponse(
-                success=False,
-                error="Execution timed out",
-                stderr="Timed out waiting for response from sandbox",
+            raise SandboxTimeoutError(
+                "Timed out waiting for response from sandbox", return_code=124
             )
         finally:
             with suppress(Exception):
@@ -943,13 +946,12 @@ class DockerSandbox(ISandbox):
                 )
                 await self._add_metrics_to_response(response, container, start_stats)
                 return response
-            except json.JSONDecodeError:
-                return SandboxExecutionResponse(
-                    success=False,
-                    error="Failed to parse sandbox response",
+            except json.JSONDecodeError as exc:
+                raise SandboxOutputFormatError(
+                    "Failed to parse sandbox response",
                     stdout=stdout_str,
                     stderr=stderr_str or "JSON Decode Error",
-                )
+                ) from exc
         finally:
             with suppress(Exception):
                 host_req_file.unlink()
@@ -1073,11 +1075,11 @@ class DockerSandbox(ISandbox):
         # Security check
         try:
             self.security_manager.validate_command(command)
-        except SecurityError as e:
+        except SandboxSecurityError as exc:
             response = SandboxExecutionResponse()
             response.success = False
-            response.error = str(e)
-            response.stderr = str(e)
+            response.error = str(exc)
+            response.stderr = str(exc)
             response.return_code = 1
             response.finalize()
             return response
@@ -1127,14 +1129,27 @@ class DockerSandbox(ISandbox):
                 if exit_code != 0:
                     response.error = f"Command failed with exit code {exit_code}"
 
-            except TimeoutError:
+            except TimeoutError as exc:
                 await self._add_metrics_to_response(response, container, start_stats)
+                raise SandboxTimeoutError(
+                    f"Command timed out after {timeout} seconds", return_code=124
+                ) from exc
 
-                response.success = False
-                response.error = f"Command timed out after {timeout} seconds"
-                response.stderr = response.error
-                response.return_code = 124
-
+        except SandboxSecurityError as exc:
+            response.success = False
+            response.error = str(exc)
+            response.stderr = str(exc)
+            response.return_code = 1
+        except SandboxTimeoutError as exc:
+            response.success = False
+            response.error = str(exc)
+            response.stderr = str(exc)
+            response.return_code = exc.return_code or 124
+        except SandboxRuntimeError as exc:
+            response.success = False
+            response.error = str(exc)
+            response.stderr = str(exc)
+            response.return_code = getattr(exc, "return_code", 1)
         except Exception as exc:
             response.success = False
             response.error = str(exc)
@@ -1268,7 +1283,7 @@ class DockerSandbox(ISandbox):
 
         try:
             self.security_manager.validate_code(request.code)
-        except SecurityError as exc:
+        except SandboxSecurityError as exc:
             response.success = False
             response.error = str(exc)
             response.finalize()
@@ -1291,12 +1306,24 @@ class DockerSandbox(ISandbox):
                     container, request, start_stats
                 )
 
-        except Exception as exc:
+        except SandboxSecurityError as exc:
+            response = SandboxExecutionResponse(
+                success=False,
+                error=str(exc),
+            )
+        except SandboxTimeoutError as exc:
+            response = SandboxExecutionResponse(
+                success=False,
+                error=str(exc),
+                return_code=exc.return_code or 124,
+            )
+        except SandboxRuntimeError as exc:
             logger.error(f"Execution failed: {exc}")
             response = SandboxExecutionResponse(
                 success=False,
                 error=str(exc),
                 stderr=traceback.format_exc(),
+                return_code=getattr(exc, "return_code", 1),
             )
         finally:
             if not request.persistence and container:

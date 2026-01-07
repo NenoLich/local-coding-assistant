@@ -11,6 +11,10 @@ import pytest
 
 from local_coding_assistant.config.schemas import SandboxConfig
 from local_coding_assistant.sandbox.docker_sandbox import DockerSandbox
+from local_coding_assistant.sandbox.exceptions import (
+    SandboxRuntimeError,
+    SandboxTimeoutError,
+)
 from local_coding_assistant.sandbox.sandbox_types import (
     SandboxExecutionRequest,
     SandboxExecutionResponse,
@@ -242,7 +246,9 @@ async def test_files_metadata_passthrough(sandbox_harness: SandboxTestHarness) -
 async def test_container_start_failure_reports_error(sandbox_harness: SandboxTestHarness) -> None:
     """Startup failures should be converted into structured sandbox errors."""
 
-    sandbox_harness.start_container.side_effect = RuntimeError("Docker is not running")
+    sandbox_harness.start_container.side_effect = SandboxRuntimeError(
+        "Docker is not running"
+    )
 
     request = SandboxExecutionRequest(
         code="print('hello')",
@@ -252,7 +258,7 @@ async def test_container_start_failure_reports_error(sandbox_harness: SandboxTes
     response = await sandbox_harness.sandbox.execute(request)
 
     assert response.success is False
-    assert response.error == "Docker is not running"
+    assert "Docker is not running" in (response.error or "")
     sandbox_harness.execute_ephemeral.assert_not_called()
 
 
@@ -265,3 +271,99 @@ async def test_execute_shell_blocks_disallowed_commands(sandbox_harness: Sandbox
     assert response.success is False
     assert response.error and "not allowed" in response.error
     sandbox_harness.start_container.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_infinite_loop_timeout_is_reported_and_cleaned_up(
+    sandbox_harness: SandboxTestHarness,
+) -> None:
+    """An infinite loop should result in a timeout error without leaking containers."""
+
+    sandbox_harness.execute_ephemeral.side_effect = SandboxTimeoutError(
+        "Execution timed out", return_code=124
+    )
+
+    request = SandboxExecutionRequest(
+        code="while True:\n    pass",
+        session_id="infinite-loop",
+    )
+
+    response = await sandbox_harness.sandbox.execute(request)
+
+    assert response.success is False
+    assert "timed out" in (response.error or "").lower()
+    sandbox_harness.cleanup.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_large_memory_allocation_error_is_propagated(
+    sandbox_harness: SandboxTestHarness,
+) -> None:
+    """Large memory allocations should surface the container OOM message."""
+
+    sandbox_harness.execute_ephemeral.return_value = SandboxExecutionResponse(
+        success=False,
+        error="Memory limit exceeded (137)",
+        stderr="Killed",
+        return_code=137,
+    )
+
+    request = SandboxExecutionRequest(
+        code="data = b'0' * (1024 ** 3)\nprint(len(data))",
+        session_id="oom",
+    )
+
+    response = await sandbox_harness.sandbox.execute(request)
+
+    assert response.success is False
+    assert "memory" in (response.error or "").lower()
+    sandbox_harness.cleanup.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_forbidden_imports_fail_fast_without_container(
+    sandbox_harness: SandboxTestHarness,
+) -> None:
+    """Forbidden imports should be rejected before any Docker interaction occurs."""
+
+    request = SandboxExecutionRequest(
+        code="import pathlib\nprint(pathlib.Path('.'))",
+        session_id="forbidden-import",
+    )
+
+    response = await sandbox_harness.sandbox.execute(request)
+
+    assert response.success is False
+    assert response.error and "import not allowed" in response.error.lower()
+    sandbox_harness.start_container.assert_not_called()
+    sandbox_harness.execute_ephemeral.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_valid_tools_api_usage_executes_successfully(
+    sandbox_harness: SandboxTestHarness,
+) -> None:
+    """Valid tool usage should pass through and produce stdout from the sandbox."""
+
+    sandbox_harness.execute_ephemeral.return_value = SandboxExecutionResponse(
+        success=True,
+        stdout="12\n",
+        result=12,
+    )
+
+    request = SandboxExecutionRequest(
+        code=(
+            "from tools_api import math\n"
+            "result = math(operation='add', numbers=[7, 5])\n"
+            "print(result)"
+        ),
+        session_id="valid-tool",
+    )
+
+    response = await sandbox_harness.sandbox.execute(request)
+
+    assert response.success is True
+    assert response.stdout.strip().endswith("12")
+    sandbox_harness.start_container.assert_awaited_once()
+    sandbox_harness.execute_ephemeral.assert_awaited_once()
+    sandbox_harness.cleanup.assert_awaited_once()
