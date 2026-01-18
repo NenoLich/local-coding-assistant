@@ -1,0 +1,10 @@
+{% set ctx = context %}
+{% if ctx.examples %}
+Reference Examples:
+{% for ex in ctx.examples %}
+- {{ ex.description | default('Example') }}
+  Input: {{ ex.input }}
+  Output: {{ ex.output }}
+{% endfor %}
+Use these examples as stylistic and structural guidance.
+{% endif %}

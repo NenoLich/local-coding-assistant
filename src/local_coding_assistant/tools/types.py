@@ -61,6 +61,13 @@ class ToolTag(str, Enum):
     FILESYSTEM = "filesystem"
 
 
+class ToolExecutionMode(str, Enum):
+    """Execution mode of the tool."""
+
+    CLASSIC = "classic"
+    PTC = "ptc"
+
+
 @dataclass
 class ToolInfo:
     """Runtime representation of a tool's metadata and configuration.
@@ -89,6 +96,7 @@ class ToolInfo:
     description: str = ""
     category: ToolCategory | None = None
     source: ToolSource | str = ToolSource.BUILTIN
+    execution_mode: ToolExecutionMode | str = ToolExecutionMode.CLASSIC
     permissions: list[ToolPermission | str] = field(default_factory=list)
     tags: list[ToolTag | str] = field(default_factory=list)
     is_async: bool = False
@@ -134,6 +142,15 @@ class ToolInfo:
             self.category = ToolCategory(self.category)
         if self.source is not None and isinstance(self.source, str):
             self.source = ToolSource(self.source)
+
+        # Set execution mode based on source and category
+        if self.source == ToolSource.SANDBOX or self.category == ToolCategory.PTC:
+            self.execution_mode = ToolExecutionMode.PTC
+        elif self.execution_mode is None:
+            self.execution_mode = ToolExecutionMode.CLASSIC
+        elif isinstance(self.execution_mode, str):
+            self.execution_mode = ToolExecutionMode(self.execution_mode)
+
         self.permissions = [
             ToolPermission(p) if isinstance(p, str) else p
             for p in (self.permissions or [])

@@ -122,7 +122,9 @@ class Tool(ABC):
                 yield result
         except Exception as e:
             # If anything goes wrong during serialization, yield the original result
-            logger.warning("Failed to serialize tool result: %s", str(e))
+            logger.warning(
+                "Failed to serialize tool result", error=str(e), exc_info=True
+            )
             yield result
 
     @classmethod

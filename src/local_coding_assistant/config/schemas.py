@@ -135,15 +135,24 @@ class RuntimeConfig(BaseModel):
     )
     tool_call_mode: str = Field(
         default="classic",
-        description="Tool calling mode: 'classic' (default) uses function calling, 'ptc' uses programmatic tool calling",
+        description="Tool calling mode: 'classic' (default) uses function calling, 'ptc' uses programmatic tool calling, 'reasoning_only' uses no tool calls",
     )
 
     @field_validator("tool_call_mode")
     @classmethod
     def validate_tool_call_mode(cls, v: str) -> str:
-        """Validate that tool_call_mode is either 'classic' or 'ptc'."""
-        if v not in ("classic", "ptc"):
-            raise ValueError("tool_call_mode must be either 'classic' or 'ptc'")
+        """Validate and normalize tool_call_mode.
+
+        Accepts 'reasoning' as an alias for 'reasoning_only' for better UX.
+        """
+        # Map 'reasoning' to 'reasoning_only' for backward compatibility
+        if v == "reasoning":
+            return "reasoning_only"
+
+        if v not in ("classic", "ptc", "reasoning_only"):
+            raise ValueError(
+                "tool_call_mode must be one of: 'classic', 'ptc', 'reasoning' (or 'reasoning_only')"
+            )
         return v
 
 
@@ -231,11 +240,106 @@ class ProviderConfig(BaseModel):
         return param in model.supported_parameters
 
 
+class AgentProfileConfig(BaseModel):
+    """Configuration for an agent profile."""
+
+    name: str = Field(..., description="Unique identifier for the profile")
+    kind: str = Field("default", description="Type/category of the profile")
+    description: str = Field(
+        ..., description="Description of the agent's role and behavior"
+    )
+    goals: list[str] = Field(
+        default_factory=list,
+        description="List of primary objectives for this agent profile",
+    )
+    tone: str | None = Field(
+        None, description="Communication style and tone for this profile"
+    )
+    constraints: list[str] = Field(
+        default_factory=list,
+        description="List of constraints or guidelines for this profile",
+    )
+    model_policy: str | None = Field(
+        None,
+        description=(
+            "Name of the model policy to use for this profile. "
+            "If not specified, falls back to the profile name or 'general'"
+        ),
+    )
+
+    @classmethod
+    def default(cls) -> AgentProfileConfig:
+        """Create a default agent profile configuration."""
+        return cls(
+            name="default",
+            kind="default",
+            description=(
+                "Primary coding assistant focused on safe, step-by-step reasoning "
+                "with practical guidance."
+            ),
+            goals=[
+                "Deliver concise answers grounded in repository state",
+                "Surface trade-offs and assumptions explicitly",
+            ],
+            tone="Confident, pragmatic, collaborative",
+            model_policy="general",
+            constraints=[
+                "Never fabricate file paths or code",
+                "Prefer actionable steps over vague suggestions",
+            ],
+        )
+
+    @classmethod
+    def planner(cls) -> AgentProfileConfig:
+        """Create a planner agent profile configuration."""
+        return cls(
+            name="planner",
+            kind="planner",
+            description="Decomposes the request into executable steps and highlights risks.",
+            goals=[
+                "Summarize objectives",
+                "Outline numbered plan with verification points",
+            ],
+            tone="Analytical and structured",
+            model_policy="planner",
+        )
+
+    @classmethod
+    def executor(cls) -> AgentProfileConfig:
+        """Create an executor agent profile configuration."""
+        return cls(
+            name="executor",
+            kind="executor",
+            description="Executes the plan, writes code, and validates results.",
+            goals=[
+                "Apply plan precisely",
+                "Capture diffs and side-effects",
+                "Report blockers or verifications needed",
+            ],
+            tone="Hands-on and detail oriented",
+            model_policy="general",
+        )
+
+
 class AgentConfig(BaseModel):
     """Configuration for agent behavior and model policies."""
 
+    # Agent profiles define different behaviors and configurations
+    profiles: dict[str, AgentProfileConfig] = Field(
+        default_factory=dict,
+        description=(
+            "Available agent profiles. Each profile defines a different "
+            "personality, goals, and behavior for the agent."
+        ),
+    )
+
+    # Model policies for different agent roles
     policies: dict[str, dict[str, Any]] = Field(
-        default_factory=dict, description="Agent role to model fallback policies"
+        default_factory=dict,
+        description=(
+            "Agent role to model fallback policies. "
+            "Each key is a role name, and the value is a dict containing 'models' list."
+        ),
     )
 
     # Default fallback policies if YAML file is missing
@@ -278,6 +382,66 @@ class AgentConfig(BaseModel):
         },
         description="Default general purpose model fallback policy",
     )
+
+    def get_profile(self, name: str) -> AgentProfileConfig:
+        """Get an agent profile by name, falling back to defaults if not found.
+
+        Args:
+            name: Name of the profile to retrieve
+
+        Returns:
+            AgentProfileConfig: The requested profile or default if not found
+        """
+        # Return the profile if it exists
+        if name in self.profiles:
+            return self.profiles[name]
+
+        # Try to create a default profile based on the name
+        if name == "planner":
+            return AgentProfileConfig.planner()
+        elif name == "executor":
+            return AgentProfileConfig.executor()
+
+        # Fall back to default profile
+        return AgentProfileConfig.default()
+
+    def get_model_policy_for_profile(self, profile_name: str) -> list[str]:
+        """Get the model policy for a given profile.
+
+        Args:
+            profile_name: Name of the agent profile
+
+        Returns:
+            List of model names in order of preference
+
+        Raises:
+            ValueError: If no model policy is found for the profile
+        """
+        profile = self.get_profile(profile_name)
+
+        # First try the profile's model_policy
+        if profile.model_policy and profile.model_policy in self.policies:
+            return self.policies[profile.model_policy].get("models", [])
+
+        # Then try the profile name as a policy
+        if profile_name in self.policies:
+            return self.policies[profile_name].get("models", [])
+
+        # Fall back to the 'general' policy
+        if "general" in self.policies:
+            return self.policies["general"].get("models", [])
+
+        # As a last resort, use the hardcoded defaults
+        if hasattr(self, profile_name) and isinstance(
+            getattr(self, profile_name), dict
+        ):
+            return getattr(self, profile_name).get("models", [])
+
+        # If we still don't have a policy, try the general default
+        if hasattr(self, "general"):
+            return self.general.get("models", [])
+
+        raise ValueError(f"No model policy found for profile: {profile_name}")
 
     @classmethod
     def from_dict(cls, config_dict: dict[str, Any]) -> AgentConfig:
@@ -557,6 +721,41 @@ class ToolConfigList(BaseModel):
         return {"tools": [tool.model_dump(exclude_unset=True) for tool in self.tools]}
 
 
+class PromptTemplateConfig(BaseModel):
+    """Configuration for prompt templates and rendering."""
+
+    template_root: str | None = Field(
+        None,
+        description=(
+            "Root directory for prompt templates. "
+            "If not provided, will use package defaults."
+        ),
+    )
+    templates: dict[str, str] = Field(
+        default_factory=lambda: {
+            "system": "base/system_core.jinja2",
+            "execution_rules": "base/execution_rules.jinja2",
+            "agent_identity": "base/agent_identity.jinja2",
+            "skills": "blocks/skills.jinja2",
+            "memories": "blocks/memories.jinja2",
+            "tools": "blocks/tools.jinja2",
+            "examples": "blocks/examples.jinja2",
+            "constraints": "blocks/constraints.jinja2",
+        },
+        description="Template paths for different prompt sections",
+    )
+    enable_jinja_autoescape: bool = Field(
+        False,
+        description="Whether to enable Jinja2 autoescaping (usually not needed for LLM prompts)",
+    )
+    trim_blocks: bool = Field(
+        True, description="Whether to trim whitespace around template blocks"
+    )
+    lstrip_blocks: bool = Field(
+        True, description="Whether to strip whitespace from the start of lines"
+    )
+
+
 class SandboxLoggingConfig(BaseModel):
     """Configuration for sandbox logging."""
 
@@ -657,6 +856,10 @@ class AppConfig(BaseModel):
     tools: ToolConfigList = Field(
         default_factory=ToolConfigList,
         description="Tool configurations",
+    )
+    prompt: PromptTemplateConfig = Field(
+        default_factory=PromptTemplateConfig,
+        description="Prompt template configuration",
     )
     sandbox: SandboxConfig = Field(
         default_factory=SandboxConfig,

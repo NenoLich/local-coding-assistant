@@ -11,9 +11,9 @@ from local_coding_assistant.sandbox.manager import SandboxManager
 
 @pytest.fixture
 def mock_env_manager(tmp_path):
-    with patch("local_coding_assistant.core.bootstrap.EnvManager") as mock_cls:
+    with patch("local_coding_assistant.core.bootstrap.get_env_manager") as mock_get:
         mock_instance = MagicMock()
-        mock_cls.create.return_value = mock_instance
+        mock_get.return_value = mock_instance
 
         # Configure path_manager on the env_manager mock
         mock_path_manager = MagicMock()
@@ -26,7 +26,7 @@ def mock_env_manager(tmp_path):
             return Path(path)
 
         mock_path_manager.resolve_path.side_effect = side_effect
-        yield mock_cls
+        yield mock_instance
 
 
 @pytest.fixture
@@ -42,6 +42,7 @@ def mock_dependencies():
         patch(
             "local_coding_assistant.config.tool_loader.ToolLoader"
         ) as mock_tool_loader_cls,
+        patch("local_coding_assistant.sandbox.manager.SandboxManager.ensure_availability") as mock_availability,
     ):
         # Configure mocks
         mock_tool_manager = MagicMock()
@@ -50,6 +51,9 @@ def mock_dependencies():
         mock_tool_loader = MagicMock()
         mock_tool_loader_cls.return_value = mock_tool_loader
         mock_tool_loader.load_tool_configs.return_value = {}
+
+        # Mock availability to return True (Docker is available)
+        mock_availability.return_value = True
 
         yield {
             "llm": mock_llm,

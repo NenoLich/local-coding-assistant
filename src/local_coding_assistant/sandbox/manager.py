@@ -86,6 +86,33 @@ class SandboxManager:
         if self._sandbox:
             await self._sandbox.stop()
 
+    def ensure_availability(self) -> bool:
+        """Ensure the sandbox is available and update config if not.
+
+        Returns:
+            bool: True if sandbox is available, False otherwise
+        """
+        try:
+            sandbox = self.get_sandbox()
+            if hasattr(sandbox, "check_availability"):
+                is_available = sandbox.check_availability()
+                if not is_available:
+                    logger.warning("Sandbox is not available, disabling in config")
+                    # Update the config to disable the sandbox
+                    self._config_manager.set_session_overrides(
+                        {"sandbox.enabled": False}
+                    )
+                    return False
+                return True
+            return False
+        except Exception as e:
+            logger.warning(
+                "Error checking sandbox availability", error=str(e), exc_info=True
+            )
+            # Update the config to disable the sandbox
+            self._config_manager.set_session_overrides({"sandbox.enabled": False})
+            return False
+
     def get_workspace_dir(self) -> "Path":
         """Return the host workspace directory used for sandbox mounts."""
         workspace = self.path_manager.get_project_root() / ".sandbox_workspace"

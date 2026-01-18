@@ -6,7 +6,7 @@ from typing import Any
 from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, ToolCall
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.core.protocols import IToolManager
-from local_coding_assistant.tools.types import ToolExecutionRequest
+from local_coding_assistant.tools.types import ToolExecutionMode, ToolExecutionRequest
 from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("agent.loop")
@@ -132,7 +132,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
                 "metadata": {"llm_response": response_content},
             }
         except Exception as e:
-            logger.error(f"Failed to generate plan: {e}")
+            logger.error("Failed to generate plan", error=str(e), exc_info=True)
             # Fallback plan
             return {
                 "reasoning": "Failed to generate plan, using fallback",
@@ -240,7 +240,9 @@ Please describe what actions were taken and their results.
                                 },
                             }
                         except Exception as e:
-                            logger.error(f"Tool call failed: {e}")
+                            logger.error(
+                                "Tool call failed", error=str(e), exc_info=True
+                            )
                             return {
                                 "success": False,
                                 "error": str(e),
@@ -254,7 +256,7 @@ Please describe what actions were taken and their results.
                 "metadata": {"tool_calls": tool_calls},
             }
         except Exception as e:
-            logger.error(f"Failed to execute actions: {e}")
+            logger.error("Failed to execute actions", error=str(e), exc_info=True)
             return {
                 "success": False,
                 "error": str(e),
@@ -305,7 +307,7 @@ Please provide:
                 "success_rating": 0.9 if action_result["success"] else 0.3,
             }
         except Exception as e:
-            logger.error(f"Failed to generate reflection: {e}")
+            logger.error("Failed to generate reflection", error=str(e), exc_info=True)
             return {
                 "analysis": "Failed to generate reflection",
                 "success_rating": 0.0,
@@ -318,7 +320,9 @@ Please provide:
             return []
 
         available_tools = []
-        for tool in self.tool_manager.list_tools(available_only=True):
+        for tool in self.tool_manager.list_tools(
+            available_only=True, execution_mode=ToolExecutionMode.CLASSIC
+        ):
             if hasattr(tool, "name") and hasattr(tool, "description"):
                 available_tools.append(
                     {
@@ -335,7 +339,9 @@ Please provide:
             return "No tools available"
 
         descriptions = []
-        for tool in self.tool_manager.list_tools(available_only=True):
+        for tool in self.tool_manager.list_tools(
+            available_only=True, execution_mode=ToolExecutionMode.CLASSIC
+        ):
             if hasattr(tool, "name") and hasattr(tool, "description"):
                 descriptions.append(f"- {tool.name}: {tool.description}")
         return "\n".join(descriptions) if descriptions else "No tools available"
@@ -369,7 +375,7 @@ Please provide:
             logger.info(f"Observation collected: {observation['content'][:100]}...")
             return observation
         except Exception as e:
-            logger.error(f"Error in observe phase: {e}")
+            logger.error("Error in observe phase", error=str(e), exc_info=True)
             raise AgentError(f"Observation phase failed: {e}") from e
 
     async def _execute_plan_phase(
@@ -383,7 +389,7 @@ Please provide:
             logger.info(f"Plan created with {len(plan['actions'])} actions")
             return plan
         except Exception as e:
-            logger.error(f"Error in plan phase: {e}")
+            logger.error("Error in plan phase", error=str(e), exc_info=True)
             # For error recovery testing, handle planning errors gracefully
             # Create a basic plan and continue
             plan = {
@@ -408,7 +414,7 @@ Please provide:
             )
             return action_result
         except Exception as e:
-            logger.error(f"Error in act phase: {e}")
+            logger.error("Error in act phase", error=str(e), exc_info=True)
             # For error recovery testing, handle action errors gracefully
             action_result = {
                 "success": False,
@@ -444,7 +450,7 @@ Please provide:
                 f"Reflection completed with success rating: {reflection['success_rating']}"
             )
         except Exception as e:
-            logger.error(f"Error in reflect phase: {e}")
+            logger.error("Error in reflect phase", error=str(e), exc_info=True)
             # Reflection failure is not critical, create a basic reflection
             reflection = {
                 "analysis": "Reflection phase encountered an error",
@@ -577,7 +583,9 @@ Please provide:
             return self.final_answer
 
         except Exception as e:
-            logger.error(f"Agent loop '{self.name}' failed: {e}")
+            logger.error(
+                f"Agent loop '{self.name}' failed", error=str(e), exc_info=True
+            )
             raise
         finally:
             self.is_running = False

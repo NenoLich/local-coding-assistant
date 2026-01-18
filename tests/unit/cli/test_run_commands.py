@@ -70,6 +70,8 @@ class TestRunCommands:
             text=TEST_QUERY,
             verbose=False,  # Explicitly set to False to match test expectations
             model=None,
+            tool_call_mode="reasoning",  # Pass the default value explicitly
+            sandbox_session=None,  # Pass the default value explicitly
             log_level="INFO",
         )
 
@@ -83,11 +85,12 @@ class TestRunCommands:
         # Verify the runtime was called correctly
         self.mock_bootstrap.assert_called_once()
         from unittest.mock import ANY
+
         self.mock_runtime.orchestrate.assert_awaited_once_with(
-            TEST_QUERY, 
+            TEST_QUERY,
             model=None,
-            tool_call_mode='ptc',
-            sandbox_session=ANY  # Typer OptionInfo object
+            tool_call_mode="reasoning",
+            sandbox_session=ANY,  # Typer OptionInfo object
         )
 
     def test_query_with_model(self):
@@ -100,6 +103,8 @@ class TestRunCommands:
             text=TEST_QUERY,
             verbose=False,
             model=TEST_MODEL,  # Pass the test model
+            tool_call_mode="reasoning",  # Pass the default value explicitly
+            sandbox_session=None,  # Pass the default value explicitly
             log_level="INFO",
         )
 
@@ -113,11 +118,12 @@ class TestRunCommands:
 
         # Verify the runtime was called with the correct model and default parameters
         from unittest.mock import ANY
+
         self.mock_runtime.orchestrate.assert_awaited_once_with(
             TEST_QUERY,
             model=TEST_MODEL,
-            tool_call_mode='ptc',
-            sandbox_session=ANY  # Typer OptionInfo object
+            tool_call_mode="reasoning",
+            sandbox_session=ANY,  # Typer OptionInfo object
         )
 
     def test_verbose_mode(self):
@@ -130,6 +136,8 @@ class TestRunCommands:
             text=TEST_QUERY,
             verbose=True,  # Enable verbose mode
             model=None,
+            tool_call_mode="reasoning",  # Pass the default value explicitly
+            sandbox_session=None,  # Pass the default value explicitly
             log_level="INFO",
         )
 
@@ -143,11 +151,12 @@ class TestRunCommands:
 
         # Verify the runtime was called with the correct parameters
         from unittest.mock import ANY
+
         self.mock_runtime.orchestrate.assert_awaited_once_with(
             TEST_QUERY,
             model=None,
-            tool_call_mode='ptc',
-            sandbox_session=ANY  # Typer OptionInfo object
+            tool_call_mode="reasoning",
+            sandbox_session=ANY,  # Typer OptionInfo object
         )
 
     def test_log_level_parameter(self):
@@ -157,7 +166,14 @@ class TestRunCommands:
 
         # Call the query function directly with a specific log level
         test_log_level = "DEBUG"
-        query(text=TEST_QUERY, verbose=False, model=None, log_level=test_log_level)
+        query(
+            text=TEST_QUERY, 
+            verbose=False, 
+            model=None, 
+            tool_call_mode="reasoning",  # Pass the default value explicitly
+            sandbox_session=None,  # Pass the default value explicitly
+            log_level=test_log_level
+        )
 
         # Verify bootstrap was called with the correct log level
         self.mock_bootstrap.assert_called_once_with(log_level=logging.DEBUG)
@@ -170,7 +186,14 @@ class TestRunCommands:
         # Call the query function directly and expect it to raise typer.Exit
         with patch("local_coding_assistant.cli.commands.run.typer.echo") as mock_echo:
             try:
-                query(text=TEST_QUERY, verbose=False, model=None, log_level="INFO")
+                query(
+                    text=TEST_QUERY, 
+                    verbose=False, 
+                    model=None, 
+                    tool_call_mode="reasoning",  # Pass the default value explicitly
+                    sandbox_session=None,  # Pass the default value explicitly
+                    log_level="INFO"
+                )
                 # If we get here, the test should fail
                 assert False, "Expected typer.Exit to be raised"
             except typer.Exit as e:
@@ -191,7 +214,14 @@ class TestRunCommands:
         self.mock_echo.reset_mock()
 
         # Call the query function directly
-        query(text=TEST_QUERY, verbose=False, model=None, log_level="INFO")
+        query(
+            text=TEST_QUERY, 
+            verbose=False, 
+            model=None, 
+            tool_call_mode="reasoning",  # Pass the default value explicitly
+            sandbox_session=None,  # Pass the default value explicitly
+            log_level="INFO"
+        )
 
         # Verify the expected output format
         self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}")
@@ -204,7 +234,14 @@ class TestRunCommands:
         self.mock_asyncio_run.reset_mock()
 
         # Call the query function directly
-        query(text=TEST_QUERY, verbose=False, model=None, log_level="INFO")
+        query(
+            text=TEST_QUERY, 
+            verbose=False, 
+            model=None, 
+            tool_call_mode="reasoning",  # Pass the default value explicitly
+            sandbox_session=None,  # Pass the default value explicitly
+            log_level="INFO"
+        )
 
         # Verify asyncio.run was called once
         assert self.mock_asyncio_run.call_count == 1
@@ -226,7 +263,14 @@ class TestRunCommands:
 
         # Call the query function directly and verify it doesn't raise
         try:
-            query(text=TEST_QUERY, verbose=False, model=None, log_level="INFO")
+            query(
+                text=TEST_QUERY, 
+                verbose=False, 
+                model=None, 
+                tool_call_mode="reasoning",  # Pass the default value explicitly
+                sandbox_session=None,  # Pass the default value explicitly
+                log_level="INFO"
+            )
         except Exception as e:
             pytest.fail(f"Query raised {type(e).__name__} unexpectedly: {e!s}")
 
@@ -272,7 +316,14 @@ class TestRunCommands:
         self.mock_bootstrap.reset_mock()
 
         # Call the query function directly with the test log level
-        query(text=TEST_QUERY, verbose=False, model=None, log_level=log_level)
+        query(
+            text=TEST_QUERY, 
+            verbose=False, 
+            model=None, 
+            tool_call_mode="reasoning",  # Pass the default value explicitly
+            sandbox_session=None,  # Pass the default value explicitly
+            log_level=log_level
+        )
 
         # Verify bootstrap was called with the expected log level
         self.mock_bootstrap.assert_called_once_with(log_level=expected_level)

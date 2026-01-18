@@ -1,9 +1,10 @@
 """LangGraph utilities for error handling, logging, and node decoration."""
 
-import logging
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from typing import Any
+
+import structlog
 
 from local_coding_assistant.core.exceptions import AgentError, ToolRegistryError
 from local_coding_assistant.utils.logging import get_logger
@@ -11,7 +12,7 @@ from local_coding_assistant.utils.logging import get_logger
 log = get_logger("agent")
 
 
-def node_logger(node_name: str) -> logging.Logger:
+def node_logger(node_name: str) -> structlog.BoundLogger:
     """Factory function to create loggers for specific LangGraph nodes.
 
     Args:
@@ -144,7 +145,7 @@ def _create_node_wrapper(node_func: Callable, node_name: str, is_async: bool):
             return result
 
         except Exception as e:
-            logger.error(f"Error in node {node_name}: {e}")
+            logger.error(f"Error in node {node_name}", error=str(e), exc_info=True)
             handle_graph_error(
                 e, state if isinstance(state, dict) else {"state": state}
             )
@@ -179,7 +180,7 @@ def _create_node_wrapper(node_func: Callable, node_name: str, is_async: bool):
             return result
 
         except Exception as e:
-            logger.error(f"Error in node {node_name}: {e}")
+            logger.error(f"Error in node {node_name}", error=str(e), exc_info=True)
             handle_graph_error(
                 e, state if isinstance(state, dict) else {"state": state}
             )

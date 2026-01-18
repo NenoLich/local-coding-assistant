@@ -1,0 +1,7 @@
+{% set agent = context.agent_profiles | selectattr('kind', 'equalto', 'default') | list | first %}
+{% if agent %}
+Agent Identity (Default):
+- Description: {{ agent.description }}
+- Goals: {{ agent.goals | join('; ') if agent.goals else 'N/A' }}
+- Tone: {{ agent.tone or 'neutral' }}
+{% endif %}

@@ -78,7 +78,9 @@ def test_run_multiple_sequential_displays_plan_results_summary(
     assert "[red]Error details: boom[/red]" in combined_output
 
 
-def test_run_multiple_parallel_displays_parallel_plan(cli_runner, run_multiple_env, monkeypatch):
+def test_run_multiple_parallel_displays_parallel_plan(
+    cli_runner, run_multiple_env, monkeypatch
+):
     """Parallel mode should call _run_tools with parallel flag and show plan summary."""
 
     captured_kwargs: dict[str, object] = {}
@@ -92,7 +94,9 @@ def test_run_multiple_parallel_displays_parallel_plan(cli_runner, run_multiple_e
 
     monkeypatch.setattr(tool_cli, "_run_tools", fake_run_tools)
 
-    result = cli_runner.invoke(tool_cli.app, ["run-multiple", "--parallel", "calc_tool;weather_tool"])
+    result = cli_runner.invoke(
+        tool_cli.app, ["run-multiple", "--parallel", "calc_tool;weather_tool"]
+    )
 
     assert result.exit_code == 0
     assert captured_kwargs.get("parallel") is True
@@ -106,7 +110,9 @@ def test_run_multiple_parallel_displays_parallel_plan(cli_runner, run_multiple_e
     assert "[bold]Summary:[/bold] 2 of 2 tools executed successfully" in combined_output
 
 
-def test_run_multiple_parallel_limit_validation(cli_runner, run_multiple_env, monkeypatch):
+def test_run_multiple_parallel_limit_validation(
+    cli_runner, run_multiple_env, monkeypatch
+):
     """_validate_tool_specs should stop execution when more than 4 tools run in parallel."""
 
     async def fail_if_called(**_):
@@ -124,7 +130,9 @@ def test_run_multiple_parallel_limit_validation(cli_runner, run_multiple_env, mo
     assert run_multiple_env.console.messages == ["\n[red]Error: 1[/red]"]
 
 
-def test_run_multiple_requires_at_least_one_tool(cli_runner, run_multiple_env, monkeypatch):
+def test_run_multiple_requires_at_least_one_tool(
+    cli_runner, run_multiple_env, monkeypatch
+):
     """Validation should fail gracefully when specs do not include any tools."""
 
     async def fail_if_called(**_):

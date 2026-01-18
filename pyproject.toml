@@ -29,6 +29,9 @@ dependencies = [
     "langgraph>=1.0.0a4",
     "docker>=7.1.0",
     "docstring-parser>=0.17.0",
+    "jinja2>=3.1.4",
+    "structlog>=25.5.0",
+    "rich>=14.2.0",
 ]
 
 [project.scripts]
@@ -73,6 +76,7 @@ pythonpath = ["src"]
 asyncio_mode = "auto"
 # addopts = "-v --cov=local_coding_assistant --cov-report=term-missing"
 filterwarnings = ["ignore::DeprecationWarning"]
+enable_assertion_pass_hook = true
 
 [coverage.run]
 source = ["src"]
@@ -94,4 +98,5 @@ dev = [
     "pyupgrade>=3.21.0",
     "pytest-asyncio>=1.3.0",
     "pre-commit>=4.5.0",
+    "pytest-golden>=1.0.1",
 ]

@@ -2,7 +2,12 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse, ToolCall
+from local_coding_assistant.agent.llm_manager import (
+    LLMManager,
+    LLMRequest,
+    LLMResponse,
+    ToolCall,
+)
 from local_coding_assistant.config.schemas import AppConfig, LLMConfig, ProviderConfig
 from local_coding_assistant.providers.base import ProviderLLMResponseDelta
 from local_coding_assistant.providers.exceptions import (
@@ -308,17 +313,14 @@ class TestLLMManager:
 
     @pytest.mark.asyncio
     async def test_generate_with_tools_using_provider_system(
-            self, mock_provider_manager, mock_config_manager
+        self, mock_provider_manager, mock_config_manager
     ):
         """Test response generation with tool calls using provider system."""
         # Create a tool call in the format expected by the provider
         tool_call_dict = {
             "id": "call_123",
             "type": "function",
-            "function": {
-                "name": "test_tool",
-                "arguments": '{"param1": "value1"}'
-            }
+            "function": {"name": "test_tool", "arguments": '{"param1": "value1"}'},
         }
 
         # Create a mock provider response with string content
@@ -328,17 +330,21 @@ class TestLLMManager:
         mock_provider_response.tokens_used = 75
         mock_provider_response.tool_calls = [tool_call_dict]
         # Ensure content is a string by setting it directly on the mock
-        mock_provider_response.configure_mock(**{
-            "content": "I'll use the tool",
-            "tool_calls": [tool_call_dict]  # Ensure this is set as an attribute
-        })
+        mock_provider_response.configure_mock(
+            **{
+                "content": "I'll use the tool",
+                "tool_calls": [tool_call_dict],  # Ensure this is set as an attribute
+            }
+        )
 
         # Setup mock provider with proper async method mocking
         mock_provider = MagicMock()
         mock_provider.name = "test_provider"
         # Mock both generate and generate_with_retry methods
         mock_provider.generate = AsyncMock(return_value=mock_provider_response)
-        mock_provider.generate_with_retry = AsyncMock(return_value=mock_provider_response)
+        mock_provider.generate_with_retry = AsyncMock(
+            return_value=mock_provider_response
+        )
 
         # Create a coroutine that returns the mock provider and model
         async def mock_get_provider(*args, **kwargs):
@@ -350,9 +356,7 @@ class TestLLMManager:
         mock_router.is_critical_error.return_value = False
 
         # Create LLMManager with mocks
-        llm = LLMManager(
-            mock_config_manager, provider_manager=mock_provider_manager
-        )
+        llm = LLMManager(mock_config_manager, provider_manager=mock_provider_manager)
         llm.router = mock_router
 
         # Create a request with tools

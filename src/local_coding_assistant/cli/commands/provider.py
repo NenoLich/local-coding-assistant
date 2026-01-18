@@ -44,7 +44,7 @@ def _get_config_path(
         return Path(config_file)
 
     # Create or use provided env_manager
-    env_manager = env_manager or EnvManager.create(load_env=True)
+    env_manager = env_manager or EnvManager()
 
     # Use PathManager to resolve the config path based on environment
     return env_manager.path_manager.resolve_path("@config/providers.local.yaml")

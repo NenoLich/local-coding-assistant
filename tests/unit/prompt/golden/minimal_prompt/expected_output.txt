@@ -1,0 +1,5 @@
+# System Core
+You are a helpful AI assistant.
+
+# Agent Identity
+You are a coding assistant.

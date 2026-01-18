@@ -230,10 +230,7 @@ class TestProviderManagerLLMManagerIntegration:
                     {
                         "id": "call_1",
                         "type": "function",
-                        "function": {
-                            "name": "test_tool",
-                            "arguments": "{}"
-                        }
+                        "function": {"name": "test_tool", "arguments": "{}"},
                     }
                 ],
                 finish_reason="stop",

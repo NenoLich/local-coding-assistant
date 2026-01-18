@@ -89,6 +89,7 @@ async def test_ensure_mapping_accepts_dict(runtime):
     payload = {"value": 3}
     assert await runtime._ensure_mapping(payload) == payload
 
+
 @pytest.mark.asyncio
 async def test_ensure_mapping_handles_model_dump(runtime):
     class Payload(BaseModel):
@@ -97,15 +98,18 @@ async def test_ensure_mapping_handles_model_dump(runtime):
     payload = Payload(value=9)
     assert await runtime._ensure_mapping(payload) == {"value": 9}
 
+
 @pytest.mark.asyncio
 async def test_ensure_mapping_parses_json(runtime):
     payload = json.dumps({"value": 5})
     assert await runtime._ensure_mapping(payload) == {"value": 5}
 
+
 @pytest.mark.asyncio
 async def test_ensure_mapping_raises_for_bad_json(runtime):
     with pytest.raises(ValueError):
         await runtime._ensure_mapping("not json")
+
 
 @pytest.mark.asyncio
 async def test_ensure_mapping_rejects_non_iterable(runtime):
@@ -129,6 +133,7 @@ def test_transform_payload_logs_but_returns_original(runtime, caplog, monkeypatc
     payload = runtime._transform_payload({"value": 3})
     assert payload == {"value": 3}
 
+
 @pytest.mark.asyncio
 async def test_validate_payload_against_model_handles_instances(runtime):
     model_instance = ToolInputModel(value=4)
@@ -136,6 +141,7 @@ async def test_validate_payload_against_model_handles_instances(runtime):
         await runtime._validate_payload_against_model(model_instance, ToolInputModel)
         is model_instance
     )
+
 
 @pytest.mark.asyncio
 async def test_validate_payload_against_model_uses_schema(runtime, monkeypatch):
@@ -162,11 +168,17 @@ async def test_validate_field_type_for_union(runtime):
     field_schema = {"type": "string|number"}
     assert await runtime._validate_field_type(5, field_schema["type"], field_schema)
 
+
 @pytest.mark.asyncio
 async def test_validate_field_type_array_items(runtime):
     field_schema = {"type": "array", "items": {"type": "integer"}}
-    assert await runtime._validate_field_type([1, 2], field_schema["type"], field_schema)
-    assert not await runtime._validate_field_type(["a"], field_schema["type"], field_schema)
+    assert await runtime._validate_field_type(
+        [1, 2], field_schema["type"], field_schema
+    )
+    assert not await runtime._validate_field_type(
+        ["a"], field_schema["type"], field_schema
+    )
+
 
 @pytest.mark.asyncio
 async def test_validate_with_parameters_schema_enforces_required(runtime):
@@ -181,6 +193,7 @@ async def test_validate_with_parameters_schema_enforces_required(runtime):
 
     assert "Missing required fields" in str(exc.value)
 
+
 @pytest.mark.asyncio
 async def test_validate_with_parameters_schema_checks_enum(runtime):
     runtime.info.parameters = {
@@ -190,7 +203,10 @@ async def test_validate_with_parameters_schema_checks_enum(runtime):
     }
 
     with pytest.raises(ValueError):
-        await runtime._validate_with_parameters_schema({"value": 2}, runtime.info.parameters)
+        await runtime._validate_with_parameters_schema(
+            {"value": 2}, runtime.info.parameters
+        )
+
 
 @pytest.mark.asyncio
 async def test_prepare_input_handles_validation_success(runtime, monkeypatch):
@@ -198,6 +214,7 @@ async def test_prepare_input_handles_validation_success(runtime, monkeypatch):
     payload = await runtime._prepare_input({"value": 3})
     assert isinstance(payload, ToolInputModel)
     assert payload.value == 3
+
 
 @pytest.mark.asyncio
 async def test_prepare_input_raises_tool_registry_error(runtime, monkeypatch):
@@ -234,6 +251,7 @@ async def test_prepare_input_raises_tool_registry_error(runtime, monkeypatch):
 
     # Verify the error message contains the expected text
     assert "required_field" in str(exc_info.value) or "missing" in str(exc_info.value)
+
 
 @pytest.mark.asyncio
 async def test_prepare_input_schema_validation_error(runtime):

@@ -45,3 +45,12 @@ class ISandbox(ABC):
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Exit the runtime context related to this object."""
         await self.stop()
+
+    @abstractmethod
+    def check_availability(self) -> bool:
+        """Check if the sandbox environment is available.
+
+        Returns:
+            bool: True if the sandbox is available, False otherwise
+        """
+        pass

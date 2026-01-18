@@ -71,13 +71,20 @@ class LLMRequest:
         self._add_main_prompt(messages)
 
         # Create optional parameters
-        parameters = OptionalParameters(
-            stream=False,
-            tools=self.tools,  # self.tools is already a list with default_factory=list in LLMRequest
-            tool_choice="auto" if self.tools else None,
-            response_format=None,
-            max_tokens=None,
-        )
+        if self.tools:
+            parameters = OptionalParameters(
+                stream=False,
+                tools=self.tools,  # self.tools is already a list with default_factory=list in LLMRequest
+                tool_choice="auto",
+                response_format=None,
+                max_tokens=None,
+            )
+        else:
+            parameters = OptionalParameters(
+                stream=False,
+                response_format=None,
+                max_tokens=None,
+            )
 
         return ProviderLLMRequest(
             messages=messages,
@@ -365,7 +372,9 @@ class LLMManager:
             return True
 
         except (AttributeError, TypeError) as e:
-            logger.error(f"Error validating response structure: {e}")
+            logger.error(
+                "Error validating response structure", error=str(e), exc_info=True
+            )
             return False
 
     def _record_successful_generation(self, provider_name: str, model: str) -> None:
@@ -392,7 +401,11 @@ class LLMManager:
             provider_name: Name of the provider that failed
             error: The exception that occurred
         """
-        logger.error(f"Provider {provider_name} failed generation: {error}")
+        logger.error(
+            f"Provider {provider_name} failed generation",
+            error=str(error),
+            exc_info=True,
+        )
 
         # Mark provider as failed through the public interface
         self.router.mark_provider_failure(provider_name, error)
@@ -596,7 +609,7 @@ class LLMManager:
         Returns:
             The generated response from fallback provider if available
         """
-        logger.error(f"Error during LLM generation: {e}")
+        logger.error("Error during LLM generation", error=str(e), exc_info=True)
 
         from local_coding_assistant.providers.exceptions import ProviderError
 
@@ -617,7 +630,9 @@ class LLMManager:
                     request, provider, effective_model, policy, overrides
                 )
             except Exception as fallback_error:
-                logger.error(f"Fallback also failed: {fallback_error}")
+                logger.error(
+                    "Fallback also failed", error=str(fallback_error), exc_info=True
+                )
 
         # If it's a provider exception, convert to LLMError
         if isinstance(e, ProviderError):
@@ -787,7 +802,9 @@ class LLMManager:
         Yields:
             Content chunks from fallback provider if available
         """
-        logger.error(f"Error during LLM streaming generation: {e}")
+        logger.error(
+            "Error during LLM streaming generation", error=str(e), exc_info=True
+        )
 
         from local_coding_assistant.providers.exceptions import ProviderError
 
@@ -810,7 +827,9 @@ class LLMManager:
                     yield chunk
 
             except Exception as fallback_error:
-                logger.error(f"Fallback also failed: {fallback_error}")
+                logger.error(
+                    "Fallback also failed", error=str(fallback_error), exc_info=True
+                )
                 # If fallback streaming also fails, try fallback generation and yield as single chunk
                 try:
                     fallback_response = await self._handle_fallback_generation(
@@ -820,7 +839,9 @@ class LLMManager:
                         yield fallback_response.content
                 except Exception as generation_fallback_error:
                     logger.error(
-                        f"Generation fallback also failed: {generation_fallback_error}"
+                        "Generation fallback also failed",
+                        error=str(generation_fallback_error),
+                        exc_info=True,
                     )
 
         else:
@@ -985,7 +1006,11 @@ class LLMManager:
                             "status": "healthy" if is_healthy else "unhealthy",
                         }
                 except Exception as e:
-                    logger.warning(f"Error checking health for {provider_name}: {e!s}")
+                    logger.warning(
+                        f"Error checking health for {provider_name}",
+                        error=str(e),
+                        exc_info=True,
+                    )
                     status[provider_name] = {
                         "healthy": False,
                         "models": provider.get_available_models() if provider else [],

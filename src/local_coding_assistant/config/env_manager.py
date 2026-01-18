@@ -9,34 +9,78 @@ from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("config.env_manager")
 
+# Module-level instance
+_instance = None
+
+
+def get_env_manager(**kwargs) -> "EnvManager":
+    """Get the singleton instance of EnvManager.
+
+    Args:
+        **kwargs: Arguments to pass to the EnvManager constructor (only used on first call)
+
+    Returns:
+        The singleton instance of EnvManager
+    """
+    global _instance
+    if _instance is None:
+        # Create the internal _EnvManager instance
+        _instance = _EnvManager(**kwargs)
+    # Return a new EnvManager instance which will use the singleton via __new__
+    return EnvManager()
+
 
 class EnvManager:
-    """Manages loading and parsing environment variables for configuration."""
+    """Public API for environment management with singleton behavior.
 
-    @classmethod
-    def create(cls, *, load_env: bool = True, **kwargs) -> "EnvManager":
-        """Factory method to create and initialize an EnvManager.
+    This class provides backward compatibility and delegates all calls to the
+    singleton instance of _EnvManager.
+    """
 
-        Args:
-            load_env: If True, automatically load environment files
-            **kwargs: Additional arguments to pass to __init__
+    _instance: "_EnvManager | None" = None
 
-        Returns:
-            Initialized EnvManager instance
-        """
-        instance = cls(**kwargs)
-        if load_env:
-            try:
-                instance.load_env_files()
-            except Exception as e:
-                logger.warning("Failed to load environment files: %s", e)
+    def __new__(cls, *args: Any, **kwargs: Any) -> "EnvManager":
+        """Return the singleton instance of EnvManager."""
+        if cls._instance is None or os.getenv("LOCCA_ENV") == "test":
+            cls._instance = _EnvManager(*args, **kwargs)
+
+        # Create and return an EnvManager instance that will delegate to the singleton
+        instance = super().__new__(cls)
         return instance
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize is a no-op since we use __new__ for singleton behavior."""
+        pass
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate attribute access to the singleton instance."""
+        if self._instance is None:
+            raise RuntimeError("Environment manager not initialized")
+        return getattr(self._instance, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Delegate attribute assignment to the singleton instance."""
+        if name == "_instance":
+            super().__setattr__(name, value)
+        elif self._instance is not None:
+            setattr(self._instance, name, value)
+        else:
+            super().__setattr__(name, value)
+
+
+class _EnvManager:
+    """Manages loading and parsing environment variables for configuration.
+
+    This is the actual implementation class. Use the module-level functions
+    or the public EnvManager class to get the singleton instance.
+    """
 
     def __init__(
         self,
         env_prefix: str = "LOCCA_",
         env_paths: list[Path | str] | None = None,
         path_manager: PathManager | None = None,
+        load_env: bool = True,
     ):
         """Initialize the environment manager.
 
@@ -46,6 +90,7 @@ class EnvManager:
             path_manager: Optional PathManager instance for path resolution
         """
         self.env_prefix = env_prefix
+        self._env_loaded = False
 
         # Initialize PathManager with current environment state
         self.path_manager = path_manager or PathManager(
@@ -57,6 +102,34 @@ class EnvManager:
             [Path(p) for p in env_paths] if env_paths else self._get_default_env_paths()
         )
 
+        if load_env:
+            self.load_env_files()
+
+    def reload_env_files(self) -> None:
+        """Force reload environment files, even if already loaded."""
+        self.load_env_files(force_reload=True)
+
+    @classmethod
+    def create(cls, *, load_env: bool = True, **kwargs) -> "_EnvManager":
+        """Factory method to create and initialize an EnvManager.
+
+        Args:
+            load_env: If True, automatically load environment files
+            **kwargs: Additional arguments to pass to __init__
+
+        Returns:
+            Initialized _EnvManager instance
+        """
+        instance = cls(**kwargs)
+        if load_env:
+            try:
+                instance.load_env_files()
+            except Exception as e:
+                logger.warning(
+                    "Failed to load environment files", error=str(e), exc_info=True
+                )
+        return instance
+
     def _resolve_env_paths(self) -> None:
         """Resolve all environment file paths using PathManager."""
         resolved_paths = []
@@ -67,7 +140,9 @@ class EnvManager:
                     resolved_paths.append(resolved)
                     continue
                 except (ValueError, OSError) as e:
-                    logger.warning(f"Failed to resolve path {path}: {e}")
+                    logger.warning(
+                        f"Failed to resolve path {path}", error=str(e), exc_info=True
+                    )
             resolved_paths.append(Path(path) if isinstance(path, str) else path)
         self.env_paths = resolved_paths
 
@@ -121,7 +196,9 @@ class EnvManager:
                 if resolved.exists():
                     resolved_paths.append(resolved)
             except (ValueError, OSError) as e:
-                logger.debug(f"Skipping env file {env_file}: {e}")
+                logger.debug(
+                    f"Skipping env file {env_file}", error=str(e), exc_info=True
+                )
                 continue
 
         # Always include the root .env file if it exists, even if empty
@@ -131,8 +208,12 @@ class EnvManager:
 
         return resolved_paths or [root_env]
 
-    def load_env_files(self) -> None:
+    def load_env_files(self, force_reload: bool = False) -> None:
         """Load .env files if python-dotenv is available.
+
+        Args:
+            force_reload: If True, reload environment files even if already loaded.
+                         If False, do nothing if already loaded (default: False).
 
         Files are loaded in the following order (later files override earlier ones):
         1. .env - Base settings
@@ -140,10 +221,15 @@ class EnvManager:
         3. .env.local - Local overrides (highest priority)
 
         Environment is determined by LOCCA_ENV env var (defaults to 'development').
+        This method is idempotent - subsequent calls with force_reload=False will be no-ops.
 
         Raises:
             ConfigError: If .env file exists but cannot be loaded
         """
+        if self._env_loaded and not force_reload:
+            logger.debug("Environment files already loaded, skipping")
+            return
+
         try:
             from dotenv import load_dotenv
         except ImportError:
@@ -180,6 +266,8 @@ class EnvManager:
             logger.warning(
                 "No .env files found. Using system environment variables only."
             )
+
+        self._env_loaded = True
 
     def get_all_env_vars(self) -> dict[str, str]:
         """Get all environment variables with the configured prefix.

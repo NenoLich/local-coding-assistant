@@ -1,0 +1,19 @@
+YYYY-MM-DD HH:MM:SS 💡 [info     ] local_coding_assis... Logging configured filename=logging.py func_name=setup_logging lineno=XX pid=XXXXX thread=MainThread console=True file=None
+YYYY-MM-DD HH:MM:SS 🐞 [debug    ] openai.client Request options filename=test_golden_logging.py func_name=test_request_logging_golden lineno=XX pid=XXXXX thread=MainThread options=
+{
+    'method': 'post',
+    'url': '/chat/completions',
+    'json_data': {
+        'messages': [
+            {
+                'role': 'system',
+                'content': 'Test system message'
+            },
+            {
+                'role': 'user',
+                'content': 'Test user message'
+            }
+        ]
+    }
+}
+YYYY-MM-DD HH:MM:SS 💡 [info     ] openai.client {"method": "post", "url": "/chat/completions", "json_data": {"messages": [{"role": "system", "content": "Test system message"}, {"role": "user", "content": "Test user message"}]}} filename=test_golden_logging.py func_name=test_request_logging_golden lineno=XX pid=XXXXX thread=MainThread

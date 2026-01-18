@@ -150,7 +150,7 @@ class TestLangGraphAgent:
         # Test _get_available_tools
         tools = agent._get_available_tools()
         # Verify list_tools was called with available_only=True
-        mock_tool_manager.list_tools.assert_called_with(available_only=True)
+        mock_tool_manager.list_tools.assert_called_with(available_only=True, execution_mode='classic')
         assert len(tools) == 2
         assert tools[0]["name"] == "tool1"
         assert tools[1]["name"] == "tool2"
@@ -161,7 +161,7 @@ class TestLangGraphAgent:
         # Test _get_tools_description
         description = agent._get_tools_description()
         # Verify list_tools was called with available_only=True
-        mock_tool_manager.list_tools.assert_called_once_with(available_only=True)
+        mock_tool_manager.list_tools.assert_called_once_with(available_only=True, execution_mode='classic')
         assert "tool1: First tool" in description
         assert "tool2: Second tool" in description
 

@@ -106,7 +106,9 @@ class ProviderRouter:
                         f"Provider {provider} doesn't support model {request.model}"
                     )
             except Exception as e:
-                logger.debug(f"Error using provider {provider}: {e}")
+                logger.debug(
+                    f"Error using provider {provider}", error=str(e), exc_info=True
+                )
                 # Fall through to model-based routing if provider lookup fails
                 pass
 
@@ -115,10 +117,18 @@ class ProviderRouter:
             try:
                 return await self._resolve_model_only(request.model, request)
             except ProviderNotFoundError as e:
-                logger.debug(f"No provider found for model {request.model}: {e}")
+                logger.debug(
+                    f"No provider found for model {request.model}",
+                    error=str(e),
+                    exc_info=True,
+                )
                 # Fall through to policy-based routing
             except Exception as e:
-                logger.debug(f"Error resolving model {request.model}: {e}")
+                logger.debug(
+                    f"Error resolving model {request.model}",
+                    error=str(e),
+                    exc_info=True,
+                )
                 # Fall through to policy-based routing
 
         # If we get here, either no provider/model was specified or the specified ones failed
@@ -221,7 +231,9 @@ class ProviderRouter:
                     )
                     return fallback_provider, model_name
                 except ProviderValidationError as e:
-                    logger.debug(f"Skipping provider {fallback_provider_name}: {e}")
+                    logger.debug(
+                        f"Skipping provider {fallback_provider_name}", error=str(e)
+                    )
                     continue
 
             # If we get here, no suitable fallback was found
@@ -273,7 +285,9 @@ class ProviderRouter:
                 provider.validate_request(model_request)
                 return provider, model_name
             except ProviderValidationError as e:
-                logger.debug(f"Skipping model {model_name} for {provider_name}: {e}")
+                logger.debug(
+                    f"Skipping model {model_name} for {provider_name}", error=str(e)
+                )
                 continue
 
         # If we get here, no model supports the requested parameters
@@ -325,7 +339,8 @@ class ProviderRouter:
                 return provider, model_name
             except ProviderValidationError as e:
                 logger.debug(
-                    f"Skipping provider {provider.name} for model {model_name}: {e}"
+                    f"Skipping provider {provider.name} for model {model_name}",
+                    error=str(e),
                 )
                 continue
 
@@ -410,7 +425,8 @@ class ProviderRouter:
                         return provider, model_name
                     except ProviderValidationError as e:
                         logger.debug(
-                            f"Skipping model {model_name} for {provider_name}: {e}"
+                            f"Skipping model {model_name} for {provider_name}",
+                            error=str(e),
                         )
                         continue
 
@@ -477,7 +493,8 @@ class ProviderRouter:
                             return provider, model_name
                         except ProviderValidationError as e:
                             logger.debug(
-                                f"Model {model_name} from {provider_name} failed validation: {e}"
+                                f"Model {model_name} from {provider_name} failed validation",
+                                error=str(e),
                             )
                             continue
             except Exception as e:
@@ -515,7 +532,9 @@ class ProviderRouter:
                 if models:
                     return {"models": models}
         except Exception as e:
-            logger.warning(f"Error getting policy for role '{role}': {e}")
+            logger.warning(
+                f"Error getting policy for role '{role}'", error=str(e), exc_info=True
+            )
 
         # Fall back to default policy
         return default_policy
@@ -552,7 +571,9 @@ class ProviderRouter:
             logger.debug(f"Routing to provider {provider_name} and model {model_name}")
             return provider, model_name
         except ProviderValidationError as e:
-            logger.debug(f"Validation failed for {provider_name}/{model_name}: {e}")
+            logger.debug(
+                f"Validation failed for {provider_name}/{model_name}", error=str(e)
+            )
             return None
 
     async def _handle_fallback_any(

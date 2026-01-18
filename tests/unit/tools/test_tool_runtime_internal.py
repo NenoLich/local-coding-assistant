@@ -112,15 +112,23 @@ def test_transform_payload_handles_transform_errors(
 
 
 @pytest.mark.asyncio
-async def test_validate_payload_against_model_with_instance(runtime: ToolRuntime) -> None:
+async def test_validate_payload_against_model_with_instance(
+    runtime: ToolRuntime,
+) -> None:
     instance = SampleInput(value=4)
-    assert await runtime._validate_payload_against_model(instance, SampleInput) is instance
+    assert (
+        await runtime._validate_payload_against_model(instance, SampleInput) is instance
+    )
+
 
 @pytest.mark.asyncio
-async def test_validate_payload_against_model_converts_dict(runtime: ToolRuntime) -> None:
+async def test_validate_payload_against_model_converts_dict(
+    runtime: ToolRuntime,
+) -> None:
     validated = await runtime._validate_payload_against_model({"value": 6}, SampleInput)
     assert isinstance(validated, SampleInput)
     assert validated.value == 6
+
 
 @pytest.mark.asyncio
 async def test_validate_payload_against_model_falls_back_to_schema(
@@ -134,6 +142,7 @@ async def test_validate_payload_against_model_falls_back_to_schema(
     payload = {"value": "5"}
     result = await runtime._validate_payload_against_model(payload, SampleInput)
     assert result == SampleInput(value=5)
+
 
 @pytest.mark.asyncio
 async def test_validate_payload_against_model_raises_when_schema_fails(
@@ -201,6 +210,7 @@ async def test_prepare_input_success(
     assert isinstance(payload, SampleInput)
     assert payload.value == 10
 
+
 @pytest.mark.asyncio
 async def test_prepare_input_model_error(
     runtime: ToolRuntime, monkeypatch: pytest.MonkeyPatch
@@ -226,6 +236,7 @@ async def test_prepare_input_model_error(
     finally:
         # Restore the original method
         SampleInput.model_validate = original_validate
+
 
 @pytest.mark.asyncio
 async def test_prepare_input_schema_error(runtime: ToolRuntime) -> None:
@@ -344,7 +355,9 @@ async def test_invoke_stream_success(runtime: ToolRuntime) -> None:
 @pytest.mark.asyncio
 async def test_validate_with_model_variants(runtime: ToolRuntime) -> None:
     assert await runtime._validate_with_model(SampleOutput, None) == {"result": 0}
-    assert await runtime._validate_with_model(SampleOutput, {"result": 3}) == {"result": 3}
+    assert await runtime._validate_with_model(SampleOutput, {"result": 3}) == {
+        "result": 3
+    }
 
     class Dumping:
         def __init__(self, value: int) -> None:
@@ -362,13 +375,17 @@ async def test_validate_with_model_variants(runtime: ToolRuntime) -> None:
         def dict(self) -> dict[str, int]:
             return {"result": self.value}
 
-    assert await runtime._validate_with_model(SampleOutput, DictLike(5)) == {"result": 5}
+    assert await runtime._validate_with_model(SampleOutput, DictLike(5)) == {
+        "result": 5
+    }
 
     class IterableResult:
         def __iter__(self):
             yield ("result", 6)
 
-    assert await runtime._validate_with_model(SampleOutput, IterableResult()) == {"result": 6}
+    assert await runtime._validate_with_model(SampleOutput, IterableResult()) == {
+        "result": 6
+    }
     assert await runtime._validate_with_model(SampleOutput, 7) == {"result": 7}
 
 
@@ -385,9 +402,11 @@ async def test_normalize_output_without_output_model(
     monkeypatch.setattr(runtime.instance, "Output", None, raising=False)
     assert await runtime._normalize_output({"raw": 1}) == {"raw": 1}
 
+
 @pytest.mark.asyncio
 async def test_normalize_output_with_instance(runtime: ToolRuntime) -> None:
     assert await runtime._normalize_output(SampleOutput(result=9)) == {"result": 9}
+
 
 @pytest.mark.asyncio
 async def test_normalize_output_falls_back_on_error(

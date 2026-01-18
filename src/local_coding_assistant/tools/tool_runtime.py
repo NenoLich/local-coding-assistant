@@ -379,10 +379,12 @@ class ToolRuntime:
             )
         except Exception as e:
             logger.warning(
-                "Error transforming input for tool '%s': %s",
+                "Error transforming input for tool '%s'",
                 self.info.name,
-                str(e),
-                exc_info=logger.isEnabledFor(logging.DEBUG),
+                error=str(e),
+                exc_info=logger.is_enabled_for(logging.DEBUG)
+                if hasattr(logger, "is_enabled_for")
+                else True,
             )
             return payload
 
@@ -411,8 +413,8 @@ class ToolRuntime:
                     )
                 except Exception as schema_error:
                     logger.debug(
-                        "Falling back to parameters schema validation failed: %s",
-                        str(schema_error),
+                        "Falling back to parameters schema validation failed",
+                        error=str(schema_error),
                     )
 
             raise model_error
@@ -555,10 +557,12 @@ class ToolRuntime:
             payload = self._transform_payload(payload)
         except Exception as e:
             logger.warning(
-                "Error transforming input for tool '%s': %s",
+                "Error transforming input for tool '%s'",
                 self.info.name,
-                str(e),
-                exc_info=logger.isEnabledFor(logging.DEBUG),
+                error=str(e),
+                exc_info=logger.is_enabled_for(logging.DEBUG)
+                if hasattr(logger, "is_enabled_for")
+                else True,
             )
             # Continue with the original payload if transformation fails
             pass
@@ -752,10 +756,12 @@ class ToolRuntime:
             return await self._validate_with_model(output_model, result)
         except (ValidationError, ValueError, TypeError) as exc:
             logger.error(
-                "Output validation failed for tool '%s': %s",
+                "Output validation failed for tool '%s'",
                 self.info.name,
-                str(exc),
-                exc_info=logger.isEnabledFor(logging.DEBUG),
+                error=str(exc),
+                exc_info=logger.is_enabled_for(logging.DEBUG)
+                if hasattr(logger, "is_enabled_for")
+                else True,
             )
             # Return the original result if validation fails
             return await self._coerce_to_serializable(result)

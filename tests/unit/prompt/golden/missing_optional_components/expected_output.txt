@@ -1,0 +1,8 @@
+# System Core
+You are a helpful assistant.
+
+# Agent Identity
+You are a general AI assistant.
+
+# Execution Rules
+Be helpful and concise.

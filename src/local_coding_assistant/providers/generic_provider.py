@@ -81,7 +81,11 @@ class GenericProvider(BaseProvider):
                 api_key=api_key, base_url=self.base_url, **driver_kwargs
             )
         except Exception as e:
-            logger.error(f"Failed to initialize driver for {self.name}: {e!s}")
+            logger.error(
+                f"Failed to initialize driver for {self.name}",
+                error=str(e),
+                exc_info=True,
+            )
             raise
 
     def _create_driver_instance(self) -> Any:
@@ -97,5 +101,9 @@ class GenericProvider(BaseProvider):
             # Use the parent's _initialize_driver helper method
             return self._initialize_driver()
         except Exception as e:
-            logger.error(f"Failed to create driver instance for {self.name}: {e!s}")
+            logger.error(
+                f"Failed to create driver instance for {self.name}",
+                error=str(e),
+                exc_info=True,
+            )
             raise RuntimeError(f"Failed to initialize driver: {e!s}") from e

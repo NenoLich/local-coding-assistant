@@ -1,0 +1,10 @@
+{
+  "system_core": "You are a helpful assistant.",
+  "agent_identity": "You are a general AI assistant.",
+  "execution_rules": "Be helpful and concise.",
+  "constraints": [],
+  "skills": [],
+  "tools": [],
+  "examples": [],
+  "memories": []
+}

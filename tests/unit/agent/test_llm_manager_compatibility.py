@@ -161,11 +161,11 @@ class TestLLMManagerStreaming:
         # Mock failing provider with proper async generator
         mock_provider = AsyncMock()
         mock_provider.name = "openai"
-        
+
         # Create an async generator that raises the error
         async def mock_stream_with_retry(*args, **kwargs):
             raise ProviderError("API Error", provider="openai")
-            
+
         mock_provider.stream_with_retry = mock_stream_with_retry
 
         # Mock router
@@ -253,11 +253,11 @@ class TestLLMManagerMethodConsistency:
         mock_provider.generate_with_retry = AsyncMock(
             side_effect=ProviderError("API Error", provider="openai")
         )
-        
+
         # Properly mock the async generator function
         async def mock_stream_with_retry(*args, **kwargs):
             raise ProviderError("API Error", provider="openai")
-            
+
         mock_provider.stream_with_retry = mock_stream_with_retry
 
         # Mock router

@@ -9,7 +9,9 @@ import pytest
 from local_coding_assistant.sandbox.manager import SandboxManager
 
 
-def test_sandbox_manager_builds_docker_sandbox_from_config(sandbox_config_manager) -> None:
+def test_sandbox_manager_builds_docker_sandbox_from_config(
+    sandbox_config_manager,
+) -> None:
     """Ensure the manager instantiates DockerSandbox using config values."""
 
     manager = SandboxManager(sandbox_config_manager)
@@ -26,11 +28,15 @@ def test_sandbox_manager_builds_docker_sandbox_from_config(sandbox_config_manage
     assert manager.security_manager is not None
     assert manager.security_manager.allowed_imports == set(config.allowed_imports)
     assert manager.security_manager.blocked_patterns == config.blocked_patterns
-    assert manager.security_manager.blocked_shell_commands == config.blocked_shell_commands
+    assert (
+        manager.security_manager.blocked_shell_commands == config.blocked_shell_commands
+    )
 
 
 @pytest.mark.asyncio
-async def test_sandbox_manager_start_and_stop_reuse_single_instance(sandbox_config_manager) -> None:
+async def test_sandbox_manager_start_and_stop_reuse_single_instance(
+    sandbox_config_manager,
+) -> None:
     """Verify start/stop delegates to the cached sandbox instance."""
 
     manager = SandboxManager(sandbox_config_manager)
@@ -47,7 +53,9 @@ async def test_sandbox_manager_start_and_stop_reuse_single_instance(sandbox_conf
     sandbox.stop.assert_awaited_once()
 
 
-def test_sandbox_manager_workspace_directory_is_materialized(sandbox_config_manager) -> None:
+def test_sandbox_manager_workspace_directory_is_materialized(
+    sandbox_config_manager,
+) -> None:
     """Workspace directories should be created beneath the configured project root."""
 
     manager = SandboxManager(sandbox_config_manager)

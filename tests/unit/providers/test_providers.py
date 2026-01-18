@@ -225,7 +225,11 @@ class TestBaseProvider:
     def setup(self):
         """Setup mock EnvManager for tests."""
         self.mock_env_manager = MagicMock(spec=EnvManager)
-        self.mock_env_manager.get_env.return_value = None
+        # Mock the internal _instance for the facade pattern
+        self.mock_env_manager._instance = MagicMock()
+        self.mock_env_manager._instance.get_env.return_value = None
+        # Make get_env delegate to the internal instance
+        self.mock_env_manager.get_env = self.mock_env_manager._instance.get_env
 
     def test_initialization(self):
         """Test BaseProvider initialization."""
@@ -481,7 +485,11 @@ class TestProviderManager:
     def setup(self):
         """Setup mock EnvManager for tests."""
         self.mock_env_manager = MagicMock(spec=EnvManager)
-        self.mock_env_manager.get_env.return_value = None
+        # Mock the internal _instance for the facade pattern
+        self.mock_env_manager._instance = MagicMock()
+        self.mock_env_manager._instance.get_env.return_value = None
+        # Make get_env delegate to the internal instance
+        self.mock_env_manager.get_env = self.mock_env_manager._instance.get_env
 
     def test_initialization(self):
         """Test ProviderManager initialization."""
@@ -750,7 +758,11 @@ class TestGoogleGeminiProvider:
     def setup(self):
         """Setup mock EnvManager for tests."""
         self.mock_env_manager = MagicMock(spec=EnvManager)
-        self.mock_env_manager.get_env.return_value = None
+        # Mock the internal _instance for the facade pattern
+        self.mock_env_manager._instance = MagicMock()
+        self.mock_env_manager._instance.get_env.return_value = None
+        # Make get_env delegate to the internal instance
+        self.mock_env_manager.get_env = self.mock_env_manager._instance.get_env
 
     def test_initialization(self):
         """Test GoogleGeminiProvider initialization."""
@@ -854,7 +866,11 @@ class TestOpenRouterProvider:
     def setup(self):
         """Setup mock EnvManager for tests."""
         self.mock_env_manager = MagicMock(spec=EnvManager)
-        self.mock_env_manager.get_env.return_value = None
+        # Mock the internal _instance for the facade pattern
+        self.mock_env_manager._instance = MagicMock()
+        self.mock_env_manager._instance.get_env.return_value = None
+        # Make get_env delegate to the internal instance
+        self.mock_env_manager.get_env = self.mock_env_manager._instance.get_env
 
     def test_initialization(self):
         """Test OpenRouterProvider initialization."""
@@ -982,7 +998,11 @@ class TestProviderIntegration:
     def setup(self):
         """Setup mock EnvManager for tests."""
         self.mock_env_manager = MagicMock(spec=EnvManager)
-        self.mock_env_manager.get_env.return_value = None
+        # Mock the internal _instance for the facade pattern
+        self.mock_env_manager._instance = MagicMock()
+        self.mock_env_manager._instance.get_env.return_value = None
+        # Make get_env delegate to the internal instance
+        self.mock_env_manager.get_env = self.mock_env_manager._instance.get_env
 
     def test_provider_registration_and_retrieval(self):
         """Test complete provider registration and retrieval flow."""

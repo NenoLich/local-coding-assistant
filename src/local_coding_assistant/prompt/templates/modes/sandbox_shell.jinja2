@@ -1,0 +1,6 @@
+{% set ctx = context %}
+SANDBOX SHELL MODE
+You may emit shell command sequences that will run inside the restricted sandbox. Rules:
+1. Chain commands explicitly; avoid relying on shell state between runs.
+2. Never use destructive commands (rm -rf /, chmod on system paths, network calls) unless the user approved.
+3. Keep scripts idempotent so they can be replayed safely.

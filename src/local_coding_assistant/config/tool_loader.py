@@ -101,7 +101,7 @@ class ToolConfigLoader:
             env_manager: Optional EnvManager instance for path resolution
         """
         self._raw_definitions: dict[str, RawToolDefinition] = {}
-        self._env_manager = env_manager or EnvManager.create(load_env=True)
+        self._env_manager = env_manager or EnvManager(load_env=True)
         self._path_manager = self._env_manager.path_manager
 
     def load(
@@ -273,7 +273,7 @@ class ToolModuleLoader:
         Args:
             env_manager: EnvManager instance for environment and path management
         """
-        self._env_manager = env_manager or EnvManager.create(load_env=False)
+        self._env_manager = env_manager or EnvManager()
         self._path_manager = self._env_manager.path_manager
         self._module_cache: dict[str, Any] = {}
 
@@ -312,7 +312,9 @@ class ToolModuleLoader:
                     "Tool '%s' is not available due to: %s",
                     tool_id,
                     exc,
-                    exc_info=logger.isEnabledFor(logging.DEBUG),
+                    exc_info=logger.is_enabled_for(logging.DEBUG)
+                    if hasattr(logger, "is_enabled_for")
+                    else True,
                 )
 
     def _should_load_class(
@@ -538,7 +540,9 @@ class ToolModuleLoader:
             logger.warning(
                 "Failed to extract parameters from Input model: %s",
                 str(e),
-                exc_info=logger.isEnabledFor(logging.DEBUG),
+                exc_info=logger.is_enabled_for(logging.DEBUG)
+                if hasattr(logger, "is_enabled_for")
+                else True,
             )
             return None
 
@@ -603,7 +607,9 @@ class ToolModuleLoader:
 
         except Exception as e:
             logger.warning(
-                "Failed to extract parameters from run() signature: %s", str(e)
+                "Failed to extract parameters from run() signature",
+                error=str(e),
+                exc_info=True,
             )
             return None
 
@@ -800,7 +806,7 @@ class ToolConfigConverter:
         Args:
             env_manager: Optional EnvManager instance for path resolution
         """
-        self._env_manager = env_manager or EnvManager.create(load_env=True)
+        self._env_manager = env_manager or EnvManager()
         self._path_manager = self._env_manager.path_manager
 
     def convert(self, config_dict: dict[str, dict[str, Any]]) -> dict[str, ToolConfig]:
@@ -837,7 +843,10 @@ class ToolConfigConverter:
                 except Exception as exc:
                     error_count += 1
                     logger.warning(
-                        "Failed to create tool config for '%s': %s", tool_id, exc
+                        "Failed to create tool config for '%s'",
+                        tool_id,
+                        error=str(exc),
+                        exc_info=True,
                     )
                     tool_config = self._create_unavailable_tool(
                         tool_id, merged_config, exc
@@ -970,9 +979,10 @@ class ToolConfigConverter:
             return ToolConfigConverter._create_tool_config(tool_id, error_config)
         except Exception as e:
             logger.warning(
-                "Failed to create unavailable tool config for '%s', skipping: %s",
+                "Failed to create unavailable tool config for '%s', skipping",
                 tool_id,
-                str(e),
+                error=str(e),
+                exc_info=True,
             )
             return None
 
@@ -995,13 +1005,17 @@ class ToolConfigConverter:
                 str(error).replace("\n", " "),
             )
         elif isinstance(error, ConfigError):
-            logger.warning("Skipping tool '%s': %s", tool_id, error)
+            logger.warning(
+                "Skipping tool '%s'", tool_id, error=str(error), exc_info=True
+            )
         else:  # pragma: no cover - unexpected
             logger.error(
                 "Unexpected error processing tool '%s': %s",
                 tool_id,
                 error,
-                exc_info=logger.isEnabledFor(logging.DEBUG),
+                exc_info=logger.is_enabled_for(logging.DEBUG)
+                if hasattr(logger, "is_enabled_for")
+                else True,
             )
 
 
@@ -1022,7 +1036,7 @@ class ToolLoader:
         Args:
             env_manager: EnvManager instance for environment and path management
         """
-        self._env_manager = env_manager or EnvManager.create(load_env=False)
+        self._env_manager = env_manager or EnvManager()
         self._config_loader = ToolConfigLoader(env_manager=self._env_manager)
         self._module_loader = ToolModuleLoader(env_manager=self._env_manager)
         self._converter = ToolConfigConverter(env_manager=self._env_manager)

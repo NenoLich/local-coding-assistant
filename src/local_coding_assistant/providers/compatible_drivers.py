@@ -58,10 +58,10 @@ class OpenAIChatCompletionsDriver(BaseDriver):
 
         try:
             response = await self.client.chat.completions.create(**payload)
-            logger.debug("Response: %s", response)
+            logger.debug("Response received", response=response)
             return self._parse_response(response, request.model)
         except Exception as e:
-            logger.error("Error in OpenAI API request", exc_info=True)
+            logger.error("Error in OpenAI API request", error=str(e), exc_info=True)
             self._handle_error(e)
 
     async def stream(
@@ -108,7 +108,9 @@ class OpenAIChatCompletionsDriver(BaseDriver):
                     },
                 )
         except Exception as e:
-            logger.error("Error in OpenAI streaming request", exc_info=True)
+            logger.error(
+                "Error in OpenAI streaming request", error=str(e), exc_info=True
+            )
             self._handle_error(e)
 
     def _parse_response(self, response, model: str) -> ProviderLLMResponse:
@@ -139,7 +141,7 @@ class OpenAIChatCompletionsDriver(BaseDriver):
                 },
             )
         except Exception as e:
-            logger.error(f"Error parsing response: {e}", exc_info=True)
+            logger.error("Error parsing response", error=str(e), exc_info=True)
             raise ProviderError(f"Failed to parse response: {e}") from e
 
     def _parse_tool_call(self, tool_call: Any) -> dict[str, Any]:
@@ -195,7 +197,7 @@ class OpenAIChatCompletionsDriver(BaseDriver):
                 },
             }
         except Exception as err:
-            logger.warning(f"Failed to parse tool call: {err}", exc_info=True)
+            logger.warning("Failed to parse tool call", error=str(err), exc_info=True)
             return {
                 "id": f"error_{id(err)}",
                 "type": "function",
@@ -386,7 +388,7 @@ class OpenAIResponsesDriver(BaseDriver):
                 formatted_tools.append(tool)
             else:
                 # Unsupported format, log a warning and include as-is
-                logger.warning(f"Unsupported tool format: {tool}")
+                logger.warning("Unsupported tool format", tool=tool)
                 formatted_tools.append(tool)
 
         return formatted_tools
@@ -503,7 +505,7 @@ class OpenAIResponsesDriver(BaseDriver):
                 "model": getattr(response, "model", None),
             },
         )
-        logger.debug(f"Response: {parsed_response}")
+        logger.debug("Response parsed", parsed_response=parsed_response)
         return parsed_response
 
     def _parse_tool_calls(self, response) -> list[dict[str, Any]]:
@@ -550,7 +552,9 @@ class OpenAIResponsesDriver(BaseDriver):
                 }
                 tool_calls.append(tool_call)
             except (json.JSONDecodeError, AttributeError) as e:
-                logger.warning(f"Failed to parse tool call arguments: {e}")
+                logger.warning(
+                    "Failed to parse tool call arguments", error=str(e), exc_info=True
+                )
                 continue
 
         return tool_calls

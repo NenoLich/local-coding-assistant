@@ -389,7 +389,7 @@ class ProviderManager:
 
 
 # Global provider manager instance
-provider_manager = ProviderManager(EnvManager.create(load_env=True))
+provider_manager = ProviderManager(EnvManager(load_env=True))
 
 
 def register_provider(name: str):

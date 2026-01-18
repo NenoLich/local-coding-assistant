@@ -84,5 +84,7 @@ class LocalProvider(BaseProvider):
         try:
             return await self.driver_instance.health_check()
         except Exception as e:
-            logger.error(f"Health check failed for {self.name}: {e!s}")
+            logger.error(
+                "Health check failed for {self.name}", error=str(e), exc_info=True
+            )
             return False

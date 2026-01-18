@@ -97,7 +97,9 @@ def sandbox_harness(tmp_path: Path) -> SandboxTestHarness:
 
 
 @pytest.mark.asyncio
-async def test_ptc_import_enforcement_blocks_disallowed_import(sandbox_harness: SandboxTestHarness) -> None:
+async def test_ptc_import_enforcement_blocks_disallowed_import(
+    sandbox_harness: SandboxTestHarness,
+) -> None:
     """os import should be blocked before any container work occurs."""
 
     request = SandboxExecutionRequest(
@@ -114,7 +116,9 @@ async def test_ptc_import_enforcement_blocks_disallowed_import(sandbox_harness: 
 
 
 @pytest.mark.asyncio
-async def test_api_usage_enforcement_allows_tools_api_calls(sandbox_harness: SandboxTestHarness) -> None:
+async def test_api_usage_enforcement_allows_tools_api_calls(
+    sandbox_harness: SandboxTestHarness,
+) -> None:
     """tools_api imports should pass security checks and reach execution."""
 
     sandbox_harness.execute_ephemeral.return_value = SandboxExecutionResponse(
@@ -139,7 +143,9 @@ async def test_api_usage_enforcement_allows_tools_api_calls(sandbox_harness: San
 
 
 @pytest.mark.asyncio
-async def test_forbidden_os_access_blocked_by_patterns(sandbox_harness: SandboxTestHarness) -> None:
+async def test_forbidden_os_access_blocked_by_patterns(
+    sandbox_harness: SandboxTestHarness,
+) -> None:
     """Direct filesystem access such as open() should be rejected."""
 
     request = SandboxExecutionRequest(
@@ -155,7 +161,9 @@ async def test_forbidden_os_access_blocked_by_patterns(sandbox_harness: SandboxT
 
 
 @pytest.mark.asyncio
-async def test_timeout_response_bubbles_up_from_container(sandbox_harness: SandboxTestHarness) -> None:
+async def test_timeout_response_bubbles_up_from_container(
+    sandbox_harness: SandboxTestHarness,
+) -> None:
     """Container-level timeouts should be surfaced in the sandbox response."""
 
     sandbox_harness.execute_ephemeral.return_value = SandboxExecutionResponse(
@@ -178,7 +186,9 @@ async def test_timeout_response_bubbles_up_from_container(sandbox_harness: Sandb
 
 
 @pytest.mark.asyncio
-async def test_final_answer_detection_preserved(sandbox_harness: SandboxTestHarness) -> None:
+async def test_final_answer_detection_preserved(
+    sandbox_harness: SandboxTestHarness,
+) -> None:
     """Final answers returned from the sandbox should remain attached to the response."""
 
     sandbox_harness.execute_ephemeral.return_value = SandboxExecutionResponse(
@@ -199,7 +209,9 @@ async def test_final_answer_detection_preserved(sandbox_harness: SandboxTestHarn
 
 
 @pytest.mark.asyncio
-async def test_persistent_execution_delegates_to_ipc_flow(sandbox_harness: SandboxTestHarness) -> None:
+async def test_persistent_execution_delegates_to_ipc_flow(
+    sandbox_harness: SandboxTestHarness,
+) -> None:
     """Persistent sessions should use the persistent IPC execution path."""
 
     persistent_resp = SandboxExecutionResponse(success=True, stdout="persisted")
@@ -243,7 +255,9 @@ async def test_files_metadata_passthrough(sandbox_harness: SandboxTestHarness) -
 
 
 @pytest.mark.asyncio
-async def test_container_start_failure_reports_error(sandbox_harness: SandboxTestHarness) -> None:
+async def test_container_start_failure_reports_error(
+    sandbox_harness: SandboxTestHarness,
+) -> None:
     """Startup failures should be converted into structured sandbox errors."""
 
     sandbox_harness.start_container.side_effect = SandboxRuntimeError(
@@ -263,7 +277,9 @@ async def test_container_start_failure_reports_error(sandbox_harness: SandboxTes
 
 
 @pytest.mark.asyncio
-async def test_execute_shell_blocks_disallowed_commands(sandbox_harness: SandboxTestHarness) -> None:
+async def test_execute_shell_blocks_disallowed_commands(
+    sandbox_harness: SandboxTestHarness,
+) -> None:
     """Shell execution should reject blocked commands immediately."""
 
     response = await sandbox_harness.sandbox.execute_shell("rm -rf /tmp")

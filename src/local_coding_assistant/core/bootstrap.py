@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from local_coding_assistant.agent.llm_manager import LLMManager
-from local_coding_assistant.config.env_manager import EnvManager
+from local_coding_assistant.config.env_manager import EnvManager, get_env_manager
 from local_coding_assistant.core.app_context import AppContext
 from local_coding_assistant.core.dependencies import AppDependencies
 from local_coding_assistant.core.protocols import IConfigManager, IToolManager
@@ -14,21 +14,6 @@ from local_coding_assistant.sandbox.manager import SandboxManager
 from local_coding_assistant.utils.logging import get_logger, setup_logging
 
 logger = get_logger("core.bootstrap")
-
-
-def _setup_environment() -> EnvManager:
-    """Load environment variables and perform environment setup.
-
-    Returns:
-        Initialized EnvManager instance
-    """
-    try:
-        env_manager = EnvManager.create(load_env=True)
-        return env_manager
-    except Exception as e:
-        logger.warning("Failed to load .env files: %s", e, exc_info=True)
-        # Return a minimal EnvManager instance even if loading fails
-        return EnvManager()
 
 
 def bootstrap(
@@ -58,18 +43,16 @@ def bootstrap(
     try:
         logger.debug("Starting application bootstrap")
 
-        # 2. Setup environment
-        env_manager = _setup_environment()
+        # 2. Get environment manager (automatically loads .env files on first access)
+        env_manager = get_env_manager()
         logger.debug("Environment setup completed")
 
         # 3. Initialize configuration
-        config, config_manager = _initialize_config(
-            config_path, config_manager, env_manager
-        )
+        config_manager = _initialize_config(config_path, config_manager, env_manager)
         logger.debug("Configuration loaded successfully")
 
         # 4. Now setup full logging with the loaded config
-        _setup_logging(config, log_level)
+        _setup_logging(config_manager, log_level, logging_to_file=True)
         logger = get_logger("core.bootstrap")  # Reinitialize logger after setup
 
         # 4. Initialize dependencies with the config manager
@@ -81,7 +64,7 @@ def bootstrap(
         # 6. Initialize components
         deps.config_manager = config_manager
         deps.sandbox_manager = _initialize_sandbox_manager(config_manager)
-        deps.llm_manager = _initialize_llm_manager(config_manager, config)
+        deps.llm_manager = _initialize_llm_manager(config_manager)
         deps.tool_manager = _initialize_tool_manager(
             config_manager=config_manager,
             sandbox_manager=deps.sandbox_manager,
@@ -122,7 +105,7 @@ def _initialize_config(
     config_path: str | None,
     config_manager: IConfigManager | None = None,
     env_manager: EnvManager | None = None,
-) -> tuple[Any, IConfigManager]:
+) -> IConfigManager:
     """Initialize configuration and config manager.
 
     Args:
@@ -152,7 +135,7 @@ def _initialize_config(
     if config is None:
         raise RuntimeError("Failed to load configuration")
 
-    return config, config_manager
+    return config_manager
 
 
 def _initialize_dependencies(config_manager: IConfigManager) -> AppDependencies:
@@ -169,58 +152,72 @@ def _initialize_dependencies(config_manager: IConfigManager) -> AppDependencies:
     return deps
 
 
-def _setup_logging(config: Any | None = None, log_level: int | None = None) -> None:
-    """Configure application logging.
+def _setup_logging(
+    config_manager: IConfigManager | None = None,
+    log_level: int | None = None,
+    logging_to_file: bool = False,
+) -> None:
+    """Configure application logging with the following priority:
+    1. Use log_level if provided
+    2. If config.global_config.runtime.enabled_logging is True, use config.global_config.runtime.log_level
+    3. Default to logging.INFO
+    4. If enabled_logging is False, use logging.CRITICAL
+
+    If logging_to_file is True, logs will be written to:
+    config.env_manager.path_manager.get_log_dir() / "LOCCA.log" with daily rotation
 
     Args:
-        config: Optional loaded configuration. If None, only basic logging is configured.
-        log_level: Optional log level override. Takes precedence over config.
+        config_manager: Optional config manager instance
+        log_level: Optional log level override (highest priority)
+        logging_to_file: Whether to enable file logging
     """
     try:
-        # If log_level is provided, use it directly
-        if log_level is not None:
-            setup_logging(level=log_level)
-            return
+        # Default log level
+        final_log_level = logging.INFO
 
-        # If we have a config with logging settings, use those
-        if config is not None and hasattr(config, "logging"):
-            # Check if logging is explicitly disabled
-            if hasattr(config.logging, "enabled") and not config.logging.enabled:
-                setup_logging(level=logging.CRITICAL)
-                return
-
-            # Use log level from config if available
-            if hasattr(config.logging, "level"):
-                log_level_str = str(config.logging.level)
-                if log_level_str.isdigit():
-                    setup_logging(level=int(log_level_str))
+        # Check config for logging settings if no explicit log_level provided
+        if log_level is None and config_manager:
+            try:
+                runtime_config = getattr(config_manager, "global_config", {}).get(
+                    "runtime", {}
+                )
+                if not runtime_config.get("enabled_logging", True):
+                    final_log_level = logging.CRITICAL
                 else:
-                    # Use explicit mapping for log levels
-                    log_level_map = {
-                        "DEBUG": logging.DEBUG,
-                        "INFO": logging.INFO,
-                        "WARNING": logging.WARNING,
-                        "ERROR": logging.ERROR,
-                        "CRITICAL": logging.CRITICAL,
-                    }
-                    level = log_level_map.get(log_level_str.upper(), logging.INFO)
-                    setup_logging(level=level)
-                return
+                    # Try to get log level from config
+                    config_log_level = runtime_config.get("log_level", "INFO").upper()
+                    final_log_level = getattr(logging, config_log_level, logging.INFO)
+            except Exception as e:
+                logging.warning(f"Failed to read logging config: {e}")
+                final_log_level = logging.INFO
 
-        # Default to INFO level if no specific config found
-        setup_logging(level=logging.INFO)
+        # Apply explicit log level if provided (highest priority)
+        if log_level is not None:
+            final_log_level = log_level
+
+        # Set up file logging if enabled
+        log_file = None
+        if logging_to_file and config_manager:
+            try:
+                log_dir = config_manager.path_manager.get_log_dir()
+                log_file = log_dir / "LOCCA.log"
+            except Exception as e:
+                logging.warning(f"Failed to set up file logging: {e}")
+
+        # Configure logging
+        setup_logging(
+            level=final_log_level,
+            log_file=str(log_file) if log_file else None,
+            time_rotation="midnight" if logging_to_file else None,
+        )
 
     except Exception as e:
-        # If logging setup fails, configure basic logging as fallback
+        # Fall back to basic logging if our setup fails
         logging.basicConfig(level=logging.INFO)
-        global logger
-        logger = logging.getLogger("core.bootstrap")
-        logger.warning("Failed to configure logging: %s", str(e), exc_info=True)
+        logging.error(f"Failed to configure logging: {e}", exc_info=True)
 
 
-def _initialize_llm_manager(
-    config_manager: IConfigManager, config: Any
-) -> LLMManager | None:
+def _initialize_llm_manager(config_manager: IConfigManager) -> LLMManager | None:
     """Initialize the LLM manager.
 
     Args:
@@ -239,7 +236,7 @@ def _initialize_llm_manager(
         return llm_manager
 
     except Exception as e:
-        logger.error("Failed to initialize LLM manager: %s", str(e), exc_info=True)
+        logger.error("Failed to initialize LLM manager", str(e), exc_info=True)
         return None
 
 
@@ -256,10 +253,20 @@ def _initialize_sandbox_manager(
     """
     try:
         sandbox_manager = SandboxManager(config_manager)
+
+        # Check sandbox availability and update config if needed
+        if (
+            config_manager.global_config.sandbox.enabled
+            and not sandbox_manager.ensure_availability()
+        ):
+            logger.warning(
+                "Sandbox is not available. Disabling sandbox in session configuration."
+            )
+
         logger.info("Sandbox manager initialized successfully")
         return sandbox_manager
     except Exception as e:
-        logger.error("Failed to initialize sandbox manager: %s", str(e), exc_info=True)
+        logger.error("Failed to initialize sandbox manager", str(e), exc_info=True)
         return None
 
 
@@ -288,7 +295,7 @@ def _initialize_tool_manager(
 
         return tool_manager
     except Exception as e:
-        logger.error("Failed to initialize tool manager: %s", str(e), exc_info=True)
+        logger.error("Failed to initialize tool manager", str(e), exc_info=True)
         return None
 
 
@@ -324,5 +331,5 @@ def _initialize_runtime_manager(
         return runtime_manager
 
     except Exception as e:
-        logger.error("Failed to initialize runtime manager: %s", str(e), exc_info=True)
+        logger.error("Failed to initialize runtime manager", str(e), exc_info=True)
         return None

@@ -90,6 +90,8 @@ def test_tool_manager_loads_tools_from_config_and_executes(tool_test_env, test_c
     config_manager = ConfigManager(
         tool_config_paths=[tool_test_env.default_config, tool_test_env.local_config]
     )
+    # Initialize the global config to ensure _global_config is set
+    config_manager.load_global_config()
     tool_manager = ToolManager(config_manager=config_manager, auto_load=True)
 
     info = tool_manager.get_tool_info("sample_tool")
@@ -102,7 +104,9 @@ def test_tool_manager_loads_tools_from_config_and_executes(tool_test_env, test_c
     # Get the stats and verify
     stats = tool_manager.get_execution_stats().get("sample_tool", {})
     assert stats.get("total_executions", 0) > 0, "Expected at least one execution"
-    assert stats.get("success_count", 0) > 0, "Expected at least one successful execution"
+    assert stats.get("success_count", 0) > 0, (
+        "Expected at least one successful execution"
+    )
 
     # Check the disabled tool
     disabled_info = tool_manager.get_tool_info("disabled_tool")
@@ -139,6 +143,8 @@ def test_tool_manager_execute_reports_success_and_errors(tool_test_env):
     config_manager = ConfigManager(
         tool_config_paths=[tool_test_env.default_config, tool_test_env.local_config]
     )
+    # Initialize the global config to ensure _global_config is set
+    config_manager.load_global_config()
     manager = ToolManager(config_manager=config_manager, auto_load=True)
 
     success = manager.execute(
@@ -180,6 +186,8 @@ def test_cli_tool_run_executes_registered_tool(tool_test_env, cli_runner, monkey
         config_manager = ConfigManager(
             tool_config_paths=[tool_test_env.default_config, tool_test_env.local_config]
         )
+        # Initialize the global config to ensure _global_config is set
+        config_manager.load_global_config()
         return {
             "tools": ToolManager(config_manager=config_manager, auto_load=True),
         }
@@ -207,6 +215,8 @@ def test_cli_tool_add_persists_configuration(
         config_manager = ConfigManager(
             tool_config_paths=[tool_test_env.default_config, tool_test_env.local_config]
         )
+        # Initialize the global config to ensure _global_config is set
+        config_manager.load_global_config()
         return {
             "tools": ToolManager(config_manager=config_manager, auto_load=True),
         }
@@ -239,6 +249,8 @@ def test_cli_tool_add_persists_configuration(
     config_manager = ConfigManager(
         tool_config_paths=[test_configs["default"], test_configs["local"]]
     )
+    # Initialize the global config to ensure _global_config is set
+    config_manager.load_global_config()
     tool_manager = ToolManager(config_manager=config_manager, auto_load=True)
     run_result = tool_manager.run_tool("added_cli_tool", {"value": 2})
     assert run_result == {"result": 12}
@@ -277,6 +289,8 @@ def test_cli_tool_add_updates_existing_tool(
             config_manager = ConfigManager(tool_config_paths=[config_file])
         else:
             config_manager = ConfigManager(tool_config_paths=[test_configs["local"]])
+        # Initialize the global config to ensure _global_config is set
+        config_manager.load_global_config()
         return {
             "tools": ToolManager(config_manager=config_manager, auto_load=True),
         }

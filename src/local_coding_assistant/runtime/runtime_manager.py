@@ -16,9 +16,11 @@ from local_coding_assistant.agent.llm_manager import (
     ToolCall,
 )
 from local_coding_assistant.core.protocols import IConfigManager, IToolManager
+from local_coding_assistant.prompt import PromptComposer
+from local_coding_assistant.runtime.context_manager import ContextManager
+from local_coding_assistant.runtime.runtime_types import PromptContext
 from local_coding_assistant.runtime.session import SessionState
 from local_coding_assistant.tools.types import (
-    ToolCategory,
     ToolExecutionRequest,
     ToolExecutionResponse,
 )
@@ -50,6 +52,11 @@ class RuntimeManager:
         self._tool_manager = tool_manager
         self._log = get_logger("runtime.runtime_manager")
         self.config_manager = config_manager
+        self._context_manager = ContextManager(
+            config_manager=config_manager,
+            tool_manager=tool_manager,
+        )
+        self._prompt_composer = PromptComposer(config_manager=config_manager)
 
         # Ensure config manager has global configuration loaded
         if (
@@ -89,7 +96,7 @@ class RuntimeManager:
             model: Optional model override
             temperature: Optional temperature override
             max_tokens: Optional max_tokens override
-            tool_call_mode: Optional tool call mode ('classic' or 'ptc'). If None, uses the mode from config.
+            tool_call_mode: Optional tool call mode ('classic', 'ptc' or 'reasoning_only'). If None, uses the mode from config.
             sandbox_session: Optional session ID for sandbox persistence.
 
         Returns:
@@ -192,7 +199,7 @@ class RuntimeManager:
                 # Re-raise ToolRegistryError to be handled by the caller
                 raise
             except Exception as e:
-                self._log.error("Tool invocation failed: %s", e)
+                self._log.error("Tool invocation failed", error=str(e), exc_info=True)
                 return None, f"Tool invocation failed: {e!s}"
 
         return None, text
@@ -222,106 +229,23 @@ class RuntimeManager:
         # Get tool_call_mode from config
         mode = self.config_manager.global_config.runtime.tool_call_mode
 
-        # Get tools based on the current mode
-        tools = self._get_available_tools()
-        system_prompt = session.system_prompt or ""
-
-        # In PTC mode, we need to add tool documentation to the system prompt
-        if mode == "ptc" and self._tool_manager:
-            sandbox_tools_prompt = self._tool_manager.get_sandbox_tools_prompt()
-            if sandbox_tools_prompt:
-                system_prompt = f"""{system_prompt}
- You are operating in Programmatic Tool Calling (PTC) mode.
-
-In this mode, you DO NOT call tools using JSON.
-Instead, you write a complete Python program that will be executed in a secure sandbox.
-
-────────────────────────────────────────
-HOW TO EXECUTE CODE
-────────────────────────────────────────
-When computation is needed, emit a Python program using the tool:
-
-execute_python_code
-
-The program must:
-- Be valid Python
-- Run top-to-bottom
-- Use only allowed imports
-- Call available tool functions directly
-- Print intermediate values if helpful
-- End by calling `final_answer(...)`
-
-Example structure:
-
-```python
-from tools_api import sum_tool, final_answer
-
-result = sum_tool(a=2, b=5)
-print("Intermediate result:", result)
-
-final_answer(f"The result is {{result}}")
-```
-
-The value passed to final_answer(...) will be shown to the user.
-
-────────────────────────────────────────
-AVAILABLE TOOL FUNCTIONS
-────────────────────────────────────────
-The following Python functions are available for use. You must import them from tools_api to be able to use them.
- 
-{sandbox_tools_prompt}
-
-When using these tools, you need to import and call them directly in your code.
-
-────────────────────────────────────────
-ENVIRONMENT CONSTRAINTS
-────────────────────────────────────────
-You are running inside a restricted sandbox.
-
-Allowed:
-
-Standard Python syntax
-
-Data processing logic
-
-Loops, conditionals, functions
-
-Imports from the standard library such as:
-math, json, datetime, pathlib, collections, itertools, time
-
-Forbidden:
-
-eval(), exec(), compile()
-
-import or dynamic imports
-
-Accessing files outside /workspace
-
-Modifying system files
-
-Arbitrary shell execution
-
-Network access unless explicitly provided via tools
-
-Violating these rules will cause execution to fail.
-
-────────────────────────────────────────
-IMPORTANT
-────────────────────────────────────────
-
-Do NOT describe what you would do — write the code.
-
-Do NOT return explanations outside of final_answer.
-
-If a task cannot be completed safely, explain why using final_answer.
-"""
+        prompt_context = self._context_manager.build_context(
+            session=session,
+            user_input=text,
+            tool_call_mode=mode,
+            agent_mode=False,
+            graph_mode=False,
+        )
+        rendered_prompt = self._prompt_composer.render(prompt_context)
+        system_prompt = self._combine_sections(rendered_prompt.system_messages)
+        prompt_text = self._combine_sections(rendered_prompt.user_messages) or text
 
         request = LLMRequest(
-            prompt=text,
-            context=self._build_llm_context(session),
-            tools=tools,
+            prompt=prompt_text,
+            context=self._build_llm_context(session, prompt_context),
+            tools=rendered_prompt.tool_schemas,
             tool_outputs=tool_outputs or {},
-            system_prompt=system_prompt,
+            system_prompt=system_prompt or session.system_prompt,
         )
 
         overrides = self._apply_overrides(
@@ -330,14 +254,19 @@ If a task cannot be completed safely, explain why using final_answer.
 
         return request, overrides
 
-    def _build_llm_context(self, session: SessionState) -> dict[str, Any]:
+    def _build_llm_context(
+        self, session: SessionState, prompt_context: PromptContext | None = None
+    ) -> dict[str, Any]:
         """Construct the contextual payload for LLM interactions."""
-        return {
+        context = {
             "session_id": session.id,
             "history": [m.model_dump() for m in session.history],
             "tool_calls": [tc.model_dump() for tc in session.tool_calls],
             "metadata": session.metadata,
         }
+        if prompt_context is not None:
+            context["prompt_context"] = prompt_context.model_dump()
+        return context
 
     def _build_result(
         self, session: SessionState, response: LLMResponse
@@ -436,7 +365,7 @@ If a task cannot be completed safely, explain why using final_answer.
 
         else:
             self._log.error(
-                "Tool %s execution failed: %s", func_name, response.error_message
+                "Tool %s execution failed", func_name, error=response.error_message
             )
 
         return response.dried_out()
@@ -450,7 +379,7 @@ If a task cannot be completed safely, explain why using final_answer.
     ) -> None:
         """Handle general tool execution errors."""
         error_msg = str(error)
-        self._log.error("Tool call '%s' failed: %s", func_name, error_msg)
+        self._log.error("Tool call '%s' failed", func_name, error=error_msg)
         session.add_tool_message(
             name=func_name,
             args=args,
@@ -459,7 +388,9 @@ If a task cannot be completed safely, explain why using final_answer.
 
     def _log_tool_success(self, func_name: str, tool_result: Any) -> None:
         """Log successful tool execution."""
-        self._log.debug("LLM-initiated tool call: %s => %s", func_name, tool_result)
+        self._log.debug(
+            f"LLM-initiated tool call of {func_name}", tool_result=tool_result
+        )
 
     async def _run_regular_mode(
         self,
@@ -622,33 +553,6 @@ If a task cannot be completed safely, explain why using final_answer.
             "session_id": agent_loop.session_id,
         }
 
-    def _get_available_tools(self) -> list[dict[str, Any]] | None:
-        """Return registered tools in OpenAI function-calling format.
-
-        In PTC mode, only returns sandbox tools. In classic mode, returns all tools.
-        """
-        if self._tool_manager is None:
-            return None
-
-        # Get tool_call_mode from config
-        mode = self.config_manager.global_config.runtime.tool_call_mode
-
-        tool_specs: list[dict[str, Any]] = []
-        category = ToolCategory.PTC if mode == "ptc" else None
-        for entry in self._tool_manager.list_tools(
-            available_only=True, category=category
-        ):
-            resolved = self._resolve_tool_entry(entry)
-            if resolved is None:
-                continue
-
-            name, tool_obj = resolved
-            spec = self._build_tool_spec(name, tool_obj)
-            if spec is not None:
-                tool_specs.append(spec)
-
-        return tool_specs or None
-
     async def _record_user_message(
         self, text: str, session: SessionState
     ) -> tuple[str, dict[str, Any] | None]:
@@ -710,64 +614,11 @@ If a task cannot be completed safely, explain why using final_answer.
 
         return self._llm_manager
 
-    def _resolve_tool_entry(self, entry: Any) -> tuple[str, Any] | None:
-        """Normalize tool entries from the tool manager iterator."""
-        if isinstance(entry, tuple) and len(entry) == 2:
-            name, tool_obj = entry
-        else:
-            name = getattr(entry, "name", str(entry))
-            tool_obj = entry
-
-        if not hasattr(tool_obj, "description"):
-            return None
-
-        return name, tool_obj
-
-    def _build_tool_spec(self, name: str, tool_obj: Any) -> dict[str, Any] | None:
-        """Create the OpenAI function definition for a tool."""
-        try:
-            parameters = self._extract_tool_parameters(tool_obj)
-        except Exception as exc:  # pragma: no cover - defensive logging
-            self._log.warning("Failed to extract tool parameters: %s", exc)
-            parameters = {"type": "object", "properties": {}, "required": []}
-
-        return {
-            "type": "function",
-            "function": {
-                "name": name,
-                "description": tool_obj.description,
-                "parameters": parameters,
-            },
-        }
-
-    def _extract_tool_parameters(self, tool_obj: Any) -> dict:
-        """Extract parameters from a tool object.
-
-        Args:
-            tool_obj: The tool object to extract parameters from.
-                     Can be a ToolInfo instance or any object with a 'parameters' attribute.
-
-        Returns:
-            Dictionary with parameter schema in OpenAI format:
-            {
-                "type": "object",
-                "properties": {
-                    "param1": {"type": "string", "description": "..."},
-                    "param2": {"type": "number", "description": "..."}
-                },
-                "required": ["param1"]
-            }
-        """
-        # If tool_obj has a 'parameters' attribute, use that directly
-        if hasattr(tool_obj, "parameters") and tool_obj.parameters is not None:
-            return tool_obj.parameters
-
-        # Fallback to empty schema if no parameters found
-        self._log.debug(
-            "No parameters found for tool: %s, using empty schema",
-            getattr(tool_obj, "__name__", str(tool_obj)),
-        )
-        return {"type": "object", "properties": {}, "required": []}
+    @staticmethod
+    def _combine_sections(sections: list[str] | None) -> str:
+        if not sections:
+            return ""
+        return "\n\n".join(s for s in sections if s).strip()
 
     async def run_programmatic_tool_call(
         self,
@@ -803,7 +654,9 @@ If a task cannot be completed safely, explain why using final_answer.
             )
 
         except Exception as e:
-            self._log.error(f"Programmatic tool call failed: {e}")
+            self._log.error(
+                "Programmatic tool call failed", error=str(e), exc_info=True
+            )
             return ToolExecutionResponse(
                 success=False,
                 tool_name="execute_python_code",

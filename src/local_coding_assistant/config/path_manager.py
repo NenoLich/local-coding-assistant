@@ -86,7 +86,12 @@ class PathManager:
             try:
                 directory.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
-                logger.debug("Failed to ensure directory %s: %s", directory, exc)
+                logger.debug(
+                    "Failed to ensure directory %s",
+                    directory,
+                    error=str(exc),
+                    exc_info=True,
+                )
 
     def get_project_root(self) -> Path:
         """Get the project root directory."""
@@ -198,6 +203,25 @@ class PathManager:
 
         return self._project_root / "src" / "local_coding_assistant" / "tools"
 
+    def get_template_dir(self) -> Path:
+        """Get the prompt template directory."""
+        if self.is_testing:
+            return (
+                self._project_root
+                / "src"
+                / "local_coding_assistant"
+                / "prompt"
+                / "templates"
+            )
+
+        return (
+            self._project_root
+            / "src"
+            / "local_coding_assistant"
+            / "prompt"
+            / "templates"
+        )
+
     def get_sandbox_guest_dir(self) -> Path:
         """Get the sandbox guest directory path.
 
@@ -261,6 +285,7 @@ class PathManager:
             "module": self.get_module_dir,
             "project": lambda: self._project_root,
             "tools": self.get_tools_dir,
+            "templates": self.get_template_dir,
         }
 
         # Split on the first path separator

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from local_coding_assistant.tools.base import Tool
 from local_coding_assistant.tools.types import (
     ToolCategory,
+    ToolExecutionMode,
     ToolExecutionRequest,
     ToolExecutionResponse,
     ToolInfo,
@@ -30,7 +31,7 @@ class IConfigManager(Protocol):
     """
 
     @property
-    def path_manager(self) -> "PathManager | None":
+    def path_manager(self) -> "PathManager":
         """Get the path manager."""
         ...
 
@@ -127,12 +128,16 @@ class IToolManager(Iterable[Any], Protocol):
         ...
 
     def list_tools(
-        self, available_only: bool = False, category: str | ToolCategory | None = None
+        self,
+        available_only: bool = True,
+        execution_mode: str | ToolExecutionMode | None = None,
+        category: str | ToolCategory | None = None,
     ) -> list[ToolInfo]:
-        """List all registered tools, optionally filtered by category.
+        """List all registered tools, optionally filtered by execution mode and/or category.
 
         Args:
             available_only: If True, only returns tools that are available.
+            execution_mode: Optional execution mode to filter tools by.
             category: Optional category to filter tools by (can be string or ToolCategory).
                      If the category doesn't exist, returns an empty list.
 
@@ -216,6 +221,17 @@ class IToolManager(Iterable[Any], Protocol):
 
     def get_sandbox_tools_prompt(self) -> str:
         """Get the tools prompt for the sandbox."""
+        ...
+
+    def has_runtime(self, tool_name: str) -> bool:
+        """Check if a tool with the given name has a valid runtime.
+
+        Args:
+            tool_name: Name of the tool to check
+
+        Returns:
+            bool: True if the tool exists and has a valid runtime, False otherwise
+        """
         ...
 
     async def run_programmatic_tool_call(

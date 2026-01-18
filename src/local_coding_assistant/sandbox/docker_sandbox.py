@@ -201,6 +201,46 @@ class DockerSandbox(ISandbox):
         if self._client:
             self._client.close()
 
+    def check_availability(self) -> bool:
+        """Check if the Docker sandbox is available.
+
+        Returns:
+            bool: True if Docker is available and responsive, False otherwise
+
+        Example:
+            >>> sandbox = DockerSandbox()
+            >>> sandbox.check_availability()
+            True  # If Docker is running
+            False  # If Docker is not available
+        """
+        if docker is None:
+            logger.warning("Docker SDK is not installed")
+            return False
+
+        client = None
+        try:
+            client = docker.from_env()
+            is_available = client.ping()
+            if is_available:
+                version = client.version()
+                logger.info(
+                    "Docker is available (Version: %s, API: %s)",
+                    version.get("Version", "unknown"),
+                    version.get("ApiVersion", "unknown"),
+                )
+            return is_available
+        except Exception as e:
+            logger.warning("Failed to connect to Docker", error=str(e))
+            return False
+        finally:
+            if client:
+                try:
+                    client.close()
+                except Exception as e:
+                    logger.warning(
+                        "Error closing Docker client", error=str(e), exc_info=True
+                    )
+
     async def _discover_existing_containers(self) -> None:
         """Discover and track existing locca-sandbox containers asynchronously."""
         if not self._client:
@@ -228,7 +268,9 @@ class DockerSandbox(ISandbox):
                     )
 
         except Exception as e:
-            logger.error(f"Error discovering existing containers: {e}")
+            logger.error(
+                "Error discovering existing containers", error=str(e), exc_info=True
+            )
 
     async def _ensure_initialized(self) -> None:
         """Ensure the sandbox is properly initialized."""
@@ -247,7 +289,9 @@ class DockerSandbox(ISandbox):
 
             self._initialized = True
         except Exception as e:
-            logger.error("Failed to initialize Docker sandbox: %s", e)
+            logger.error(
+                "Failed to initialize Docker sandbox", error=str(e), exc_info=True
+            )
             raise
 
     async def _ensure_client(self) -> None:
@@ -257,7 +301,9 @@ class DockerSandbox(ISandbox):
                 self._client = docker.from_env()
                 self._client.ping()
             except Exception as e:
-                logger.error("Failed to initialize Docker client: %s", e)
+                logger.error(
+                    "Failed to initialize Docker client", error=str(e), exc_info=True
+                )
                 raise SandboxRuntimeError(
                     "Docker is not running or not installed"
                 ) from e
@@ -350,7 +396,11 @@ class DockerSandbox(ISandbox):
                 container.id, remove=remove, session_id=session_id
             )
         except Exception as e:
-            logger.warning(f"Failed to clean up container {container.id}: {e}")
+            logger.warning(
+                f"Failed to clean up container {container.id}",
+                error=str(e),
+                exc_info=True,
+            )
         finally:
             # Clean up the session-specific IPC directory
             if session_id and session_id != "default":
@@ -364,7 +414,9 @@ class DockerSandbox(ISandbox):
                             logger.debug(f"Cleaned up IPC directory: {ipc_dir}")
                         except Exception as e:
                             logger.warning(
-                                f"Failed to clean up IPC directory {ipc_dir}: {e}"
+                                f"Failed to clean up IPC directory {ipc_dir}",
+                                error=str(e),
+                                exc_info=True,
                             )
 
                     # Also clean up any files in the container's /workspace/ipc directory
@@ -375,11 +427,17 @@ class DockerSandbox(ISandbox):
                             cmd = f"rm -rf {ipc_path}/requests/* {ipc_path}/responses/*"
                             container.exec_run(cmd, user="root")
                         except Exception as e:
-                            logger.debug(f"Failed to clean container's IPC files: {e}")
+                            logger.debug(
+                                "Failed to clean container's IPC files",
+                                error=str(e),
+                                exc_info=True,
+                            )
 
                 except Exception as e:
                     logger.warning(
-                        f"Failed to clean up IPC directory for session {session_id}: {e}"
+                        f"Failed to clean up IPC directory for session {session_id}",
+                        error=str(e),
+                        exc_info=True,
                     )
 
             # Ensure container is removed from tracking
@@ -502,13 +560,19 @@ class DockerSandbox(ISandbox):
         except NotFound:
             return None
         except Exception as e:
-            logger.warning(f"Failed to inspect existing container {name}: {e}")
+            logger.warning(
+                f"Failed to inspect existing container {name}",
+                error=str(e),
+                exc_info=True,
+            )
             return None
 
         try:
             existing.reload()
         except Exception as e:
-            logger.debug(f"Failed to reload container {name}: {e}")
+            logger.debug(
+                f"Failed to reload container {name}", error=str(e), exc_info=True
+            )
             return None
 
         status = getattr(existing, "status", "")
@@ -526,7 +590,11 @@ class DockerSandbox(ISandbox):
         try:
             existing.remove(force=True)
         except Exception as e:
-            logger.debug(f"Failed to remove stopped container {name}: {e}")
+            logger.debug(
+                f"Failed to remove stopped container {name}",
+                error=str(e),
+                exc_info=True,
+            )
 
         return None
 
@@ -605,7 +673,9 @@ class DockerSandbox(ISandbox):
             )
             return container
         except Exception as e:
-            logger.error(f"Failed to start sandbox container: {e}")
+            logger.error(
+                "Failed to start sandbox container", error=str(e), exc_info=True
+            )
             raise
 
     async def start(self) -> None:
@@ -651,7 +721,11 @@ class DockerSandbox(ISandbox):
             )
             return True
         except Exception as exc:  # Reload failed for other reasons
-            logger.debug(f"Failed to reload container {container_id}: {exc}")
+            logger.debug(
+                f"Failed to reload container {container_id}",
+                error=str(exc),
+                exc_info=True,
+            )
             return False
 
         if status in {"exited", "dead"}:
@@ -685,7 +759,9 @@ class DockerSandbox(ISandbox):
         try:
             end_stats = await self._get_container_stats(container)
         except Exception as exc:
-            logger.warning(f"Failed to collect container stats: {exc!s}")
+            logger.warning(
+                "Failed to collect container stats", error=str(exc), exc_info=True
+            )
             return []
 
         return self._create_resource_metrics(start_stats, end_stats)
@@ -818,7 +894,9 @@ class DockerSandbox(ISandbox):
 
                 response.tool_calls.append(tool_call)
             except Exception as exc:
-                logger.warning(f"Failed to process tool call metrics: {exc}")
+                logger.warning(
+                    "Failed to process tool call metrics", error=str(exc), exc_info=True
+                )
 
     def _get_ipc_paths(self, session_id: str) -> tuple[Path, Path]:
         """Get the request and response file paths for a session.
@@ -999,11 +1077,13 @@ class DockerSandbox(ISandbox):
                 raise
             except Exception as exc:
                 logger.debug(
-                    f"Attempt {attempt + 1} failed for container {container_id}: {exc}"
+                    f"Attempt {attempt + 1} failed for container {container_id}",
+                    error=str(exc),
                 )
                 if attempt == max_retries - 1:
                     logger.error(
-                        f"Failed to stop container {container_id} after {max_retries} attempts: {exc}"
+                        f"Failed to stop container {container_id} after {max_retries} attempts",
+                        error=str(exc),
                     )
                     if remove and self._client:
                         with suppress(Exception):
@@ -1038,7 +1118,9 @@ class DockerSandbox(ISandbox):
                 logger.debug(f"Stopping session {session_id}")
                 await self.stop_session(session_id, remove=remove_containers)
             except Exception as e:
-                logger.error(f"Error stopping session {session_id}: {e}")
+                logger.error(
+                    f"Error stopping session {session_id}", error=str(e), exc_info=True
+                )
                 # Continue stopping other containers even if one fails
 
         if self._client:
@@ -1069,7 +1151,8 @@ class DockerSandbox(ISandbox):
             SandboxExecutionResponse with command output and status
         """
         logger.debug(
-            f"Executing shell command in sandbox with session {session_id}: {command}"
+            f"Executing shell command in sandbox with session {session_id}",
+            command=command,
         )
 
         # Security check
@@ -1261,7 +1344,9 @@ class DockerSandbox(ISandbox):
                 )
 
         except Exception as e:
-            logger.warning(f"Error creating resource metrics: {e}")
+            logger.warning(
+                "Error creating resource metrics", error=str(e), exc_info=True
+            )
 
         return metrics
 
@@ -1318,7 +1403,7 @@ class DockerSandbox(ISandbox):
                 return_code=exc.return_code or 124,
             )
         except SandboxRuntimeError as exc:
-            logger.error(f"Execution failed: {exc}")
+            logger.error("Execution failed", error=str(exc), exc_info=True)
             response = SandboxExecutionResponse(
                 success=False,
                 error=str(exc),
@@ -1375,7 +1460,9 @@ class DockerSandbox(ISandbox):
                     return True
             return False
         except Exception as e:
-            logger.debug(f"Could not check for Docker changes: {e}")
+            logger.debug(
+                "Could not check for Docker changes", error=str(e), exc_info=True
+            )
             return True  # If we can't check, assume changes exist
 
     async def _build_image(self) -> None:
@@ -1417,5 +1504,5 @@ class DockerSandbox(ISandbox):
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, _get_stats)
         except Exception as e:
-            logger.warning(f"Failed to get container stats: {e!s}")
+            logger.warning("Failed to get container stats", error=str(e), exc_info=True)
             return None

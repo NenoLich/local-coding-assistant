@@ -1,0 +1,8 @@
+{% set ctx = context %}
+{% if ctx.tools %}
+Available Tools:
+{% for tool in ctx.tools %}
+- {{ tool.function.name }}: {{ tool.function.description or 'No description provided.' }}
+{% endfor %}
+Invoke tools by emitting structured tool_calls as required by the runtime.
+{% endif %}

@@ -907,7 +907,7 @@ def _get_config_path(
         return Path(config_file)
 
     # Create or use provided env_manager
-    env_manager = env_manager or EnvManager.create(load_env=True)
+    env_manager = env_manager or EnvManager()
 
     # Use PathManager to resolve the config path based on environment
     return env_manager.path_manager.resolve_path("@config/tools.local.yaml")
@@ -933,7 +933,9 @@ def _load_config(config_path: Path) -> dict[str, Any]:
         try:
             return yaml.safe_load(f) or {}
         except yaml.YAMLError as e:
-            log.error(f"Error parsing YAML file {config_path}: {e}")
+            log.error(
+                f"Error parsing YAML file {config_path}", error=str(e), exc_info=True
+            )
             raise
 
 
@@ -964,7 +966,7 @@ def _update_tool_in_config(
 
         return existing_config, "Added"
     except Exception as e:
-        log.warning(f"Could not update existing config: {e}")
+        log.warning("Could not update existing config", error=str(e), exc_info=True)
         return new_config, "Added"
 
 
@@ -974,10 +976,12 @@ def _save_config_to_file(config_path: Path, config: dict) -> None:
         with open(config_path, "w") as f:
             yaml.dump(config, f, default_flow_style=False)
     except yaml.YAMLError as e:
-        log.error(f"YAML serialization error: {e}")
+        log.error("YAML serialization error", error=str(e), exc_info=True)
         raise
     except Exception as e:
-        log.error(f"Failed to write config to {config_path}: {e}")
+        log.error(
+            f"Failed to write config to {config_path}", error=str(e), exc_info=True
+        )
         raise
 
 
@@ -1033,8 +1037,11 @@ def _save_config(
             return config, "Added"
 
     except Exception as e:
-        error_msg = f"❌ Failed to save configuration to {config_path}: {e!s}"
-        log.error(error_msg)
+        log.error(
+            f"❌ Failed to save configuration to {config_path}",
+            error=str(e),
+            exc_info=True,
+        )
         raise typer.Exit(code=1) from e
 
 
@@ -1167,7 +1174,11 @@ def list_tools(
         raise typer.Exit(1) from exc
     except Exception as exc:  # pragma: no cover - unforeseen runtime issues
         log.error(
-            "Failed to list tools: %s", exc, exc_info=log.isEnabledFor(logging.DEBUG)
+            "Failed to list tools: %s",
+            exc,
+            exc_info=log.is_enabled_for(logging.DEBUG)
+            if hasattr(log, "is_enabled_for")
+            else True,
         )
         raise typer.Exit(1) from exc
 
@@ -1309,7 +1320,11 @@ def add(
         raise typer.Exit(1) from exc
     except Exception as exc:  # pragma: no cover - unforeseen runtime issues
         log.error(
-            "Failed to add tool: %s", exc, exc_info=log.isEnabledFor(logging.DEBUG)
+            "Failed to add tool: %s",
+            exc,
+            exc_info=log.is_enabled_for(logging.DEBUG)
+            if hasattr(log, "is_enabled_for")
+            else True,
         )
         raise typer.Exit(1) from exc
 
@@ -1425,7 +1440,11 @@ def run(
         raise typer.Exit(1) from e
     except Exception as exc:  # pragma: no cover - unforeseen runtime issues
         log.error(
-            "Failed to execute tool: %s", exc, exc_info=log.isEnabledFor(logging.DEBUG)
+            "Failed to execute tool: %s",
+            exc,
+            exc_info=log.is_enabled_for(logging.DEBUG)
+            if hasattr(log, "is_enabled_for")
+            else True,
         )
         console.print(f"\n[red]Error: {exc}[/red]")
         if show_stats:
@@ -1636,9 +1655,6 @@ def validate(
     ),
 ) -> None:
     """Validate tool configurations and check for errors."""
-    level = _resolve_log_level(log_level)
-    log.setLevel(level)
-
     try:
         config_path = _get_config_path(config_file)
         is_valid, errors = validate_configuration_file(config_path)

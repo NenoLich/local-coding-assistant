@@ -118,8 +118,15 @@ class ProviderLLMRequest(BaseModel):
     ) -> set[str]:
         """Get the set of required parameters including default and additional ones."""
         required = set()
-        if hasattr(self.parameters, "REQUIRED_WITH_TOOLS"):
+
+        # Only require tools/tool_choice if tools are being used in the request
+        if (
+            hasattr(self.parameters, "REQUIRED_WITH_TOOLS")
+            and hasattr(self.parameters, "tools")
+            and self.parameters.tools
+        ):  # Only if tools list is not empty
             required.update(self.parameters.REQUIRED_WITH_TOOLS)
+
         if required_parameters:
             required.update(required_parameters)
         return required

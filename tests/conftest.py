@@ -70,7 +70,7 @@ def test_configs(tmp_path: Path) -> Iterator[dict[str, Any]]:
     )
 
     # Create an EnvManager that uses our test PathManager
-    test_env_manager = EnvManager.create(load_env=False, path_manager=test_path_manager)
+    test_env_manager = EnvManager(load_env=False, path_manager=test_path_manager)
 
     # Get the test config directory
     test_config_dir = test_path_manager.get_config_dir()

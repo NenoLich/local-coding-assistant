@@ -1,0 +1,13 @@
+{% set agent = context.agent_profiles | selectattr('kind', 'equalto', 'executor') | list | first %}
+{% if agent %}
+Executor Agent:
+- Role: {{ agent.description }}
+- Focus: {{ agent.focus | default('Reliable and secure code execution') }}
+- Constraints: {{ agent.constraints | join('; ') if agent.constraints else 'None specified' }}
+- Execution Mode: {{ context.execution_mode }}
+- Sandbox: {{ 'Enabled' if context.is_sandbox_enabled else 'Disabled' }}
+{% if context.allowed_paths %}- Allowed Paths: {{ context.allowed_paths | join(', ') }}
+{% endif %}
+{% if context.resource_limits %}- Resource Limits: {{ context.resource_limits | tojson }}
+{% endif %}
+{% endif %}

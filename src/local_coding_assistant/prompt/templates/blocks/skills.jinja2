@@ -1,0 +1,8 @@
+{% set ctx = context %}
+{% if ctx.active_skills %}
+Active Skills:
+{% for skill in ctx.active_skills %}
+- {{ skill }}
+{% endfor %}
+Leverage the above skills when formulating the response.
+{% endif %}

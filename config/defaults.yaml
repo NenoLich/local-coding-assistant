@@ -21,14 +21,48 @@ runtime:
   log_level: "INFO"
   use_graph_mode: True
   stream: true
-  # Tool calling mode: 'classic' (default) or 'ptc' (programmatic tool calling)
+  # Tool calling mode: 'classic' (default), 'ptc' (programmatic tool calling), 'reasoning_only' (no tool calls)
   tool_call_mode: "classic"
 
 providers: {}
 
 agent:
-  # Agent role-based model policies
+  # Agent profiles define different behaviors and configurations
   policies: {}
+  profiles:
+    default:
+      name: "default"
+      kind: "default"
+      description: "Primary coding assistant focused on safe, step-by-step reasoning with practical guidance."
+      goals:
+        - "Deliver concise answers grounded in repository state"
+        - "Surface trade-offs and assumptions explicitly"
+      tone: "Confident, pragmatic, collaborative"
+      constraints:
+        - "Never fabricate file paths or code"
+        - "Prefer actionable steps over vague suggestions"
+      model_policy: "general"
+
+    planner:
+      name: "planner"
+      kind: "planner"
+      description: "Decomposes the request into executable steps and highlights risks."
+      goals:
+        - "Summarize objectives"
+        - "Outline numbered plan with verification points"
+      tone: "Analytical and structured"
+      model_policy: "planner"
+
+    executor:
+      name: "executor"
+      kind: "executor"
+      description: "Executes the plan, writes code, and validates results."
+      goals:
+        - "Apply plan precisely"
+        - "Capture diffs and side-effects"
+        - "Report blockers or verifications needed"
+      tone: "Hands-on and detail oriented"
+      model_policy: "general"
 
   # Default fallback policies for different agent roles
   planner:
@@ -53,6 +87,27 @@ agent:
     models:
       - "google_gemini:gemini-2.5-flash"
       - "fallback:any"
+
+# Prompt template configuration
+prompt:
+  # Root directory for prompt templates (set to null to use package defaults)
+  template_root: null
+  
+  # Jinja2 environment settings
+  enable_jinja_autoescape: false
+  trim_blocks: true
+  lstrip_blocks: true
+  
+  # Template paths (relative to template_root)
+  templates:
+    system: "base/system_core.jinja2"
+    execution_rules: "base/execution_rules.jinja2"
+    agent_identity: "base/agent_identity.jinja2"
+    skills: "blocks/skills.jinja2"
+    memories: "blocks/memories.jinja2"
+    tools: "blocks/tools.jinja2"
+    examples: "blocks/examples.jinja2"
+    constraints: "blocks/constraints.jinja2"
 
 sandbox:
   enabled: false

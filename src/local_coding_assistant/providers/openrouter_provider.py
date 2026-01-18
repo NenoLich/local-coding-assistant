@@ -90,5 +90,7 @@ class OpenRouterProvider(BaseProvider):
             # Use the parent's _initialize_driver helper method
             return self._initialize_driver()
         except Exception as e:
-            logger.error(f"Failed to create OpenRouter driver: {e!s}")
+            logger.error(
+                "Failed to create OpenRouter driver", error=str(e), exc_info=True
+            )
             raise RuntimeError(f"Failed to initialize OpenRouter driver: {e!s}") from e

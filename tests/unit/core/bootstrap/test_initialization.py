@@ -1,6 +1,7 @@
 """Unit tests for bootstrap initialization."""
 
 import logging
+from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
 import pytest
@@ -40,7 +41,6 @@ class TestBootstrapInitialization:
         mock.orchestrate.return_value = "Test response"
         return mock
 
-    @patch("local_coding_assistant.core.bootstrap._setup_environment")
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
     @patch("local_coding_assistant.core.bootstrap._initialize_llm_manager")
     @patch("local_coding_assistant.core.bootstrap._initialize_tool_manager")
@@ -51,7 +51,6 @@ class TestBootstrapInitialization:
         mock_init_tools,
         mock_init_llm,
         mock_init_config,
-        mock_setup_env,
         mock_config_manager,
         mock_llm_manager,
         mock_tool_manager,
@@ -59,10 +58,15 @@ class TestBootstrapInitialization:
     ):
         """Test successful bootstrap initialization."""
         # Setup mocks
-        mock_init_config.return_value = (
-            {"logging": {"level": "INFO"}},
-            mock_config_manager,
-        )
+        mock_config_manager = Mock()
+        mock_global_config = Mock()
+        mock_global_config.runtime.enabled_logging = True
+        mock_global_config.runtime.log_level = "INFO"
+        mock_global_config.sandbox.enabled = True
+        mock_config_manager.global_config = mock_global_config
+        mock_config_manager.path_manager = Mock()
+        mock_config_manager.path_manager.get_log_dir.return_value = Path("/tmp/logs")
+        mock_init_config.return_value = mock_config_manager
         mock_init_llm.return_value = mock_llm_manager
         mock_init_tools.return_value = mock_tool_manager
         mock_init_runtime.return_value = mock_runtime_manager
@@ -72,23 +76,19 @@ class TestBootstrapInitialization:
 
         # Assertions
         assert isinstance(ctx, AppContext)
-        mock_setup_env.assert_called_once()
 
         # Verify component initialization
-        mock_init_llm.assert_called_once_with(
-            mock_config_manager, {"logging": {"level": "INFO"}}
-        )
-        
+        mock_init_llm.assert_called_once_with(mock_config_manager)
+
         # Get the sandbox manager that was created during bootstrap
         sandbox_manager = None
         for call in mock_init_tools.call_args_list:
-            if 'sandbox_manager' in call.kwargs:
-                sandbox_manager = call.kwargs['sandbox_manager']
+            if "sandbox_manager" in call.kwargs:
+                sandbox_manager = call.kwargs["sandbox_manager"]
                 break
-                
+
         mock_init_tools.assert_called_once_with(
-            config_manager=mock_config_manager,
-            sandbox_manager=sandbox_manager
+            config_manager=mock_config_manager, sandbox_manager=sandbox_manager
         )
         mock_init_runtime.assert_called_once_with(
             config_manager=mock_config_manager,
@@ -98,13 +98,15 @@ class TestBootstrapInitialization:
 
         # Verify _initialize_config was called with env_manager
         mock_init_config.assert_called_once()
-        # Check that env_manager is passed as the third positional argument
+        # Check that env_manager is passed as third positional argument
         assert (
             len(mock_init_config.call_args[0]) == 3
         )  # config_path, config_manager, env_manager
         assert mock_init_config.call_args[0][0] is None  # config_path
         assert mock_init_config.call_args[0][1] is None  # config_manager
         assert mock_init_config.call_args[0][2] is not None  # env_manager
+        # Verify returned config_manager is the second positional argument
+        assert mock_init_config.return_value == mock_config_manager
 
         # Verify context setup
         assert ctx.get("llm") == mock_llm_manager
@@ -120,7 +122,6 @@ class TestBootstrapInitialization:
         assert ctx.deps.runtime_manager == mock_runtime_manager
         assert ctx.deps.is_initialized()
 
-    @patch("local_coding_assistant.core.bootstrap._setup_environment")
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
     @patch("local_coding_assistant.core.bootstrap._initialize_llm_manager")
     @patch("local_coding_assistant.core.bootstrap._initialize_tool_manager")
@@ -131,15 +132,19 @@ class TestBootstrapInitialization:
         mock_init_tools,
         mock_init_llm,
         mock_init_config,
-        mock_setup_env,
         mock_config_manager,
     ):
         """Test bootstrap with custom config path."""
         # Setup mocks
-        mock_init_config.return_value = (
-            {"logging": {"level": "DEBUG"}},
-            mock_config_manager,
-        )
+        mock_config_manager = Mock()
+        mock_global_config = Mock()
+        mock_global_config.runtime.enabled_logging = True
+        mock_global_config.runtime.log_level = "INFO"
+        mock_global_config.sandbox.enabled = True
+        mock_config_manager.global_config = mock_global_config
+        mock_config_manager.path_manager = Mock()
+        mock_config_manager.path_manager.get_log_dir.return_value = Path("/tmp/logs")
+        mock_init_config.return_value = mock_config_manager
         mock_init_llm.return_value = Mock()
         mock_init_tools.return_value = Mock()
         mock_init_runtime.return_value = Mock()
@@ -150,7 +155,7 @@ class TestBootstrapInitialization:
 
         # Verify config was loaded from custom path with env_manager
         mock_init_config.assert_called_once()
-        # Check that env_manager is passed as the third positional argument
+        # Check that env_manager is passed as third positional argument
         assert (
             len(mock_init_config.call_args[0]) == 3
         )  # config_path, config_manager, env_manager
@@ -167,38 +172,50 @@ class TestSetupLogging:
     def test_setup_logging_with_log_level_override(self, mock_setup_logging):
         """Test logging setup with log level override."""
         from local_coding_assistant.core.bootstrap import _setup_logging
-        
+
         # Test with log level override
         _setup_logging(log_level=logging.DEBUG)
-        mock_setup_logging.assert_called_once_with(level=logging.DEBUG)
+        mock_setup_logging.assert_called_once_with(
+            level=logging.DEBUG,
+            log_file=None,
+            time_rotation=None
+        )
 
     @patch("local_coding_assistant.core.bootstrap.setup_logging")
     def test_setup_logging_with_config_disabled(self, mock_setup_logging):
         """Test logging setup when logging is disabled in config."""
         from local_coding_assistant.core.bootstrap import _setup_logging
-        
+
         # Test with logging disabled in config
         config = MagicMock()
-        config.logging.enabled = False
-        _setup_logging(config=config)
-        mock_setup_logging.assert_called_once_with(level=logging.CRITICAL)
+        config.global_config = {"runtime": {"enabled_logging": False}}
+        _setup_logging(config_manager=config)
+        mock_setup_logging.assert_called_once_with(
+            level=logging.CRITICAL,
+            log_file=None,
+            time_rotation=None
+        )
 
     @patch("local_coding_assistant.core.bootstrap.setup_logging")
     def test_setup_logging_with_numeric_level(self, mock_setup_logging):
         """Test logging setup with numeric log level from config."""
         from local_coding_assistant.core.bootstrap import _setup_logging
-        
+
         # Test with numeric log level in config
         config = MagicMock()
-        config.logging.level = "10"  # DEBUG level
-        _setup_logging(config=config)
-        mock_setup_logging.assert_called_once_with(level=logging.DEBUG)
+        config.global_config = {"runtime": {"log_level": "DEBUG"}}  # DEBUG level
+        _setup_logging(config_manager=config)
+        mock_setup_logging.assert_called_once_with(
+            level=logging.DEBUG,
+            log_file=None,
+            time_rotation=None
+        )
 
     @patch("local_coding_assistant.core.bootstrap.setup_logging")
     def test_setup_logging_with_string_level(self, mock_setup_logging):
         """Test logging setup with string log level from config."""
         from local_coding_assistant.core.bootstrap import _setup_logging
-        
+
         # Test with string log level in config
         test_cases = [
             ("DEBUG", logging.DEBUG),
@@ -208,19 +225,27 @@ class TestSetupLogging:
             ("CRITICAL", logging.CRITICAL),
             ("INVALID", logging.INFO),  # Default to INFO for invalid levels
         ]
-        
+
         for level_str, expected_level in test_cases:
             mock_setup_logging.reset_mock()
             config = MagicMock()
-            config.logging.level = level_str
-            _setup_logging(config=config)
-            mock_setup_logging.assert_called_once_with(level=expected_level)
+            config.global_config = {"runtime": {"log_level": level_str}}
+            _setup_logging(config_manager=config)
+            mock_setup_logging.assert_called_once_with(
+                level=expected_level,
+                log_file=None,
+                time_rotation=None
+            )
 
     @patch("local_coding_assistant.core.bootstrap.setup_logging")
     def test_setup_logging_default(self, mock_setup_logging):
         """Test default logging setup when no config is provided."""
         from local_coding_assistant.core.bootstrap import _setup_logging
-        
+
         # Test with no config and no log level (should use default INFO)
         _setup_logging()
-        mock_setup_logging.assert_called_once_with(level=logging.INFO)
+        mock_setup_logging.assert_called_once_with(
+            level=logging.INFO,
+            log_file=None,
+            time_rotation=None
+        )

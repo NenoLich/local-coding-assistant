@@ -67,7 +67,9 @@ def sandbox_config_manager(tmp_path: Path):
     app_config = AppConfig(sandbox=sandbox_config)
 
     class StubConfigManager:
-        def __init__(self, config: AppConfig, path_manager: PathManager, project_root: Path):
+        def __init__(
+            self, config: AppConfig, path_manager: PathManager, project_root: Path
+        ):
             self._global_config = config
             self.path_manager = path_manager
             self.project_root = project_root
@@ -154,7 +156,8 @@ class MockStreamingLLMManager(LLMManager):
 
         if tool_calls:
             serializable_calls = [
-                tc.model_dump() if hasattr(tc, "model_dump") else tc for tc in tool_calls
+                tc.model_dump() if hasattr(tc, "model_dump") else tc
+                for tc in tool_calls
             ]
             yield f"\n\nTool calls: {json.dumps(serializable_calls)}"
 
@@ -175,10 +178,12 @@ class MockStreamingLLMManager(LLMManager):
                 parsed_calls.append(tool_call)
                 continue
 
-            function_payload = tool_call.get("function", {}) if isinstance(
-                tool_call, dict
-            ) else {}
-            name = function_payload.get("name") or tool_call.get("name") or f"tool_{index}"
+            function_payload = (
+                tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
+            )
+            name = (
+                function_payload.get("name") or tool_call.get("name") or f"tool_{index}"
+            )
             raw_arguments = function_payload.get("arguments") or tool_call.get(
                 "arguments", {}
             )
@@ -284,7 +289,9 @@ class MockToolManager:
 
         # Create a mapping of tool names to tool instances
         self._tools_map = {tool.name: tool for tool in self.tools}
-        self._tool_info_map = {tool.name: self._build_tool_info(tool) for tool in self.tools}
+        self._tool_info_map = {
+            tool.name: self._build_tool_info(tool) for tool in self.tools
+        }
 
     def __iter__(self):
         """Iterate over all registered tools."""

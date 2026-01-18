@@ -31,7 +31,7 @@ class TestProviderConfigHelpers:
     def test_get_config_path_default(self, test_configs):
         """Test getting default config path."""
         # Create a test env manager with the test path manager
-        env_manager = EnvManager.create(
+        env_manager = EnvManager(
             path_manager=test_configs["path_manager"], load_env=False
         )
 
@@ -50,7 +50,7 @@ class TestProviderConfigHelpers:
     def test_get_config_path_dev_mode(self, test_configs):
         """Test getting config path in dev mode."""
         # Create a test env manager with the test path manager
-        env_manager = EnvManager.create(
+        env_manager = EnvManager(
             path_manager=test_configs["path_manager"], load_env=False
         )
 

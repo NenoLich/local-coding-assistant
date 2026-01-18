@@ -15,7 +15,7 @@ from pydantic import ValidationError
 
 from local_coding_assistant.config.env_manager import EnvManager
 from local_coding_assistant.config.path_manager import PathManager
-from local_coding_assistant.config.schemas import AppConfig, ToolConfig
+from local_coding_assistant.config.schemas import AppConfig, ToolConfig, ToolConfigList
 from local_coding_assistant.core.exceptions import ConfigError
 from local_coding_assistant.core.protocols import IConfigManager
 from local_coding_assistant.utils.logging import get_logger
@@ -171,12 +171,25 @@ class ConfigManager(IConfigManager):
             tool_loader = ToolLoader(
                 env_manager=self.env_manager, tool_config_paths=self.tool_config_paths
             )
-            tools = tool_loader.load_tool_configs()
-            logger.debug("Successfully loaded %d tools", len(tools))
-            return tools
+            # Get the tools as a dictionary
+            tools_dict = tool_loader.load_tool_configs()
+
+            # Convert the dictionary to a ToolConfigList
+            tool_config_list = ToolConfigList(tools=list(tools_dict.values()))
+
+            # Now assign it to the config (ensure _global_config is not None)
+            if self._global_config is not None:
+                self._global_config.tools = tool_config_list
+            else:
+                raise ConfigError("Global configuration is not initialized")
+
+            self._resolve_dicts.cache_clear()
+
+            logger.debug("Successfully loaded %d tools", len(tools_dict))
+            return tools_dict
 
         except Exception as e:
-            logger.error("Failed to load tools: %s", str(e), exc_info=True)
+            logger.error("Failed to load tools", str(e), exc_info=True)
             raise ConfigError(f"Failed to load tools: {e}") from e
 
     def get_tools(self) -> dict[str, ToolConfig]:
@@ -210,7 +223,7 @@ class ConfigManager(IConfigManager):
             self._loaded_tools = self._load_tools()
             logger.info("Successfully reloaded %d tools", len(self._loaded_tools))
         except Exception as e:
-            logger.error("Failed to reload tools: %s", str(e), exc_info=True)
+            logger.error("Failed to reload tools", str(e), exc_info=True)
             raise ConfigError(f"Failed to reload tools: {e}") from e
 
     def load_global_config(self) -> AppConfig:
@@ -229,15 +242,6 @@ class ConfigManager(IConfigManager):
 
         # Start with defaults
         config_data = self._load_defaults()
-
-        # Load tool configurations
-        try:
-            tool_configs = self.get_tools()
-            if tool_configs:
-                config_data["tools"] = {"tools": list(tool_configs.values())}
-        except Exception as e:
-            logger.error(f"Failed to load tool configurations: {e}")
-            raise ConfigError(f"Failed to load tool configurations: {e}") from e
 
         # Merge YAML files (in order provided)
         for config_path in self.config_paths:
@@ -285,7 +289,7 @@ class ConfigManager(IConfigManager):
         if not overrides:
             return
 
-        logger.info(f"Setting session overrides: {list(overrides.keys())}")
+        logger.info("Setting session overrides", overrides=overrides)
 
         # Create a copy of current overrides and update with new ones
         new_overrides = deepcopy(self._session_overrides or {})

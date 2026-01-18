@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, LLMResponse, ToolCall
+from local_coding_assistant.agent.llm_manager import (
+    LLMManager,
+    LLMRequest,
+    LLMResponse,
+    ToolCall,
+)
 from local_coding_assistant.core.exceptions import LLMError
 from local_coding_assistant.providers import (
     BaseProvider,
@@ -372,8 +377,8 @@ class TestLLMManagerGenerate:
                         "type": "function",
                         "function": {
                             "name": "test_tool",
-                            "arguments": '{"arg1": "value1"}'
-                        }
+                            "arguments": '{"arg1": "value1"}',
+                        },
                     }
                 ],
             )
@@ -534,7 +539,7 @@ class TestLLMManagerStream:
         # Create a proper async generator that raises ProviderError
         async def mock_stream_with_retry(*args, **kwargs):
             raise ProviderError("Stream error")
-            
+
         # Set the mock method
         mock_provider.stream_with_retry = mock_stream_with_retry
 

@@ -92,7 +92,6 @@ def test_bootstrap_integration():
         print(f"✓ Runtime manager created with config: {type(config)}")
         assert config is not None
 
-
     except Exception as e:
         print(f"❌ Bootstrap error: {e}")
         import traceback

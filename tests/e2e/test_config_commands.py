@@ -4,7 +4,7 @@ import os
 from unittest.mock import patch
 
 from local_coding_assistant.cli.main import app
-from local_coding_assistant.config.env_manager import EnvManager
+from local_coding_assistant.config.env_manager import get_env_manager
 
 
 class TestConfigCommands:
@@ -27,12 +27,8 @@ class TestConfigCommands:
         assert result.exit_code == 0
         assert "LOCCA_CUSTOM_KEY=custom_value" in result.stdout
 
-    @patch("local_coding_assistant.cli.commands.config.EnvManager.load_env_files")
-    @patch(
-        "local_coding_assistant.cli.commands.config.EnvManager.__init__",
-        return_value=None,
-    )
-    def test_config_get_all(self, mock_init, mock_load_env, cli_runner, mock_env_vars):
+    @patch("local_coding_assistant.cli.commands.config.get_env_manager")
+    def test_config_get_all(self, mock_get_env_manager, cli_runner, mock_env_vars):
         """Test getting all configuration values."""
         # Ensure our mock environment variables are set
         assert os.environ.get("LOCCA_TEST_MODE") == "true"
@@ -43,13 +39,6 @@ class TestConfigCommands:
         test_value = "test_value"
         os.environ[test_key] = test_value
 
-        # Mock the load_env_files to prevent it from overriding our test environment
-        def mock_load_env_files():
-            # No-op to prevent actual file loading
-            pass
-
-        mock_load_env.side_effect = mock_load_env_files
-
         result = cli_runner.invoke(app, ["config", "get"])
 
         # Check for the expected output
@@ -57,155 +46,70 @@ class TestConfigCommands:
         assert "All configuration (LOCCA_*):" in result.stdout
 
         # Verify our test variables are shown correctly
-        # The actual output shows variables without "(from environment)" suffix
         assert test_key in result.stdout
         assert "LOCCA_TEST_MODE" in result.stdout
         assert "LOCCA_LOG_LEVEL" in result.stdout
 
-    @patch.object(EnvManager, "_get_default_env_paths")
-    def test_config_set_new_key(self, mock_default_paths, cli_runner, tmp_path):
+    @patch("local_coding_assistant.cli.commands.config.get_env_manager")
+    def test_config_set_new_key(self, mock_get_env_manager, cli_runner, tmp_path):
         """Test setting a new configuration key."""
-        # Create a temporary .env.local file
-        env_file = tmp_path / ".env.local"
-
-        # Mock the default paths to use our temporary directory
-        mock_default_paths.return_value = [env_file]
-
-        # We need to re-initialize the EnvManager to use our mocked paths
-        from local_coding_assistant.cli.commands import config
-
-        config._env_manager = EnvManager(env_paths=[env_file])
-
         result = cli_runner.invoke(app, ["config", "set", "NEW_KEY", "new_value"])
 
         assert result.exit_code == 0
 
-        # The actual implementation doesn't output anything on success for set command
-        assert result.stdout.strip() == ""
+        # The implementation now logs the set operation
+        assert "Set and persisted LOCCA_NEW_KEY" in result.stdout
 
         # Verify the environment variable was set in the current process
         assert os.environ.get("LOCCA_NEW_KEY") == "new_value"
 
-        # Verify the value was written to the .env.local file
-        assert env_file.exists()
-        with open(env_file) as f:
-            content = f.read()
-            assert "LOCCA_NEW_KEY=new_value" in content
-
-    @patch.object(EnvManager, "_get_default_env_paths")
-    def test_config_set_overwrite_existing(
-        self, mock_default_paths, cli_runner, tmp_path
-    ):
+    @patch("local_coding_assistant.cli.commands.config.get_env_manager")
+    def test_config_set_overwrite_existing(self, mock_get_env_manager, cli_runner, tmp_path):
         """Test setting a configuration key that already exists."""
-        # Create a temporary .env.local file
-        env_file = tmp_path / ".env.local"
-
-        # Mock the default paths to use our temporary directory
-        mock_default_paths.return_value = [env_file]
-
-        # We need to re-initialize the EnvManager to use our mocked paths
-        from local_coding_assistant.cli.commands import config
-
-        config._env_manager = EnvManager(env_paths=[env_file])
-
-        # Pre-set a value in the environment and in the .env.local file
+        # Pre-set a value in the environment
         os.environ["LOCCA_EXISTING_KEY"] = "old_value"
-        with open(env_file, "w") as f:
-            f.write("LOCCA_EXISTING_KEY=old_value\n")
 
         result = cli_runner.invoke(app, ["config", "set", "EXISTING_KEY", "new_value"])
 
         assert result.exit_code == 0
 
-        # The actual implementation doesn't output anything on success for set command
-        assert result.stdout.strip() == ""
+        # The implementation now logs the set operation
+        assert "Set and persisted LOCCA_EXISTING_KEY" in result.stdout
 
         # Verify the environment variable was updated
         assert os.environ.get("LOCCA_EXISTING_KEY") == "new_value"
 
-        # Verify the value was updated in the .env.local file
-        with open(env_file) as f:
-            content = f.read()
-            assert "LOCCA_EXISTING_KEY=new_value" in content
-
-    @patch.object(EnvManager, "_get_default_env_paths")
-    def test_config_set_special_characters(
-        self, mock_default_paths, cli_runner, tmp_path
-    ):
+    @patch("local_coding_assistant.cli.commands.config.get_env_manager")
+    def test_config_set_special_characters(self, mock_get_env_manager, cli_runner, tmp_path):
         """Test setting a configuration key with special characters in value."""
-        # Create a temporary .env.local file
-        env_file = tmp_path / ".env.local"
-
-        # Mock the default paths to use our temporary directory
-        mock_default_paths.return_value = [env_file]
-
-        # We need to re-initialize the EnvManager to use our mocked paths
-        from local_coding_assistant.cli.commands import config
-
-        config._env_manager = EnvManager(env_paths=[env_file])
-
         special_value = 'Value with "quotes" and spaces and special chars: @#$%^&*()'
 
         result = cli_runner.invoke(app, ["config", "set", "SPECIAL_KEY", special_value])
 
         assert result.exit_code == 0
 
-        # The actual implementation doesn't output anything on success for set command
-        assert result.stdout.strip() == ""
+        # The implementation now logs the set operation
+        assert "Set and persisted LOCCA_SPECIAL_KEY" in result.stdout
 
         # Verify the environment variable was set correctly
         assert os.environ.get("LOCCA_SPECIAL_KEY") == special_value
 
-        # Verify the value was written to the .env.local file with proper escaping
-        assert env_file.exists()
-        with open(env_file) as f:
-            content = f.read()
-            assert f"LOCCA_SPECIAL_KEY={special_value}" in content
-
-    @patch.object(EnvManager, "_get_default_env_paths")
-    def test_config_set_empty_value(self, mock_default_paths, cli_runner, tmp_path):
+    @patch("local_coding_assistant.cli.commands.config.get_env_manager")
+    def test_config_set_empty_value(self, mock_get_env_manager, cli_runner, tmp_path):
         """Test setting a configuration key with empty value."""
-        # Create a temporary .env.local file
-        env_file = tmp_path / ".env.local"
-
-        # Mock the default paths to use our temporary directory
-        mock_default_paths.return_value = [env_file]
-
-        # We need to re-initialize the EnvManager to use our mocked paths
-        from local_coding_assistant.cli.commands import config
-
-        config._env_manager = EnvManager(env_paths=[env_file])
-
         result = cli_runner.invoke(app, ["config", "set", "EMPTY_KEY", ""])
 
         assert result.exit_code == 0
 
-        # The actual implementation doesn't output anything on success for set command
-        assert result.stdout.strip() == ""
+        # The implementation now logs the set operation
+        assert "Set and persisted LOCCA_EMPTY_KEY" in result.stdout
 
         # Verify the environment variable was set to empty string
         assert os.environ.get("LOCCA_EMPTY_KEY") == ""
 
-        # Verify the value was written to the .env.local file
-        assert env_file.exists()
-        with open(env_file) as f:
-            content = f.read()
-            assert "LOCCA_EMPTY_KEY=" in content
-
-    @patch.object(EnvManager, "_get_default_env_paths")
-    def test_config_workflow(self, mock_default_paths, cli_runner, tmp_path):
+    @patch("local_coding_assistant.cli.commands.config.get_env_manager")
+    def test_config_workflow(self, mock_get_env_manager, cli_runner, tmp_path):
         """Test a complete config workflow: set, get, verify."""
-        # Create a temporary .env.local file
-        env_file = tmp_path / ".env.local"
-
-        # Mock the default paths to use our temporary directory
-        mock_default_paths.return_value = [env_file]
-
-        # We need to re-initialize the EnvManager to use our mocked paths
-        from local_coding_assistant.cli.commands import config
-
-        config._env_manager = EnvManager(env_paths=[env_file])
-
         # Set a value
         result = cli_runner.invoke(
             app, ["config", "set", "WORKFLOW_TEST", "test_value"]

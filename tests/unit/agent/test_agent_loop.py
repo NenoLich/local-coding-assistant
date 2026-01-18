@@ -63,7 +63,7 @@ class TestAgentLoopInitialization:
         )
 
         # Verify list_tools was called with available_only=True
-        tool_manager.list_tools.assert_called_once_with(available_only=True)
+        tool_manager.list_tools.assert_called_once_with(available_only=True, execution_mode='classic')
 
         # Check that tools are cached
         assert hasattr(agent_loop, "_cached_tools")

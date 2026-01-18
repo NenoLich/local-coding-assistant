@@ -70,5 +70,7 @@ class GoogleGeminiProvider(base.BaseProvider):
             # Use the parent's _initialize_driver helper method
             return self._initialize_driver()
         except Exception as e:
-            logger.error(f"Failed to create Google Gemini driver: {e!s}")
+            logger.error(
+                "Failed to create Google Gemini driver", error=str(e), exc_info=True
+            )
             raise

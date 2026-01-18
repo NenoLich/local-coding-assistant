@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, ToolCall
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.core.protocols import IToolManager
-from local_coding_assistant.tools.types import ToolExecutionRequest
+from local_coding_assistant.tools.types import ToolExecutionMode, ToolExecutionRequest
 from local_coding_assistant.utils.langgraph_utility import (
     handle_graph_error,
     node_logger,
@@ -151,7 +151,9 @@ class LangGraphAgent:
             return []
 
         available_tools = []
-        for tool in self.tool_manager.list_tools(available_only=True):
+        for tool in self.tool_manager.list_tools(
+            available_only=True, execution_mode=ToolExecutionMode.CLASSIC
+        ):
             if hasattr(tool, "name") and hasattr(tool, "description"):
                 available_tools.append(
                     {
@@ -168,7 +170,9 @@ class LangGraphAgent:
             return "No tools available"
 
         descriptions = []
-        for tool in self.tool_manager.list_tools(available_only=True):
+        for tool in self.tool_manager.list_tools(
+            available_only=True, execution_mode=ToolExecutionMode.CLASSIC
+        ):
             if hasattr(tool, "name") and hasattr(tool, "description"):
                 descriptions.append(f"- {tool.name}: {tool.name}: {tool.description}")
         return "\n".join(descriptions) if descriptions else "No tools available"
@@ -721,7 +725,9 @@ Please provide:
             return getattr(final_state, "final_answer", None)
 
         except Exception as e:
-            logger.error(f"LangGraph agent '{self.name}' failed: {e}")
+            logger.error(
+                f"LangGraph agent '{self.name}' failed", error=str(e), exc_info=True
+            )
             # Ensure state is a dict for error handling
             state_dict = (
                 state.model_dump() if hasattr(state, "model_dump") else {"state": state}
@@ -755,7 +761,11 @@ Please provide:
                 yield state_update, metadata
 
         except Exception as e:
-            logger.error(f"LangGraph agent '{self.name}' streaming failed: {e}")
+            logger.error(
+                f"LangGraph agent '{self.name}' streaming failed",
+                error=str(e),
+                exc_info=True,
+            )
             # Ensure state is a dict for error handling
             state_dict = (
                 state.model_dump() if hasattr(state, "model_dump") else {"state": state}

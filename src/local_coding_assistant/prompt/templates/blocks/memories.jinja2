@@ -1,0 +1,8 @@
+{% set ctx = context %}
+{% if ctx.memories %}
+Relevant Memories:
+{% for memory in ctx.memories %}
+- {{ memory }}
+{% endfor %}
+Use memories to avoid repeating prior work or contradicting earlier guidance.
+{% endif %}

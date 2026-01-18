@@ -388,17 +388,17 @@ class TestConfigCommands:
         # The command should still exit with 0 due to safe_entrypoint
         assert result.exit_code == 0, f"Expected exit code 0, got {result.exit_code}"
 
-    @patch("local_coding_assistant.cli.commands.config._env_manager.unset_env")
-    def test_unset_config_error_handling(self, mock_unset_env):
+    @patch("local_coding_assistant.cli.commands.config._env_manager")
+    def test_unset_config_error_handling(self, mock_env_manager):
         """Test error handling when unsetting a configuration value fails."""
         # Make unset_env raise an exception
-        mock_unset_env.side_effect = Exception("Test error")
+        mock_env_manager.unset_env.side_effect = Exception("Test error")
 
         # Test the CLI command
         result = runner.invoke(app, ["unset", TEST_KEY])
 
         # Verify unset_env was called with the correct arguments
-        mock_unset_env.assert_called_once_with(TEST_KEY)
+        mock_env_manager.unset_env.assert_called_once_with(TEST_KEY)
 
         # The command should still complete successfully due to safe_entrypoint
         assert result.exit_code == 0

@@ -21,8 +21,11 @@ def query(
         False, "--verbose", "-v", help="Enable verbose output"
     ),
     model: str | None = typer.Option(None, help="Model to use for the query"),
-    ptc: bool = typer.Option(
-        False, "--ptc", help="Enable Programmatic Tool Calling mode (PTC)"
+    tool_call_mode: str = typer.Option(
+        "reasoning",
+        "--tool-call-mode",
+        help="Tool calling mode: 'ptc' (Programmatic Tool Calling), 'classic' (standard tool calling), or 'reasoning' (default)",
+        case_sensitive=False,
     ),
     sandbox_session: str | None = typer.Option(
         None, "--sandbox-session", help="Session ID for persistent state in sandbox"
@@ -61,7 +64,7 @@ def query(
         runtime.orchestrate(
             text,
             model=model,
-            tool_call_mode="ptc" if ptc else "classic",
+            tool_call_mode=tool_call_mode,
             sandbox_session=sandbox_session,
         )
     )

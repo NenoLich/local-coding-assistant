@@ -4,12 +4,12 @@ import os
 
 import typer
 
-from local_coding_assistant.config.env_manager import EnvManager
+from local_coding_assistant.config.env_manager import get_env_manager
 from local_coding_assistant.core.error_handler import safe_entrypoint
 from local_coding_assistant.utils.logging import get_logger
 
-# Initialize EnvManager with the default prefix
-_env_manager = EnvManager()
+# Initialize EnvManager with the new singleton pattern
+_env_manager = get_env_manager()
 
 app = typer.Typer(name="config", help="Configure system settings")
 log = get_logger("cli.config")

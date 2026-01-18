@@ -42,10 +42,10 @@ class TestIConfigManagerProtocol:
                 pass
 
             def resolve(
-                    self,
-                    global_config: dict | None = None,
-                    session_overrides: dict | None = None,
-                    call_overrides: dict | None = None,
+                self,
+                global_config: dict | None = None,
+                session_overrides: dict | None = None,
+                call_overrides: dict | None = None,
             ):
                 return {}
 

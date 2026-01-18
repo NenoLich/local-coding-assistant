@@ -196,11 +196,15 @@ def _copy_function_signature(
                 if hasattr(original_func, attr):
                     setattr(wrapper_func, attr, getattr(original_func, attr))
             except (AttributeError, TypeError) as e:
-                logger.debug(f"Could not copy attribute {attr}: {e}")
+                logger.debug(
+                    f"Could not copy attribute {attr}", error=str(e), exc_info=True
+                )
     except Exception as e:
         # If we can't copy the signature, log a warning but continue
         func_name = getattr(original_func, "__qualname__", str(original_func))
-        logger.warning(f"Failed to copy signature for {func_name}: {e}", exc_info=True)
+        logger.warning(
+            f"Failed to copy signature for {func_name}", error=str(e), exc_info=True
+        )
 
 
 def safe_entrypoint(context: str) -> Callable[[Callable[P, T]], Callable[P, T | None]]:

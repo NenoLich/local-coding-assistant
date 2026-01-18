@@ -32,5 +32,6 @@ def start(
 
     # Placeholder server start; log that runtime exists
     runtime = ctx.get("runtime")
-    log.info("Runtime component: %s", type(runtime).__name__ if runtime else "missing")
+    runtime_component = type(runtime).__name__ if runtime else "missing"
+    typer.echo(f"Runtime component: {runtime_component}")
     # In a real app, this is where you'd start an ASGI/HTTP server

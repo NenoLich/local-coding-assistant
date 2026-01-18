@@ -40,10 +40,10 @@ def test_setup_logging_is_idempotent_replaces_handler():
     # Check that the warning only appears in the second buffer
     out1 = buf1.getvalue()
     out2 = buf2.getvalue()
-    
+
     # The first buffer should only contain the setup message
     assert "warn msg" not in out1
-    
+
     # The second buffer should contain the warning
     assert "⚠️" in out2
     assert "another_mod" in out2  # module name in the log

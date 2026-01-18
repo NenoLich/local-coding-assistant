@@ -17,12 +17,12 @@ from pydantic import BaseModel
 
 from local_coding_assistant.core.exceptions import ToolRegistryError
 from local_coding_assistant.core.protocols import IToolManager
-from local_coding_assistant.tools.base import Tool
 from local_coding_assistant.tools.statistics import StatisticsManager, ToolStatistics
 from local_coding_assistant.tools.tool_api_generator import ToolAPIGenerator
 from local_coding_assistant.tools.tool_runtime import ToolRuntime
 from local_coding_assistant.tools.types import (
     ToolCategory,
+    ToolExecutionMode,
     ToolExecutionRequest,
     ToolExecutionResponse,
     ToolInfo,
@@ -521,12 +521,16 @@ class ToolManager(IToolManager, Iterable[Any]):
         return self._tools.get(tool_name)
 
     def list_tools(
-        self, available_only: bool = False, category: str | ToolCategory | None = None
+        self,
+        available_only: bool = True,
+        execution_mode: str | ToolExecutionMode | None = None,
+        category: str | ToolCategory | None = None,
     ) -> list[ToolInfo]:
-        """List all registered tools, optionally filtered by category.
+        """List all registered tools, optionally filtered by execution mode and/or category.
 
         Args:
             available_only: If True, only returns tools that are available.
+            execution_mode: Optional execution mode to filter tools by.
             category: Optional category to filter tools by (can be string or ToolCategory).
                      If the category doesn't exist, returns an empty list.
 
@@ -536,6 +540,11 @@ class ToolManager(IToolManager, Iterable[Any]):
         filtered_tools = list(self._tools.values())
         if available_only:
             filtered_tools = [tool for tool in filtered_tools if tool.available]
+
+        if execution_mode:
+            filtered_tools = [
+                tool for tool in filtered_tools if tool.execution_mode == execution_mode
+            ]
 
         if category is None:
             return filtered_tools
@@ -729,7 +738,9 @@ class ToolManager(IToolManager, Iterable[Any]):
                     )
                 except Exception as e:
                     logger.error(
-                        "Failed to record tool call metrics: %s", str(e), exc_info=True
+                        "Failed to record tool call metrics",
+                        error=str(e),
+                        exc_info=True,
                     )
         else:
             # If no tool calls, record the main tool execution
@@ -753,7 +764,9 @@ class ToolManager(IToolManager, Iterable[Any]):
             "Error in tool '%s': %s",
             tool_name,
             str(error),
-            exc_info=logger.isEnabledFor(logging.DEBUG),
+            exc_info=logger.is_enabled_for(logging.DEBUG)
+            if hasattr(logger, "is_enabled_for")
+            else True,
         )
 
         # Record the error in the statistics system
@@ -803,7 +816,9 @@ class ToolManager(IToolManager, Iterable[Any]):
                         "Failed to instantiate tool class for '%s': %s",
                         tool_id,
                         str(e),
-                        exc_info=logger.isEnabledFor(logging.DEBUG),
+                        exc_info=logger.is_enabled_for(logging.DEBUG)
+                        if hasattr(logger, "is_enabled_for")
+                        else True,
                     )
                     raise ToolRegistryError(
                         f"Failed to instantiate tool '{tool_id}': {e!s}"
@@ -848,9 +863,9 @@ class ToolManager(IToolManager, Iterable[Any]):
 
         except Exception as e:
             logger.error(
-                "Error building runtime for tool '%s': %s",
+                "Error building runtime for tool '%s'",
                 tool_id,
-                str(e),
+                error=str(e),
                 exc_info=True,
             )
             raise ToolRegistryError(
@@ -1080,7 +1095,7 @@ print(result)
                 {"code": tool_call_code, "session_id": session_id}
             )
             sandbox_result = sandbox_result.get("response")
-            logger.debug(f"sandbox_result: {sandbox_result}")
+            logger.debug("Sandbox result received", sandbox_result=sandbox_result)
 
             execution_time = (time.perf_counter() - start_time) * 1000  # in ms
 
@@ -1192,7 +1207,18 @@ print(result)
 
         return runtime
 
-    def get_tool(self, tool_name: str) -> Tool:
+    def has_runtime(self, tool_name: str) -> bool:
+        """Check if a tool with the given name has a valid runtime.
+
+        Args:
+            tool_name: Name of the tool to check
+
+        Returns:
+            bool: True if the tool exists and has a valid runtime, False otherwise
+        """
+        return tool_name in self._runtimes and self._runtimes[tool_name] is not None
+
+    def get_tool(self, tool_name: str) -> Any:
         """Get a tool instance by name."""
         runtime = self._get_runtime(tool_name)
         return runtime.instance

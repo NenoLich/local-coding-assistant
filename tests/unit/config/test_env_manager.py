@@ -27,7 +27,7 @@ class TestEnvManager:
         (tmp_path / ".env").touch()
         (tmp_path / ".env.local").touch()
 
-        manager = EnvManager.create(path_manager=mock_path_manager, load_env=False)
+        manager = EnvManager(path_manager=mock_path_manager, load_env=False)
 
         # Should find the default .env files
         assert len(manager.env_paths) >= 2
@@ -45,7 +45,7 @@ class TestEnvManager:
         env_file.touch()
 
         custom_paths = [str(env_file)]
-        manager = EnvManager.create(
+        manager = EnvManager(
             env_paths=custom_paths, load_env=False, path_manager=mock_path_manager
         )
 
@@ -56,12 +56,12 @@ class TestEnvManager:
 
     def test_custom_env_prefix(self):
         """Test EnvManager with custom prefix."""
-        manager = EnvManager.create(env_prefix="CUSTOM_", load_env=False)
+        manager = EnvManager(env_prefix="CUSTOM_", load_env=False)
         assert manager.env_prefix == "CUSTOM_"
 
     def test_get_config_from_env_empty(self):
         """Test get_config_from_env with no matching environment variables."""
-        manager = EnvManager.create(load_env=False)
+        manager = EnvManager(load_env=False)
 
         # Clear any existing LOCCA_ variables for this test
         with patch.dict(os.environ, {}, clear=True):
@@ -71,7 +71,7 @@ class TestEnvManager:
 
     def test_get_config_from_env_basic(self):
         """Test get_config_from_env with basic environment variables."""
-        manager = EnvManager.create(load_env=False)
+        manager = EnvManager(load_env=False)
 
         test_env = {
             "LOCCA_LLM__MODEL_NAME": "gpt-4",
@@ -147,7 +147,7 @@ class TestEnvManager:
         (tmp_path / ".env").write_text("TEST_KEY=value")
         (tmp_path / ".env.local").write_text("TEST_LOCAL=local_value")
 
-        manager = EnvManager.create(path_manager=mock_path_manager, load_env=False)
+        manager = EnvManager(path_manager=mock_path_manager, load_env=False)
 
         # Track loaded paths
         loaded_paths = []
@@ -179,7 +179,7 @@ class TestEnvManager:
         original_import = __import__
         with patch("builtins.__import__", side_effect=mock_import):
             # Create manager after patching imports
-            manager = EnvManager.create(load_env=False, path_manager=mock_path_manager)
+            manager = EnvManager(load_env=False, path_manager=mock_path_manager)
 
             # Patch logger to verify warning
             with patch(
@@ -205,7 +205,7 @@ class TestEnvManager:
         mock_path_manager.get_project_root.return_value = tmp_path
         mock_path_manager.resolve_path.return_value = tmp_path / ".env"
 
-        manager = EnvManager.create(path_manager=mock_path_manager, load_env=False)
+        manager = EnvManager(path_manager=mock_path_manager, load_env=False)
 
         with (
             patch("dotenv.load_dotenv") as mock_load,
@@ -229,7 +229,7 @@ class TestEnvManager:
         mock_path_manager.get_project_root.return_value = tmp_path
         mock_path_manager.resolve_path.return_value = tmp_path / "nonexistent.env"
 
-        manager = EnvManager.create(path_manager=mock_path_manager, load_env=False)
+        manager = EnvManager(path_manager=mock_path_manager, load_env=False)
 
         with patch.object(Path, "exists", return_value=False):
             # Should not raise an error, just log a warning
@@ -241,19 +241,19 @@ class TestEnvManager:
 
     def test_with_prefix(self):
         """Test the with_prefix helper method."""
-        manager = EnvManager.create(env_prefix="TEST_", load_env=False)
+        manager = EnvManager(env_prefix="TEST_", load_env=False)
         assert manager.with_prefix("KEY") == "TEST_KEY"
         assert manager.with_prefix("TEST_KEY") == "TEST_KEY"  # Shouldn't double prefix
 
     def test_without_prefix(self):
         """Test the without_prefix helper method."""
-        manager = EnvManager.create(env_prefix="TEST_", load_env=False)
+        manager = EnvManager(env_prefix="TEST_", load_env=False)
         assert manager.without_prefix("TEST_KEY") == "KEY"
         assert manager.without_prefix("KEY") == "KEY"  # No prefix to remove
 
     def test_get_env(self):
         """Test getting an environment variable with prefix handling."""
-        manager = EnvManager.create(env_prefix="TEST_", load_env=False)
+        manager = EnvManager(env_prefix="TEST_", load_env=False)
         with patch.dict(os.environ, {"TEST_API_KEY": "123"}, clear=True):
             # Test with and without prefix
             assert os.environ.get(manager.with_prefix("API_KEY")) == "123"
@@ -261,7 +261,7 @@ class TestEnvManager:
 
     def test_set_env(self):
         """Test setting an environment variable with prefix handling."""
-        manager = EnvManager.create(env_prefix="TEST_", load_env=False)
+        manager = EnvManager(env_prefix="TEST_", load_env=False)
         with patch.dict(os.environ, {}, clear=True):
             # Test setting environment variable
             prefixed_key = manager.with_prefix("API_KEY")
@@ -285,7 +285,7 @@ class TestEnvManager:
             manager = EnvManager()
 
             # Mock get_env_path to return our test path
-            with patch.object(manager, "get_env_path", return_value=env_path):
+            with patch.object(manager._instance, "get_env_path", return_value=env_path):
                 # Call the method under test
                 manager.save_to_env_file("TEST_KEY", "test_value")
 
@@ -298,7 +298,7 @@ class TestEnvManager:
 
                 # Verify the rest of the arguments
                 assert call_args[1:] == ("TEST_KEY", "test_value")
-                assert mock_set_key.call_args[1] == {"quote_mode": "never"}
+                assert mock_set_key.call_args.kwargs == {"quote_mode": "never"}
 
     def test_remove_from_env_file(self, tmp_path):
         """Test removing a key from an env file."""
@@ -311,7 +311,7 @@ class TestEnvManager:
             manager = EnvManager()
 
             # Mock get_env_path to return our test path
-            with patch.object(manager, "get_env_path", return_value=env_path):
+            with patch.object(manager._instance, "get_env_path", return_value=env_path):
                 # Call the method under test
                 manager.remove_from_env_file("TEST_KEY")
 
@@ -323,7 +323,7 @@ class TestEnvManager:
                 # Verify the path points to the same file, regardless of string/Path
                 assert Path(called_path).resolve() == env_path.resolve()
                 assert call_args[1] == "TEST_KEY"
-                assert mock_unset_key.call_args[1] == {"quote_mode": "never"}
+                assert mock_unset_key.call_args.kwargs == {"quote_mode": "never"}
 
     def test_get_all_env_vars(self):
         """Test getting all environment variables with the prefix."""
@@ -339,3 +339,115 @@ class TestEnvManager:
 
         assert result == {"TEST_KEY1": "value1", "TEST_KEY2": "value2"}
         assert "OTHER_PREFIX_KEY" not in result
+
+    def test_resolve_env_paths_with_special_symbols(self, tmp_path):
+        """Test _resolve_env_paths handles @ and ~ symbols correctly."""
+        # Setup mock PathManager
+        mock_path_manager = MagicMock(spec=PathManager)
+        mock_path_manager.resolve_path.side_effect = lambda x: tmp_path / x.replace("@project/", "").replace("~", "home")
+        
+        # Create test paths with special symbols - need to set them as strings directly
+        test_paths = [
+            "@project/.env",  # Should be resolved
+            "~/.env.local",   # Should be resolved
+            "/absolute/path/.env",  # Should not be resolved (no special symbols)
+            str(tmp_path / "direct.env"),  # Direct path
+        ]
+        
+        manager = EnvManager(env_paths=test_paths, load_env=False, path_manager=mock_path_manager)
+        
+        # Reset env_paths to strings to test _resolve_env_paths properly
+        manager.env_paths = test_paths
+        
+        # Manually call _resolve_env_paths
+        manager._resolve_env_paths()
+        
+        # Verify paths were resolved correctly
+        assert len(manager.env_paths) == 4
+        # Check that @project path was resolved (no longer contains @project)
+        resolved_project_paths = [path for path in manager.env_paths if str(path).endswith(".env") and "@project" not in str(path)]
+        assert len(resolved_project_paths) >= 1
+        # Check that ~ path was resolved (no longer contains ~)
+        resolved_home_paths = [path for path in manager.env_paths if str(path).endswith(".env.local") and "~" not in str(path)]
+        assert len(resolved_home_paths) >= 1
+
+    def test_resolve_env_paths_with_resolution_errors(self, tmp_path):
+        """Test _resolve_env_paths handles resolution errors gracefully."""
+        # Setup mock PathManager that raises errors for special paths
+        mock_path_manager = MagicMock(spec=PathManager)
+        mock_path_manager.resolve_path.side_effect = ValueError("Invalid path")
+        
+        test_paths = ["@project/.env", "/normal/path/.env"]
+        
+        # Patch the logger at module level where it's imported
+        with patch("local_coding_assistant.config.env_manager.logger") as mock_logger:
+            manager = EnvManager(env_paths=test_paths, load_env=False, path_manager=mock_path_manager)
+            
+            # Reset env_paths to strings to test _resolve_env_paths properly
+            manager.env_paths = test_paths
+            
+            # Manually call _resolve_env_paths
+            manager._resolve_env_paths()
+            
+            # Should log warning for failed resolution but continue
+            assert mock_logger.warning.called
+            warning_call = mock_logger.warning.call_args
+            assert "Failed to resolve path" in warning_call[0][0]
+            assert "@project/.env" in warning_call[0][0]
+            
+            # Should still have both paths (failed resolution falls back to Path constructor)
+            assert len(manager.env_paths) == 2
+            assert any("normal" in str(path) and "path" in str(path) for path in manager.env_paths)
+            assert any("@project" in str(path) for path in manager.env_paths)
+
+    def test_get_default_env_paths_fallback_project_root(self, tmp_path):
+        """Test _get_default_env_paths fallback project root detection."""
+        # Setup mock PathManager that returns None for project root but resolves paths
+        mock_path_manager = MagicMock(spec=PathManager)
+        mock_path_manager.get_project_root.return_value = None
+        mock_path_manager.resolve_path.side_effect = lambda x: tmp_path / x.replace("@project/", "")
+        
+        # Create a temporary directory structure with pyproject.toml
+        project_dir = tmp_path / "test_project"
+        project_dir.mkdir()
+        (project_dir / "pyproject.toml").touch()
+        
+        # Mock the current file path and cwd to simulate being in the test project
+        with patch("local_coding_assistant.config.env_manager.Path.cwd", return_value=project_dir):
+            with patch("local_coding_assistant.config.env_manager.__file__", str(project_dir / "src" / "env_manager.py")):
+                manager = EnvManager(path_manager=mock_path_manager, load_env=False)
+                
+                # Should find the project root via pyproject.toml
+                default_paths = manager._get_default_env_paths()
+                
+                # Verify paths are based on the detected project root
+                assert any(str(project_dir) in str(path) for path in default_paths)
+
+    def test_get_env_path_file_exists_and_creation(self, tmp_path):
+        """Test get_env_path finds existing files and creates directories when needed."""
+        # Setup test environment
+        existing_file = tmp_path / ".env.local"
+        existing_file.touch()
+        
+        non_existent_dir = tmp_path / "subdir"
+        non_existent_file = non_existent_dir / ".env.test"
+        
+        manager = EnvManager(
+            env_paths=[existing_file, non_existent_file], 
+            load_env=False
+        )
+        
+        # Test finding existing file
+        found_path = manager.get_env_path(".env.local")
+        assert found_path == existing_file
+        
+        # Test creating directories for non-existent file
+        created_path = manager.get_env_path(".env.test")
+        assert created_path.parent.exists()
+        assert created_path.parent == non_existent_dir
+        
+        # Test fallback to cwd when no paths match
+        with patch("local_coding_assistant.config.env_manager.Path.cwd", return_value=tmp_path):
+            fallback_path = manager.get_env_path("custom.env")
+            assert fallback_path == tmp_path / "custom.env"
+            assert fallback_path.parent.exists()

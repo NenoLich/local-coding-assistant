@@ -340,4 +340,6 @@ class ToolAPIGenerator:
                     path.unlink(missing_ok=True)
                 self._generated_files.remove(path)
             except Exception as e:
-                logger.warning(f"Failed to clean up {path}: {e}")
+                logger.warning(
+                    f"Failed to clean up {path}", error=str(e), exc_info=True
+                )
