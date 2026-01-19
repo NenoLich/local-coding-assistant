@@ -97,11 +97,15 @@ def set_config(
         # Set in environment and persist to file
         _env_manager.set_env(key, value)
         _env_manager.save_to_env_file(_env_manager.with_prefix(key), value)
-        log.info("Set and persisted %s", _env_manager.with_prefix(key))
+        prefixed_key = _env_manager.with_prefix(key)
+        log.info("Set and persisted %s", prefixed_key)
+        typer.echo(f"Set and persisted {prefixed_key}")
     else:
         # Set only in current process
         _env_manager.set_env(key, value)
-        log.info("Temporarily set %s (not persisted)", _k(key))
+        prefixed_key = _env_manager.with_prefix(key)
+        log.info("Temporarily set %s (not persisted)", prefixed_key)
+        typer.echo(f"Temporarily set {prefixed_key} (not persisted)")
 
 
 @app.command("unset")
