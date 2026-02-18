@@ -2,6 +2,7 @@
 
 from local_coding_assistant.agent import LLMService
 from local_coding_assistant.config import ConfigManager
+from local_coding_assistant.config.field import config_field_registry
 from local_coding_assistant.config.schemas import LLMConfig
 
 
@@ -10,6 +11,9 @@ class TestConfigManagerIntegration:
 
     def test_llm_manager_integration(self):
         """Test that LLMService works with ConfigManager."""
+        # Clear any leftover ConfigFields from other tests
+        config_field_registry.clear()
+
         manager = ConfigManager()
         manager.load_global_config()
 

@@ -497,7 +497,7 @@ class TestConfigFieldValidationEngineIntegration:
     def field_registry(self):
         """Provide a fresh ConfigFieldRegistry for testing."""
         registry = ConfigFieldRegistry()
-        # registry.clear()  # Removed to allow field registration
+        registry.clear()  # Clear to prevent state persistence between tests
         return registry
 
     @pytest.fixture
