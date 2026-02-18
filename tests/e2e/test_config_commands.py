@@ -64,7 +64,9 @@ class TestConfigCommands:
         assert os.environ.get("LOCCA_NEW_KEY") == "new_value"
 
     @patch("local_coding_assistant.cli.commands.config.get_env_manager")
-    def test_config_set_overwrite_existing(self, mock_get_env_manager, cli_runner, tmp_path):
+    def test_config_set_overwrite_existing(
+        self, mock_get_env_manager, cli_runner, tmp_path
+    ):
         """Test setting a configuration key that already exists."""
         # Pre-set a value in the environment
         os.environ["LOCCA_EXISTING_KEY"] = "old_value"
@@ -80,7 +82,9 @@ class TestConfigCommands:
         assert os.environ.get("LOCCA_EXISTING_KEY") == "new_value"
 
     @patch("local_coding_assistant.cli.commands.config.get_env_manager")
-    def test_config_set_special_characters(self, mock_get_env_manager, cli_runner, tmp_path):
+    def test_config_set_special_characters(
+        self, mock_get_env_manager, cli_runner, tmp_path
+    ):
         """Test setting a configuration key with special characters in value."""
         special_value = 'Value with "quotes" and spaces and special chars: @#$%^&*()'
 

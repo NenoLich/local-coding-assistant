@@ -1,9 +1,10 @@
 """Agent loop implementation for observe-plan-act-reflect lifecycle."""
 
 import time
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, ToolCall
+from local_coding_assistant.agent.llm import LLMService, LLMTask, LLMToolCall
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.core.protocols import IToolManager
 from local_coding_assistant.tools.types import ToolExecutionMode, ToolExecutionRequest
@@ -22,7 +23,7 @@ class AgentLoop:
 
     def __init__(
         self,
-        llm_manager: LLMManager,
+        llm_service: LLMService,
         tool_manager: IToolManager | None = None,
         name: str = "agent_loop",
         max_iterations: int = 10,
@@ -31,7 +32,7 @@ class AgentLoop:
         """Initialize the agent loop.
 
         Args:
-            llm_manager: The LLM manager to use for reasoning.
+            llm_service: The LLM service to use for reasoning.
             tool_manager: Optional tool manager providing available tools.
                          If not provided, the agent will operate without tools.
             name: A name for this agent loop instance.
@@ -43,7 +44,7 @@ class AgentLoop:
 
             raise AgentError("max_iterations must be at least 1")
 
-        self.llm_manager = llm_manager
+        self.llm_service = llm_service
         self.tool_manager = tool_manager
         self.name = name
         self.max_iterations = max_iterations
@@ -112,7 +113,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
 - confidence: confidence level (0-1)
 """
         try:
-            request = LLMRequest(
+            request = LLMTask(
                 prompt=prompt,
                 tools=self._cached_tools,
             )
@@ -120,7 +121,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
             response_content = (
                 await self._stream_response(request)
                 if self.streaming
-                else (await self.llm_manager.generate(request)).content
+                else (await self.llm_service.generate(request)).content
             )
 
             # For now, create a simple plan - in a real implementation,
@@ -161,7 +162,7 @@ If you need to provide a final answer, use the final_answer tool.
 
 Please describe what actions were taken and their results.
 """
-            request = LLMRequest(
+            request = LLMTask(
                 prompt=action_prompt,
                 tools=self._cached_tools,
             )
@@ -169,7 +170,7 @@ Please describe what actions were taken and their results.
             response_content = (
                 await self._stream_response(request)
                 if self.streaming
-                else (await self.llm_manager.generate(request)).content
+                else (await self.llm_service.generate(request)).content
             )
 
             # For now, we'll need the complete response to parse tool calls
@@ -179,17 +180,19 @@ Please describe what actions were taken and their results.
                 # For streaming, we need to get tool calls from the complete response
                 # This is a simplified approach - a real implementation would
                 # need more sophisticated parsing of streaming content
-                response = await self.llm_manager.generate(request)
+                response = await self.llm_service.generate(request)
                 tool_calls = response.tool_calls or []
             else:
                 # For non-streaming, we already have the response object
-                response = await self.llm_manager.generate(request)
+                response = await self.llm_service.generate(request)
                 tool_calls = response.tool_calls or []
 
             # Check if this is a tool call response
-            if tool_calls:
+            normalized_tool_calls = self._normalize_tool_calls(tool_calls)
+
+            if normalized_tool_calls:
                 for tool_call in tool_calls:
-                    if isinstance(tool_call, ToolCall):
+                    if isinstance(tool_call, LLMToolCall):
                         func_name = tool_call.name
                         try:
                             # Parse arguments
@@ -225,7 +228,7 @@ Please describe what actions were taken and their results.
                                     "success": True,
                                     "output": f"Final answer: {self.final_answer}",
                                     "metadata": {
-                                        "tool_calls": tool_calls,
+                                        "tool_calls": normalized_tool_calls,
                                         "stopped": True,
                                     },
                                 }
@@ -235,7 +238,7 @@ Please describe what actions were taken and their results.
                                 "success": True,
                                 "output": f"Tool {func_name} executed successfully",
                                 "metadata": {
-                                    "tool_calls": tool_calls,
+                                    "tool_calls": normalized_tool_calls,
                                     "tool_results": {func_name: tool_result},
                                 },
                             }
@@ -253,7 +256,7 @@ Please describe what actions were taken and their results.
             return {
                 "success": True,
                 "output": response_content,
-                "metadata": {"tool_calls": tool_calls},
+                "metadata": {"tool_calls": normalized_tool_calls},
             }
         except Exception as e:
             logger.error("Failed to execute actions", error=str(e), exc_info=True)
@@ -283,11 +286,11 @@ Please provide:
 - improvements: suggested improvements
 - success_rating: success rating (0-1)
 """
-            request = LLMRequest(prompt=reflection_prompt)
+            request = LLMTask(prompt=reflection_prompt)
             response_content = (
                 await self._stream_response(request)
                 if self.streaming
-                else (await self.llm_manager.generate(request)).content
+                else (await self.llm_service.generate(request)).content
             )
 
             # For now, create a simple reflection - in a real implementation,
@@ -346,7 +349,7 @@ Please provide:
                 descriptions.append(f"- {tool.name}: {tool.description}")
         return "\n".join(descriptions) if descriptions else "No tools available"
 
-    async def _stream_response(self, request: LLMRequest) -> str:
+    async def _stream_response(self, request: LLMTask) -> str:
         """Generate LLM response using streaming.
 
         Args:
@@ -357,13 +360,13 @@ Please provide:
 
         Note:
             This method should only be called when streaming is enabled.
-            For non-streaming mode, use llm_manager.generate() directly.
+            For non-streaming mode, use llm_service.generate() directly.
         """
         # Use streaming for real-time response processing
         logger.debug("Using streaming LLM response")
         response_content = ""
-        async for chunk in self.llm_manager.stream(request):
-            response_content += chunk
+        async for chunk in self.llm_service.stream(request):
+            response_content += getattr(chunk, "content", str(chunk))
         return response_content
 
     def _execute_observe_phase(self, iteration_data: dict[str, Any]) -> dict[str, Any]:
@@ -646,3 +649,28 @@ Please provide:
             True if the loop is running, False otherwise
         """
         return self.is_running
+
+    @staticmethod
+    def _normalize_tool_calls(
+        tool_calls: list[LLMToolCall] | None,
+    ) -> list[dict[str, Any]]:
+        """Convert tool call objects into JSON-safe dictionaries."""
+        normalized: list[dict[str, Any]] = []
+        if not tool_calls:
+            return normalized
+        for call in tool_calls:
+            if is_dataclass(call):
+                normalized.append(asdict(call))
+                continue
+            if isinstance(call, dict):
+                normalized.append(call)
+                continue
+            normalized.append(
+                {
+                    "id": getattr(call, "id", None),
+                    "name": getattr(call, "name", ""),
+                    "arguments": getattr(call, "arguments", {}),
+                    "type": getattr(call, "type", "function"),
+                }
+            )
+        return normalized

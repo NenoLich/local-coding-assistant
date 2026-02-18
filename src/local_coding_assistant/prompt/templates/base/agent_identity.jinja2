@@ -1,8 +1,10 @@
 {% set ctx = context %}
-Primary Agents:
-{% for agent in ctx.agent_profiles %}
-- {{ agent.name|capitalize }} ({{ agent.kind }}): {{ agent.description }}
-  Goals: {{ agent.goals | join('; ') if agent.goals else 'N/A' }}
-  Tone: {{ agent.tone or 'neutral' }}
-  Constraints: {{ agent.constraints | join('; ') if agent.constraints else 'standard policies' }}
-{% endfor %}
+{% if ctx.agent_profile %}
+Active Agent: {{ ctx.agent_profile.name|capitalize }} ({{ ctx.agent_profile.kind }})
+Description: {{ ctx.agent_profile.description }}
+Goals: {{ ctx.agent_profile.goals | join('; ') if ctx.agent_profile.goals else 'N/A' }}
+Tone: {{ ctx.agent_profile.tone or 'neutral' }}
+Constraints: {{ ctx.agent_profile.constraints | join('; ') if ctx.agent_profile.constraints else 'standard policies' }}
+{% else %}
+No agent profile specified.
+{% endif %}

@@ -27,7 +27,7 @@ async def math_async(operation: str, numbers: list[float]) -> Any:
         run_kwargs['operation'] = operation
     if 'numbers' in locals() and numbers is not None:
         run_kwargs['numbers'] = numbers
-    @tracker.track(tool_name="math")
+    @tracker.track(tool_name="math", args=(), kwargs=run_kwargs)
     async def _execute():
         try:
             return await tool.run(**run_kwargs)
@@ -52,7 +52,7 @@ async def file_list_async() -> Any:
     """Async version of file_list function with resource tracking."""
     tool = ListFilesInCwd()
     run_kwargs = {}
-    @tracker.track(tool_name="file_list")
+    @tracker.track(tool_name="file_list", args=(), kwargs=run_kwargs)
     async def _execute():
         try:
             return await tool.run(**run_kwargs)
@@ -83,7 +83,7 @@ async def final_answer_async(answer: str, answer_format: str = "text", metadata:
         run_kwargs['answer_format'] = answer_format
     if 'metadata' in locals() and metadata is not None:
         run_kwargs['metadata'] = metadata
-    @tracker.track(tool_name="final_answer")
+    @tracker.track(tool_name="final_answer", args=(), kwargs=run_kwargs)
     async def _execute():
         try:
             return await tool.run(**run_kwargs)

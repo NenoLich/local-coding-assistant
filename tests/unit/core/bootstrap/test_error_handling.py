@@ -32,10 +32,8 @@ class TestBootstrapErrorHandling:
             bootstrap()
 
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
-    @patch("local_coding_assistant.core.bootstrap._initialize_llm_manager")
-    def test_llm_initialization_failure(
-        self, mock_init_llm, mock_init_config, caplog
-    ):
+    @patch("local_coding_assistant.core.bootstrap._initialize_llm_service")
+    def test_llm_initialization_failure(self, mock_init_llm, mock_init_config, caplog):
         """Test behavior when LLM manager initialization returns None."""
         # Setup mocks
         mock_config = {"logging": {"level": "INFO"}}
@@ -62,7 +60,7 @@ class TestBootstrapErrorHandling:
         assert ctx.get("llm") is None
 
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
-    @patch("local_coding_assistant.core.bootstrap._initialize_llm_manager")
+    @patch("local_coding_assistant.core.bootstrap._initialize_llm_service")
     @patch("local_coding_assistant.core.bootstrap._initialize_tool_manager")
     def test_tool_manager_initialization_failure(
         self, mock_init_tools, mock_init_llm, mock_init_config, caplog
@@ -71,9 +69,9 @@ class TestBootstrapErrorHandling:
         # Setup mocks
         mock_config = {"logging": {"level": "INFO"}}
         mock_config_manager = Mock()
-        mock_llm_manager = Mock()
+        mock_llm_service = Mock()
         mock_init_config.return_value = mock_config_manager
-        mock_init_llm.return_value = mock_llm_manager
+        mock_init_llm.return_value = mock_llm_service
         mock_init_tools.return_value = None  # Simulate tool manager init returns None
 
         # Mock runtime manager to avoid side effects
@@ -91,7 +89,7 @@ class TestBootstrapErrorHandling:
         assert ctx.get("tools") is None
 
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
-    @patch("local_coding_assistant.core.bootstrap._initialize_llm_manager")
+    @patch("local_coding_assistant.core.bootstrap._initialize_llm_service")
     @patch("local_coding_assistant.core.bootstrap._initialize_tool_manager")
     @patch("local_coding_assistant.core.bootstrap._initialize_runtime_manager")
     def test_runtime_manager_initialization_failure(
@@ -106,10 +104,10 @@ class TestBootstrapErrorHandling:
         # Setup mocks
         mock_config = {"logging": {"level": "INFO"}}
         mock_config_manager = Mock()
-        mock_llm_manager = Mock()
+        mock_llm_service = Mock()
         mock_tool_manager = Mock()
         mock_init_config.return_value = mock_config_manager
-        mock_init_llm.return_value = mock_llm_manager
+        mock_init_llm.return_value = mock_llm_service
         mock_init_tools.return_value = mock_tool_manager
         mock_init_runtime.return_value = None  # Simulate runtime manager init failure
 

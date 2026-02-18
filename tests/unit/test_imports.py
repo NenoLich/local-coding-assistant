@@ -10,10 +10,10 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 def test_circular_imports():
     """Test that circular imports are resolved."""
-    # Test that LLMManager imports successfully
-    from local_coding_assistant.agent.llm_manager import LLMManager
+    # Test that LLMService imports successfully
+    from local_coding_assistant.agent.llm import LLMService
 
-    assert LLMManager is not None
+    assert LLMService is not None
 
     # Test that bootstrap imports successfully
     from local_coding_assistant.core.bootstrap import bootstrap

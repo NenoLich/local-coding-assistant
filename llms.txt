@@ -19,9 +19,16 @@ A sophisticated local-first Python project for building an advanced AI coding as
 ### Package: `src/local_coding_assistant/`
 
 - **`agent/`**
+  - `frame_agent.py`: Frame-based agent implementation with flexible execution patterns
+  - `llm/`: Modular LLM service components
+    - `service.py`: Main LLM service interface and orchestration
+    - `models.py`: LLM data models and schemas
+    - `pipeline.py`: Request processing pipeline
+    - `routing.py`: Provider routing and selection logic
+    - `fallback.py`: Fallback mechanisms and error handling
+    - `telemetry.py`: LLM usage telemetry and monitoring
   - `agent_loop.py`: Observe-plan-act-reflect orchestration, tool integration, session persistence.
   - `langgraph_agent.py`: LangGraph-compatible agent, graph node interface, streaming deltas.
-  - `llm_manager.py`: Provider-aware request routing, streaming, retry + fallback orchestration.
 
 - **`sandbox/`**
   - `manager.py`: Manages sandbox lifecycle, configuration, and execution requests.
@@ -33,10 +40,6 @@ A sophisticated local-first Python project for building an advanced AI coding as
 
 - **`tools/`**
   - `builtin_tools/ptc_tools.py`: Implements Programmatic Tool Calling (PTC) with sandbox integration.
-  - `sandbox_tools/`: Special tools available only in sandbox environment.
-    - `compute_tools.py`: Math operations and computations.
-    - `file_tools.py`: File system operations within sandbox.
-    - `final_answer.py`: Tool for providing final answers in PTC flows.
   - `statistics.py`: Tracks and reports tool execution metrics and resource usage.
   - `tool_manager.py`: Manages tool registration and execution with metrics collection.
 
@@ -47,19 +50,28 @@ A sophisticated local-first Python project for building an advanced AI coding as
   - `generic_provider.py` + `compatible_drivers.py`: Adapters for OpenAI, OpenRouter, Google Gemini, local drivers.
 
 - **`config/`**
+  - `builder.py`: Configuration building and construction utilities
+  - `cache.py`: Configuration caching mechanisms
+  - `dependencies.py`: Configuration dependency management
+  - `field.py`: Configuration field definitions and validation
+  - `validation_engine.py`: Advanced configuration validation engine
   - `config_manager.py`: Three-layer hierarchy (global/session/call) with deep merge + validation.
   - `providers.default.yaml` / `providers.local.yaml`: Declarative provider definitions; CLI writes to local file.
   - `schemas.py`: Pydantic models (`AppConfig`, `ProviderConfig`, `LLMConfig`, `AgentConfig`).
   - `path_manager.py`: Environment-aware path resolution utility.
 
 - **`runtime/`**
+  - `execution_types.py`: Type definitions for execution contexts and states
+  - `executor.py`: Execution engine for running tasks and workflows
+  - `handlers/`: Specialized handlers for different execution patterns
   - `runtime_manager.py`: Session orchestration, per-call overrides, streaming response assembly.
 
 - **`core/`**
-  - `bootstrap.py`: Loads `.env`, merges config, builds `LLMManager`, `ToolManager`, `RuntimeManager`.
+  - `bootstrap.py`: Loads `.env`, merges config, builds `LLMService`, `ToolManager`, `RuntimeManager`.
   - `app_context.py`: Dependency container for CLI and integrations.
 
 - **`cli/`**
+  - `rendering/`: CLI rendering and output formatting components
   - `commands/provider.py`: `add|list|remove|validate|reload` provider management.
   - `commands/run.py`: `locca run query` entry point, supports `--provider`, `--model`, `--streaming`.
   - `commands/tool.py`: Tool management (list, add, remove, run, validate, reload)
@@ -245,11 +257,35 @@ uv run locca run --provider my-provider "Your query here"
 
 ## Recent Major Additions
 
-### LangGraph Opar-Agent Implementation
-- Sophisticated graph-based agent with observe-plan-act-reflect nodes
-- Advanced state management across multiple execution phases
-- Streaming support for all agent phases
-- Robust error handling with fallback mechanisms
+### Frame Agent Implementation
+- New frame-based agent with flexible execution patterns
+- Advanced state management for complex workflows
+- Integration with existing agent loop infrastructure
+
+### LLM Service Refactoring
+- Modular LLM management with service, routing, fallback, and telemetry components
+- Improved provider routing and health monitoring
+- Enhanced fallback mechanisms for reliability
+
+### Enhanced Runtime System
+- New execution engine with specialized handlers
+- Execution type definitions for better type safety
+- Improved workflow orchestration
+
+### Configuration Enhancements
+- Advanced configuration builder and validation engine
+- Configuration caching for performance
+- Dependency management for complex configurations
+
+### CLI Rendering System
+- Dedicated rendering components for improved CLI output
+- Better formatting and user experience
+- Modular rendering architecture
+
+### Sandbox Tool Processing
+- Advanced tool call processing in sandbox environment
+- Enhanced validation and security
+- Improved resource management
 
 ### Agent Loop Implementation
 - Full observe-plan-act-reflect pattern

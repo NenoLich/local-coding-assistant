@@ -252,6 +252,102 @@ class TestOpenAIChatCompletionsDriver:
         error_message = str(exc_info.value)
         assert error_message_suffix in error_message
 
+    @pytest.mark.parametrize(
+        "error_message,expected_exception",
+        [
+            ("Authentication failed 401", ProviderAuthError),
+            ("Rate limit exceeded 429", ProviderRateLimitError),
+            ("Some other error", ProviderError),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_string_based_error_handling(
+        self, driver, mock_client, test_request, error_message, expected_exception
+    ):
+        """Test error handling based on string content when no status code (lines 353-371)"""
+        # Mock client to raise a plain exception with error message
+        mock_client.chat.completions.create.side_effect = Exception(error_message)
+
+        # Assert the appropriate exception is raised
+        with pytest.raises(expected_exception) as exc_info:
+            await driver.generate(test_request)
+
+        # Verify the error message contains the original error
+        error_str = str(exc_info.value)
+        assert error_message in error_str
+
+    def test_extract_error_details_edge_cases(self, driver):
+        """Test _extract_error_details with various status_code scenarios (lines 289-295)"""
+        # Test case 1: status_code is None
+        class MockException1(Exception):
+            def __init__(self):
+                self.status_code = None
+                self.response = "mock_response"
+
+        e1 = MockException1()
+        status_code, response = driver._extract_error_details(e1)
+        assert status_code is None
+        assert response == "mock_response"
+
+        # Test case 2: status_code is valid string
+        class MockException2(Exception):
+            def __init__(self):
+                self.status_code = "400"
+                self.response = "mock_response"
+
+        e2 = MockException2()
+        status_code, response = driver._extract_error_details(e2)
+        assert status_code == 400
+        assert response == "mock_response"
+
+        # Test case 3: status_code is invalid string
+        class MockException3(Exception):
+            def __init__(self):
+                self.status_code = "invalid"
+                self.response = "mock_response"
+
+        e3 = MockException3()
+        status_code, response = driver._extract_error_details(e3)
+        assert status_code is None
+        assert response == "mock_response"
+
+        # Test case 4: status_code in response object
+        class MockResponse:
+            def __init__(self):
+                self.status_code = 500
+
+        class MockException4(Exception):
+            def __init__(self):
+                self.response = MockResponse()
+
+        e4 = MockException4()
+        status_code, response = driver._extract_error_details(e4)
+        assert status_code == 500
+        assert response == e4.response
+
+        # Test case 5: status_code in response is None
+        class MockResponse5:
+            def __init__(self):
+                self.status_code = None
+
+        class MockException5(Exception):
+            def __init__(self):
+                self.response = MockResponse5()
+
+        e5 = MockException5()
+        status_code, response = driver._extract_error_details(e5)
+        assert status_code is None
+        assert response == e5.response
+
+        # Test case 6: No status_code or response
+        class MockException6(Exception):
+            pass
+
+        e6 = MockException6()
+        status_code, response = driver._extract_error_details(e6)
+        assert status_code is None
+        assert response is None
+
 
 class TestOpenAIResponsesDriver:
     """Tests for OpenAIResponsesDriver"""
@@ -318,20 +414,22 @@ class TestOpenAIResponsesDriver:
         request = ProviderLLMRequest(
             model="test-model",
             messages=[{"role": "user", "content": "What's the weather?"}],
-            tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "get_weather",
-                        "description": "Get the weather",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {"location": {"type": "string"}},
-                            "required": ["location"],
+            parameters={
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "description": "Get the weather",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"location": {"type": "string"}},
+                                "required": ["location"],
+                            },
                         },
-                    },
-                }
-            ],
+                    }
+                ]
+            },
         )
 
         # Create a proper mock response class
@@ -374,7 +472,8 @@ class TestOpenAIResponsesDriver:
         """Test successful streaming"""
         # Mock streaming response
         mock_chunk = MagicMock()
-        mock_chunk.output_text = "Hello"
+        mock_chunk.type = "response.text.delta"
+        mock_chunk.delta = "Hello"
         mock_chunk.finish_reason = None
         mock_chunk.id = "test-chunk-123"
         mock_chunk.created = 1234567890
@@ -446,6 +545,30 @@ class TestOpenAIResponsesDriver:
         error_message = str(exc_info.value)
         assert error_message_suffix in error_message
 
+    @pytest.mark.parametrize(
+        "error_message,expected_exception",
+        [
+            ("Authentication failed 401", ProviderAuthError),
+            ("Rate limit exceeded 429", ProviderRateLimitError),
+            ("Some other error", ProviderError),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_string_based_error_handling(
+        self, driver, mock_client, test_request, error_message, expected_exception
+    ):
+        """Test error handling based on string content when no status code (lines 746-764)"""
+        # Mock client to raise a plain exception with error message
+        mock_client.responses.create.side_effect = Exception(error_message)
+
+        # Assert the appropriate exception is raised
+        with pytest.raises(expected_exception) as exc_info:
+            await driver.generate(test_request)
+
+        # Verify the error message contains the original error
+        error_str = str(exc_info.value)
+        assert error_message in error_str
+
     def test_format_tools_for_responses_api(self, driver):
         """Test tool formatting for Responses API"""
         tools = [
@@ -463,3 +586,62 @@ class TestOpenAIResponsesDriver:
         assert len(formatted) == 1
         assert formatted[0]["name"] == "get_weather"
         assert formatted[0]["type"] == "function"
+
+    def test_extract_reasoning_output_list(self, driver):
+        """Test _extract_reasoning with output list containing reasoning (lines 564-572)"""
+        # Test case 1: reasoning_text with string content
+        class MockResponse1:
+            def __init__(self):
+                self.output = [
+                    {"type": "reasoning_text", "content": "This is reasoning"}
+                ]
+
+        response1 = MockResponse1()
+        reasoning = driver._extract_reasoning(response1)
+        assert reasoning == "This is reasoning"
+
+        # Test case 2: reasoning with list content
+        class MockResponse2:
+            def __init__(self):
+                self.output = [
+                    {"type": "reasoning", "content": [
+                        {"text": "First part"},
+                        {"text": "Second part"},
+                        {"other": "ignored"}
+                    ]}
+                ]
+
+        response2 = MockResponse2()
+        reasoning = driver._extract_reasoning(response2)
+        assert reasoning == "First partSecond part"
+
+        # Test case 3: reasoning with non-list content
+        class MockResponse3:
+            def __init__(self):
+                self.output = [
+                    {"type": "reasoning", "content": "Simple reasoning"}
+                ]
+
+        response3 = MockResponse3()
+        reasoning = driver._extract_reasoning(response3)
+        assert reasoning == "Simple reasoning"
+
+        # Test case 4: no reasoning in output
+        class MockResponse4:
+            def __init__(self):
+                self.output = [
+                    {"type": "text", "content": "Some text"}
+                ]
+
+        response4 = MockResponse4()
+        reasoning = driver._extract_reasoning(response4)
+        assert reasoning is None
+
+        # Test case 5: empty output
+        class MockResponse5:
+            def __init__(self):
+                self.output = []
+
+        response5 = MockResponse5()
+        reasoning = driver._extract_reasoning(response5)
+        assert reasoning is None

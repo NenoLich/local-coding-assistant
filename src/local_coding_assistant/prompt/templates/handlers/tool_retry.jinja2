@@ -1,0 +1,10 @@
+{% set ctx = context.handler_context %}
+Some tools failed in the previous attempt:
+
+{% for tool in ctx["failed_tools"] %}
+- Tool: {{ tool.tool_name }}
+  Args: {{ tool.tool_args }}
+  Error: {{ tool.error_message }}
+{% endfor %}
+
+Please retry the failed tools. Pay attention to the error messages and tool arguments. If a tool continues to fail, try an alternative approach or ask for clarification if needed.

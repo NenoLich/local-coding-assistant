@@ -143,6 +143,7 @@ print(result)"""
 
         # Get the prompt
         prompt = manager.get_sandbox_tools_prompt()
+        prompt = "\n".join(prompt)
 
         # Verify the prompt contains the expected content
         assert "## test_tool" in prompt
@@ -345,3 +346,64 @@ test error
                 match="Sandbox execution failed: Invalid response from sandbox",
             ):
                 await manager.execute_tool_in_sandbox("test_tool", {}, "test_session")
+
+    @pytest.mark.asyncio
+    async def test_execute_async_maps_sandbox_envelope_and_traces(
+        self, mocker: MockerFixture
+    ):
+        """Test sandbox response mapping into envelope and tool call traces."""
+        manager, _ = build_manager({})
+        mock_runtime = mocker.MagicMock()
+        future = asyncio.Future()
+        future.set_result(
+            {
+                "response": {
+                    "success": True,
+                    "stdout": "ok",
+                    "stderr": "",
+                    "duration": 1.0,
+                    "tool_calls": [
+                        {
+                            "tool_name": "tool1",
+                            "call_id": "call-1",
+                            "result": "done",
+                            "start_time": "2023-01-01T00:00:00Z",
+                            "end_time": "2023-01-01T00:00:01Z",
+                            "success": True,
+                            "resource_metrics": [
+                                {
+                                    "type": "cpu",
+                                    "name": "cpu_usage",
+                                    "value": 1.0,
+                                    "unit": "percent",
+                                }
+                            ],
+                            "args": [1, 2],
+                        }
+                    ],
+                    "system_metrics": [
+                        {
+                            "type": "memory",
+                            "name": "memory_rss_mb",
+                            "value": 10.0,
+                            "unit": "mb",
+                        }
+                    ],
+                }
+            }
+        )
+        mock_runtime.execute.return_value = future
+        manager._runtimes = {"execute_python_code": mock_runtime}
+
+        response = await manager.execute_async(
+            ToolExecutionRequest(
+                tool_name="execute_python_code", payload={"code": "print('hi')"}
+            )
+        )
+
+        assert response.envelope is not None
+        assert response.envelope.duration_ms == 1000.0
+        assert response.tool_calls is not None
+        assert response.tool_calls[0].tool_name == "tool1"
+        assert response.tool_calls[0].input == {"args": [1, 2]}
+        assert response.envelope.system_metrics

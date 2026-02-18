@@ -14,7 +14,7 @@ import pytest
 import typer
 import yaml
 
-from local_coding_assistant.agent.llm_manager import LLMManager
+from local_coding_assistant.agent import LLMService
 from local_coding_assistant.cli.commands.provider import (
     _save_config,
     add,
@@ -60,7 +60,7 @@ class TestProviderCLIIntegration:
                 "local_coding_assistant.cli.commands.provider.bootstrap"
             ) as mock_bootstrap,
             patch(
-                "local_coding_assistant.agent.llm_manager.LLMManager"
+                "local_coding_assistant.agent.llm.LLMService"
             ) as mock_llm_class,
             patch("typer.echo") as mock_echo,
         ):
@@ -589,7 +589,7 @@ class CustomProvider(BaseProvider):
 
     """Test provider manager integration with LLM manager and CLI."""
 
-    def test_provider_manager_with_llm_manager_integration(self, mock_provider_manager):
+    def test_provider_manager_with_llm_service_integration(self, mock_provider_manager):
         """Test provider manager integration with LLM manager."""
         from local_coding_assistant.config import ConfigManager
 
@@ -601,19 +601,19 @@ class CustomProvider(BaseProvider):
                 "providers": {"test_provider": {"type": "test_provider"}},
             }
         }
-        llm_manager = LLMManager(
+        llm_service = LLMService(
             config_manager=mock_config,
             provider_manager=mock_provider_manager,
         )
 
         # Test that LLM manager can access provider information
-        providers = llm_manager.provider_manager.list_providers()
+        providers = llm_service.provider_manager.list_providers()
         assert "openai" in providers
         assert "google" in providers
 
         # Test provider sources
-        assert llm_manager.provider_manager.get_provider_source("openai") == "builtin"
-        assert llm_manager.provider_manager.get_provider_source("google") == "global"
+        assert llm_service.provider_manager.get_provider_source("openai") == "builtin"
+        assert llm_service.provider_manager.get_provider_source("google") == "global"
 
     @pytest.mark.asyncio
     async def test_provider_status_integration(self, mock_provider_manager):
@@ -630,7 +630,7 @@ class CustomProvider(BaseProvider):
         }
 
         # Create LLM manager with mock config and provider manager
-        llm_manager = LLMManager(
+        llm_service = LLMService(
             config_manager=mock_config,
             provider_manager=mock_provider_manager,
         )
@@ -639,14 +639,14 @@ class CustomProvider(BaseProvider):
         mock_router = MagicMock()
         mock_router._unhealthy_providers = set()
         mock_router.get_unhealthy_providers.return_value = set()
-        llm_manager.router = mock_router
+        llm_service.router = mock_router
 
         # Get provider instances from the fixture by calling get_provider
         openai_provider = mock_provider_manager.get_provider("openai")
         google_provider = mock_provider_manager.get_provider("google")
 
         # Test provider status retrieval
-        status = await llm_manager.get_provider_status()
+        status = await llm_service.get_provider_status()
 
         assert "openai" in status
         assert "google" in status
@@ -671,7 +671,7 @@ class TestProviderEndToEndIntegration:
         return test_configs["config_dir"]
 
     @pytest.mark.asyncio
-    async def test_cli_to_llm_manager_workflow(self, temp_config_dir):
+    async def test_cli_to_llm_service_workflow(self, temp_config_dir):
         """Test complete workflow from CLI provider addition to LLM generation."""
         config_dir = temp_config_dir
         config_file = config_dir / "providers.local.yaml"
@@ -691,7 +691,7 @@ class TestProviderEndToEndIntegration:
             mock_home.return_value = config_dir.parent.parent
 
             # Mock bootstrap context with LLM manager
-            mock_llm_manager = MagicMock()
+            mock_llm_service = MagicMock()
 
             # Mock provider manager with test provider
             mock_provider_manager = MagicMock()
@@ -711,26 +711,26 @@ class TestProviderEndToEndIntegration:
             mock_provider_manager.get_provider.return_value = mock_provider_instance
 
             # Mock the get_provider_status_list method to return the test provider as available
-            mock_llm_manager.get_provider_status_list.return_value = [
+            mock_llm_service.get_provider_status_list.return_value = [
                 {"name": "test_provider", "status": "available"}
             ]
-            mock_llm_manager.provider_manager = mock_provider_manager
+            mock_llm_service.provider_manager = mock_provider_manager
 
             # Create a side effect for reload_providers to update the status list
             def reload_providers_side_effect():
-                mock_llm_manager.get_provider_status_list.return_value = [
+                mock_llm_service.get_provider_status_list.return_value = [
                     {"name": "test_provider", "status": "available"}
                 ]
 
             # Create the reload_providers mock with side effect and call tracking
             reload_mock = MagicMock(side_effect=reload_providers_side_effect)
-            mock_llm_manager.reload_providers = reload_mock
+            mock_llm_service.reload_providers = reload_mock
 
             # Mock the bootstrap function to call reload_providers
             def mock_bootstrap_side_effect(*args, **kwargs):
                 # Call reload_providers when bootstrap is called
                 reload_mock()
-                return {"llm": mock_llm_manager}
+                return {"llm": mock_llm_service}
 
             mock_bootstrap.side_effect = mock_bootstrap_side_effect
 
@@ -753,19 +753,19 @@ class TestProviderEndToEndIntegration:
 
             # Step 2: Bootstrap and verify provider is available
             mock_bootstrap.assert_called_once()
-            mock_llm_manager.reload_providers.assert_called_once()
+            mock_llm_service.reload_providers.assert_called_once()
 
             # Verify provider is listed
-            providers = mock_llm_manager.provider_manager.list_providers()
+            providers = mock_llm_service.provider_manager.list_providers()
             assert "test_provider" in providers
 
             # Step 3: Test LLM generation with the provider
-            from local_coding_assistant.agent.llm_manager import LLMRequest
+            from local_coding_assistant.agent.llm import LLMTask
 
-            request = LLMRequest(prompt="Test prompt")
-            # This would normally go through the full LLM manager flow
+            task = LLMTask(prompt="Test prompt")
+            # This would normally go through the full LLM service flow
             # but we're mocking the provider response
-            response = await mock_provider_instance.generate_with_retry(request)
+            response = await mock_provider_instance.generate_with_retry(task)
 
             assert response.content == "Test response from CLI-configured provider"
             mock_provider_instance.generate_with_retry.assert_called_once()

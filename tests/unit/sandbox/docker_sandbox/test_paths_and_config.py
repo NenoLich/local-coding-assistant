@@ -157,7 +157,7 @@ def test_validate_persistent_capacity_enforces_limit(
     sandbox = DockerSandbox(
         path_manager=FakePathManager(sandbox_project_root), max_sessions=1
     )
-    
+
     class DummyContainer:
         def __init__(self, *, status: str = "running", ident: str = "dummy"):
             self.status = status
@@ -166,7 +166,7 @@ def test_validate_persistent_capacity_enforces_limit(
 
         def reload(self) -> None:
             self.reload_calls += 1
-    
+
     sandbox._containers["active"] = DummyContainer()
 
     with pytest.raises(SandboxRuntimeError):

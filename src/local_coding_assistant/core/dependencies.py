@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
-from local_coding_assistant.agent.llm_manager import LLMManager
+from local_coding_assistant.agent.llm import LLMService
 from local_coding_assistant.core.protocols import IConfigManager, IToolManager
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 
@@ -21,7 +21,7 @@ class AppDependencies:
     """
 
     config_manager: IConfigManager
-    llm_manager: LLMManager | None = field(default=None)
+    llm_service: LLMService | None = field(default=None)
     tool_manager: Optional["IToolManager"] = field(default=None)
     runtime_manager: RuntimeManager | None = field(default=None)
     sandbox_manager: Optional["SandboxManager"] = field(default=None)

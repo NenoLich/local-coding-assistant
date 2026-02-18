@@ -5,9 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from local_coding_assistant.agent.langgraph_agent import AgentState, LangGraphAgent
-from local_coding_assistant.agent.llm_manager import (
-    LLMManager,
-)
+from local_coding_assistant.agent import LLMService
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.tools.tool_manager import ToolManager
 
@@ -90,18 +88,18 @@ class TestLangGraphAgent:
 
     def test_langgraph_agent_initialization(self):
         """Test LangGraphAgent initializes correctly."""
-        llm_manager = MagicMock(spec=LLMManager)
+        llm_service = MagicMock(spec=LLMService)
         tool_manager = MagicMock(spec=ToolManager)
 
         agent = LangGraphAgent(
-            llm_manager=llm_manager,
+            llm_service=llm_service,
             tool_manager=tool_manager,
             name="test_agent",
             max_iterations=5,
             streaming=True,
         )
 
-        assert agent.llm_manager == llm_manager
+        assert agent.llm_service == llm_service
         assert agent.tool_manager == tool_manager
         assert agent.name == "test_agent"
         assert agent.max_iterations == 5
@@ -110,12 +108,12 @@ class TestLangGraphAgent:
 
     def test_langgraph_agent_invalid_max_iterations(self):
         """Test LangGraphAgent raises error for invalid max_iterations."""
-        llm_manager = MagicMock(spec=LLMManager)
+        llm_service = MagicMock(spec=LLMService)
         tool_manager = MagicMock(spec=ToolManager)
 
         with pytest.raises(AgentError, match="max_iterations must be at least 1"):
             LangGraphAgent(
-                llm_manager=llm_manager,
+                llm_service=llm_service,
                 tool_manager=tool_manager,
                 max_iterations=0,
             )
@@ -123,7 +121,7 @@ class TestLangGraphAgent:
     def test_langgraph_agent_get_tools_methods(self):
         """Test LangGraphAgent tool-related methods."""
         # Create a mock LLM manager
-        mock_llm_manager = MagicMock()
+        mock_llm_service = MagicMock()
 
         # Create mock tools
         mock_tool1 = MagicMock()
@@ -142,7 +140,7 @@ class TestLangGraphAgent:
 
         # Create the LangGraphAgent with the mock managers
         agent = LangGraphAgent(
-            llm_manager=mock_llm_manager,
+            llm_service=mock_llm_service,
             tool_manager=mock_tool_manager,
             name="test_agent",
         )
@@ -150,7 +148,9 @@ class TestLangGraphAgent:
         # Test _get_available_tools
         tools = agent._get_available_tools()
         # Verify list_tools was called with available_only=True
-        mock_tool_manager.list_tools.assert_called_with(available_only=True, execution_mode='classic')
+        mock_tool_manager.list_tools.assert_called_with(
+            available_only=True, execution_mode="classic"
+        )
         assert len(tools) == 2
         assert tools[0]["name"] == "tool1"
         assert tools[1]["name"] == "tool2"
@@ -161,24 +161,26 @@ class TestLangGraphAgent:
         # Test _get_tools_description
         description = agent._get_tools_description()
         # Verify list_tools was called with available_only=True
-        mock_tool_manager.list_tools.assert_called_once_with(available_only=True, execution_mode='classic')
+        mock_tool_manager.list_tools.assert_called_once_with(
+            available_only=True, execution_mode="classic"
+        )
         assert "tool1: First tool" in description
         assert "tool2: Second tool" in description
 
         # Test with no tool manager
         agent_no_tools = LangGraphAgent(
-            llm_manager=mock_llm_manager, tool_manager=None, name="test_agent_no_tools"
+            llm_service=mock_llm_service, tool_manager=None, name="test_agent_no_tools"
         )
         assert agent_no_tools._get_available_tools() == []
         assert agent_no_tools._get_tools_description() == "No tools available"
 
     def test_langgraph_agent_build_graph(self):
         """Test LangGraphAgent builds graph correctly."""
-        llm_manager = MagicMock(spec=LLMManager)
+        llm_service = MagicMock(spec=LLMService)
         tool_manager = MagicMock(spec=ToolManager)
 
         agent = LangGraphAgent(
-            llm_manager=llm_manager,
+            llm_service=llm_service,
             tool_manager=tool_manager,
         )
 
@@ -219,11 +221,11 @@ class TestLangGraphAgent:
 
     def test_langgraph_agent_state_management(self):
         """Test LangGraphAgent state management methods."""
-        llm_manager = MagicMock(spec=LLMManager)
+        llm_service = MagicMock(spec=LLMService)
         tool_manager = MagicMock(spec=ToolManager)
 
         agent = LangGraphAgent(
-            llm_manager=llm_manager,
+            llm_service=llm_service,
             tool_manager=tool_manager,
         )
 

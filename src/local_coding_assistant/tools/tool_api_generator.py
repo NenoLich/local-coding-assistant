@@ -154,7 +154,7 @@ class ToolAPIGenerator:
         # Add the actual execution with tracking
         code.extend(
             [
-                f'    @tracker.track(tool_name="{tool_name}")\n',
+                f'    @tracker.track(tool_name="{tool_name}", args=(), kwargs=run_kwargs)\n',
                 "    async def _execute():\n",
                 "        try:\n",
             ]

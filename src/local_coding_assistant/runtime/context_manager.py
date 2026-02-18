@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
-
-from typing_extensions import runtime_checkable
+from typing import TYPE_CHECKING, Any
 
 from local_coding_assistant.core.protocols import IConfigManager, IToolManager
 from local_coding_assistant.runtime.runtime_types import (
     AgentProfile,
     ExecutionMode,
     PromptContext,
+    ToolSpec,
 )
 from local_coding_assistant.runtime.session import SessionState
 from local_coding_assistant.tools.types import ToolExecutionMode
@@ -41,24 +39,6 @@ class SkillProvider:
         return []
 
 
-@runtime_checkable
-class ToolProtocol(Protocol):
-    """Protocol defining the expected interface for tool objects."""
-
-    name: str
-    description: str
-    parameters: dict[str, Any]
-
-
-@dataclass
-class ToolSpec:
-    """Data class representing a tool specification."""
-
-    name: str
-    description: str
-    parameters: dict[str, Any]
-
-
 class ToolSelector:
     """Responsible for exposing tools to the model based on the current mode."""
 
@@ -70,17 +50,17 @@ class ToolSelector:
         """
         self.tool_manager = tool_manager
 
-    def select(self, *, tool_call_mode: str) -> list[dict[str, Any]]:
+    def select(self, *, tool_call_mode: str) -> tuple[list[ToolSpec], list[str]]:
         """Select tools based on the current execution mode.
 
         Args:
             tool_call_mode: The current tool call mode ("reasoning_only", "classic", or "ptc")
 
         Returns:
-            A list of tool specifications in the required format.
+            A tuple of two lists: (tools, tools_prompt)
         """
         if tool_call_mode == "reasoning_only" or self.tool_manager is None:
-            return []
+            return [], []
 
         execution_mode = (
             ToolExecutionMode.PTC
@@ -88,19 +68,28 @@ class ToolSelector:
             else ToolExecutionMode.CLASSIC
         )
 
-        tool_specs: list[dict[str, Any]] = []
-        for entry in self.tool_manager.list_tools(
+        tool_specs: list[ToolSpec] = []
+        tools = self.tool_manager.list_tools(
             available_only=True, execution_mode=execution_mode
-        ):
+        )
+        tools_prompt: list[str] = []
+
+        for entry in tools:
             try:
                 resolved = self._resolve_tool_entry(entry)
                 if resolved:
-                    tool_specs.append(self._build_tool_spec(resolved))
+                    tool_specs.append(resolved)
             except (ValueError, AttributeError) as e:
                 log.warning(f"Skipping invalid tool entry: {e}")
                 continue
 
-        return tool_specs
+        if execution_mode == ToolExecutionMode.PTC:
+            sandbox_tools = self.tool_manager.list_tools(
+                available_only=True, execution_mode=ToolExecutionMode.SANDBOX
+            )
+            tools_prompt = self.tool_manager.get_sandbox_tools_prompt(sandbox_tools)
+
+        return tool_specs, tools_prompt
 
     def _resolve_tool_entry(self, entry: Any) -> ToolSpec | None:
         """Resolve a tool entry into a standardized ToolSpec.
@@ -220,24 +209,6 @@ class ToolSelector:
 
         return parameters
 
-    def _build_tool_spec(self, tool_spec: ToolSpec) -> dict[str, Any]:
-        """Build the final tool specification dictionary.
-
-        Args:
-            tool_spec: The ToolSpec to convert to a dictionary
-
-        Returns:
-            A dictionary representing the tool specification
-        """
-        return {
-            "type": "function",
-            "function": {
-                "name": tool_spec.name,
-                "description": tool_spec.description,
-                "parameters": tool_spec.parameters,
-            },
-        }
-
 
 class ContextManager:
     """High-level orchestrator that decides what the LLM should see."""
@@ -266,6 +237,7 @@ class ContextManager:
         tool_call_mode: str,
         agent_mode: bool = False,
         graph_mode: bool = False,
+        handler_context: dict[str, Any] | None = None,
     ) -> PromptContext:
         """Build the context for the LLM based on the current state and configuration.
 
@@ -275,6 +247,7 @@ class ContextManager:
             tool_call_mode: The tool call mode ("reasoning_only", "classic", or "ptc")
             agent_mode: Whether agent mode is enabled
             graph_mode: Whether graph mode is enabled
+            handler_context: The handler context to pass to the LLM
 
         Returns:
             A PromptContext object containing all necessary information for the LLM
@@ -287,23 +260,12 @@ class ContextManager:
         if not isinstance(session, SessionState):
             raise ValueError("session must be an instance of SessionState")
 
-        if not isinstance(user_input, str):
-            raise TypeError(
-                f"user_input must be a string, got {type(user_input).__name__}"
-            )
-
         if not isinstance(tool_call_mode, str):
             raise TypeError(
                 f"tool_call_mode must be a string, got {type(tool_call_mode).__name__}"
             )
 
         tool_call_mode = tool_call_mode.lower()
-        valid_modes = {"reasoning_only", "classic", "ptc"}
-        if tool_call_mode not in valid_modes:
-            raise ValueError(
-                f"Invalid tool_call_mode: '{tool_call_mode}'. "
-                f"Must be one of: {', '.join(sorted(valid_modes))}"
-            )
 
         if not isinstance(agent_mode, bool):
             raise TypeError(
@@ -317,13 +279,18 @@ class ContextManager:
         runtime_config = self.config_manager.global_config.runtime
         sandbox_config = self.config_manager.global_config.sandbox
 
-        execution_mode = self._resolve_execution_mode(
-            tool_call_mode, sandbox_config.enabled
-        )
-        agents = self._resolve_agents(agent_mode=agent_mode, graph_mode=graph_mode)
+        if runtime_config.tool_call_mode != tool_call_mode:
+            self.config_manager.set_session_overrides(
+                {"runtime.tool_call_mode": tool_call_mode}
+            )
+
+        # Map validated tool_call_mode to execution_mode
+        execution_mode = self._map_validated_mode_to_execution_mode(tool_call_mode)
+
+        agent = self._resolve_agents(agent_mode=agent_mode, graph_mode=graph_mode)
         memories = self.memory_provider.fetch(session=session)
         skills = self.skill_provider.resolve(execution_mode=execution_mode)
-        tools = self.tool_selector.select(tool_call_mode=tool_call_mode)
+        tools, tools_prompt = self.tool_selector.select(tool_call_mode=tool_call_mode)
 
         metadata = {
             "execution_mode": execution_mode,
@@ -336,9 +303,9 @@ class ContextManager:
         metadata.update(session.metadata or {})
 
         log.debug(
-            "Context built: execution_mode=%s agents=%d tools=%d",
+            "Context built: execution_mode=%s agent=%s tools=%d",
             execution_mode,
-            len(agents),
+            agent.name if agent else "none",
             len(tools),
         )
 
@@ -347,113 +314,68 @@ class ContextManager:
             execution_mode=execution_mode,
             tool_call_mode=tool_call_mode,
             user_input=user_input,
-            agent_profiles=agents,
+            agent_profile=agent,  # Single profile instead of list
             active_skills=skills,
+            tools_prompt=tools_prompt,
             memories=memories,
             tools=tools,
             history=[m.model_dump() for m in session.history],
             metadata=metadata,
             is_sandbox_enabled=sandbox_config.enabled,
+            handler_context=handler_context,
         )
 
-    def _resolve_execution_mode(
-        self, tool_call_mode: str, sandbox_enabled: bool
+    def _map_validated_mode_to_execution_mode(
+        self, tool_call_mode: str
     ) -> ExecutionMode:
-        """Resolve the execution mode based on tool call mode and sandbox availability.
+        """Map a validated tool_call_mode to execution_mode.
 
         Args:
-            tool_call_mode: The requested tool call mode ("reasoning_only", "classic", or "ptc")
-            sandbox_enabled: Whether sandbox execution is enabled in the configuration
+            tool_call_mode: The validated tool call mode
 
         Returns:
-            The resolved ExecutionMode
-
-        Raises:
-            ValueError: If the tool_call_mode is invalid
+            The corresponding ExecutionMode
         """
-        tool_call_mode = tool_call_mode.lower()
-        valid_modes = {"reasoning_only", "classic", "ptc"}
-        if tool_call_mode not in valid_modes:
-            raise ValueError(
-                f"Invalid tool_call_mode: '{tool_call_mode}'. "
-                f"Must be one of: {', '.join(valid_modes)}"
-            )
-
         if tool_call_mode == "reasoning_only":
-            log.info("Execution mode set to REASONING_ONLY (explicitly requested)")
             return ExecutionMode.REASONING_ONLY
-
-        # Check for tool manager availability
-        if (
-            not hasattr(self.tool_selector, "tool_manager")
-            or not self.tool_selector.tool_manager
-        ):
-            log.warning(
-                "No tool manager available. Tool-based execution modes require a valid tool manager. "
-                "Falling back to REASONING_ONLY mode."
-            )
-            return ExecutionMode.REASONING_ONLY
-
-        # Handle PTC (Python Tool Calling) mode
-        if tool_call_mode == "ptc":
-            if not sandbox_enabled:
-                log.warning(
-                    "PTC mode requires sandbox to be enabled. Sandbox is currently disabled in configuration. "
-                    "Falling back to CLASSIC_TOOLS mode."
-                )
-                return ExecutionMode.CLASSIC_TOOLS
-
-            if not self.tool_selector.tool_manager.has_runtime("execute_python_code"):
-                log.warning(
-                    "PTC mode requires 'execute_python_code' runtime, which is not available. "
-                    "Please ensure the Python execution environment is properly configured. "
-                    "Falling back to CLASSIC_TOOLS mode."
-                )
-                return ExecutionMode.CLASSIC_TOOLS
-
-            log.info("Execution mode set to SANDBOX_PYTHON (PTC mode with sandbox)")
+        elif tool_call_mode == "ptc":
             return ExecutionMode.SANDBOX_PYTHON
-
-        # Default to CLASSIC_TOOLS for any other valid tool_call_mode
-        log.info("Execution mode set to CLASSIC_TOOLS")
-        return ExecutionMode.CLASSIC_TOOLS
+        else:  # "classic" or any other valid mode
+            return ExecutionMode.CLASSIC_TOOLS
 
     def _resolve_agents(
         self, *, agent_mode: bool, graph_mode: bool
-    ) -> list[AgentProfile]:
-        """Resolve which agent profiles to use based on the current mode.
+    ) -> AgentProfile | None:
+        """Resolve which agent profile to use based on the current mode.
 
         Args:
             agent_mode: Whether agent mode is enabled
             graph_mode: Whether graph mode is enabled
 
         Returns:
-            List of AgentProfile instances to use for the current context
+            Single AgentProfile to use for the current context
         """
-        # Use explicitly provided profiles if available
+        # Use explicitly provided profile if available
         if self._agent_catalog:
-            return list(self._agent_catalog)
+            return self._agent_catalog[0]  # Return first (and only) profile
 
         # Get agent config
         agent_config = self.config_manager.global_config.agent
 
-        # In graph mode, use the planner and executor profiles
+        # In graph mode, use the planner profile (executor would be separate agent)
         if graph_mode:
             planner = agent_config.get_profile("planner")
-            executor = agent_config.get_profile("executor")
-            return [
-                AgentProfile(**planner.model_dump()),
-                AgentProfile(**executor.model_dump()),
-            ]
+            return AgentProfile(**planner.model_dump())
 
         # In agent mode, use the default agent profile
         if agent_mode:
             default_profile = agent_config.get_profile("default")
-            return [AgentProfile(**default_profile.model_dump())]
+            return AgentProfile(**default_profile.model_dump())
 
         # Fall back to default profile if no specific mode is set
+
         default_profile = agent_config.get_profile("default")
-        return [AgentProfile(**default_profile.model_dump())]
+        return AgentProfile(**default_profile.model_dump())
 
 
 __all__ = [

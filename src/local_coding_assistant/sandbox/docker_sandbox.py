@@ -33,6 +33,7 @@ else:
 
 
 from local_coding_assistant.config.path_manager import PathManager
+from local_coding_assistant.core.telemetry_types import ResourceType
 from local_coding_assistant.utils.logging import get_logger
 
 from .base import ISandbox
@@ -44,7 +45,6 @@ from .exceptions import (
 )
 from .sandbox_types import (
     ResourceMetric,
-    ResourceType,
     SandboxExecutionRequest,
     SandboxExecutionResponse,
     ToolCallMetric,
@@ -799,9 +799,8 @@ class DockerSandbox(ISandbox):
         response.files_modified = response_data.get("files_modified", [])
         return response
 
-    def _extract_resource_metrics(
-        self, call_data: dict[str, Any]
-    ) -> list[ResourceMetric]:
+    @staticmethod
+    def _extract_resource_metrics(call_data: dict[str, Any]) -> list[ResourceMetric]:
         metrics: list[ResourceMetric] = []
 
         def add_metric_if_exists(
@@ -867,29 +866,40 @@ class DockerSandbox(ISandbox):
 
         return metrics
 
+    @staticmethod
     def _process_tool_call_metrics(
-        self, response: SandboxExecutionResponse, metrics_per_tool_call: dict[str, Any]
+        response: SandboxExecutionResponse, metrics_per_tool_call: dict[str, Any]
     ) -> None:
         if not metrics_per_tool_call:
             return
 
         for call_data in metrics_per_tool_call.get("tool_calls", []):
             try:
+                start_time = datetime.fromisoformat(
+                    call_data.get("start_time", datetime.now(UTC).isoformat())
+                )
+                end_time = datetime.fromisoformat(
+                    call_data.get("end_time", datetime.now(UTC).isoformat())
+                )
+                duration_sec = call_data.get("duration", 0.0)
+                if duration_sec and not call_data.get("duration_ms"):
+                    duration_ms = duration_sec * 1000.0
+                else:
+                    duration_ms = call_data.get("duration_ms")
                 tool_call = ToolCallMetric(
                     tool_name=call_data.get("tool_name", "unknown"),
                     call_id=call_data.get("call_id", str(uuid.uuid4())),
-                    start_time=datetime.fromisoformat(
-                        call_data.get("start_time", datetime.now(UTC).isoformat())
-                    ),
-                    end_time=datetime.fromisoformat(
-                        call_data.get("end_time", datetime.now(UTC).isoformat())
-                    ),
-                    duration=call_data.get("duration", 0.0),
+                    start_time=start_time,
+                    end_time=end_time,
+                    duration_ms=duration_ms,
                     success=call_data.get("success", False),
                     error=call_data.get("error"),
+                    input=DockerSandbox._build_tool_call_input(call_data),
+                    output=call_data.get("result"),
+                    metadata=call_data.get("metadata", {}),
                 )
 
-                for metric in self._extract_resource_metrics(call_data):
+                for metric in DockerSandbox._extract_resource_metrics(call_data):
                     tool_call.resource_metrics.append(metric)
 
                 response.tool_calls.append(tool_call)
@@ -897,6 +907,38 @@ class DockerSandbox(ISandbox):
                 logger.warning(
                     "Failed to process tool call metrics", error=str(exc), exc_info=True
                 )
+
+    @staticmethod
+    def _build_tool_call_input(call_data: dict[str, Any]) -> dict[str, Any] | None:
+        """Build tool call input from sandbox call data.
+
+        For the new ToolCallTrace structure, we want the input to be the actual
+        tool arguments, not wrapped in args/kwargs structure.
+        """
+        # First check if there's already a proper input dict
+        input_data = call_data.get("input")
+        if isinstance(input_data, dict):
+            return input_data
+
+        # Extract args and kwargs from sandbox resource tracker
+        args = call_data.get("args", ())
+        kwargs = call_data.get("kwargs", {})
+
+        # If no args and no kwargs, return None
+        if not args and not kwargs:
+            return None
+
+        # For tool calls, we want to return the actual tool arguments
+        # If there are kwargs, those are typically the tool parameters
+        if kwargs:
+            return kwargs
+
+        # If there are only args, we need to infer the parameter names
+        # This is a limitation - we'll return as positional args
+        if args:
+            return {"args": list(args) if isinstance(args, (list, tuple)) else [args]}
+
+        return None
 
     def _get_ipc_paths(self, session_id: str) -> tuple[Path, Path]:
         """Get the request and response file paths for a session.
@@ -960,7 +1002,9 @@ class DockerSandbox(ISandbox):
                         "metrics_per_tool_call", {}
                     )
                     response = self._build_execution_response(response_data, duration)
-                    self._process_tool_call_metrics(response, metrics_per_tool_call)
+                    DockerSandbox._process_tool_call_metrics(
+                        response, metrics_per_tool_call
+                    )
                     await self._add_metrics_to_response(
                         response, container, start_stats
                     )

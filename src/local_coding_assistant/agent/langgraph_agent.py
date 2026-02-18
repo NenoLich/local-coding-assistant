@@ -9,14 +9,13 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import StreamWriter
 from pydantic import BaseModel, Field
 
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMRequest, ToolCall
+from local_coding_assistant.agent.llm import LLMService, LLMTask, LLMToolCall
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.core.protocols import IToolManager
 from local_coding_assistant.tools.types import ToolExecutionMode, ToolExecutionRequest
 from local_coding_assistant.utils.langgraph_utility import (
     handle_graph_error,
     node_logger,
-    safe_node,
 )
 from local_coding_assistant.utils.logging import get_logger
 
@@ -111,16 +110,16 @@ class LangGraphAgent:
 
     def __init__(
         self,
-        llm_manager: LLMManager,
+        llm_service: LLMService,
         tool_manager: IToolManager | None = None,
-        name: str = "langgraph_agent",
+        name: str = "LangGraphAgent",
         max_iterations: int = 10,
         streaming: bool = False,
     ):
         """Initialize the LangGraph agent.
 
         Args:
-            llm_manager: The LLM manager to use for reasoning.
+            llm_service: The LLM service to use for reasoning.
             tool_manager: Optional tool manager providing available tools. If not provided,
                         the agent will operate in a tool-less mode.
             name: A name for this agent instance.
@@ -130,7 +129,7 @@ class LangGraphAgent:
         if max_iterations < 1:
             raise AgentError("max_iterations must be at least 1")
 
-        self.llm_manager = llm_manager
+        self.llm_service = llm_service
         self.tool_manager = tool_manager
         self.name = name
         self.max_iterations = max_iterations
@@ -174,7 +173,7 @@ class LangGraphAgent:
             available_only=True, execution_mode=ToolExecutionMode.CLASSIC
         ):
             if hasattr(tool, "name") and hasattr(tool, "description"):
-                descriptions.append(f"- {tool.name}: {tool.name}: {tool.description}")
+                descriptions.append(f"- {tool.name}: {tool.description}")
         return "\n".join(descriptions) if descriptions else "No tools available"
 
     def _build_graph(self) -> CompiledStateGraph:
@@ -183,21 +182,25 @@ class LangGraphAgent:
         workflow = StateGraph(AgentState)
 
         # Create wrapper functions for LangGraph nodes
-        async def observe_wrapper(state: AgentState) -> AgentState:
+        async def observe_wrapper(
+            state: AgentState, writer: StreamWriter
+        ) -> AgentState:
             """Wrapper for observe node that LangGraph can call."""
-            return await self.observe_node(state)
+            return await self.observe_node(state, writer)
 
-        async def plan_wrapper(state: AgentState) -> AgentState:
+        async def plan_wrapper(state: AgentState, writer: StreamWriter) -> AgentState:
             """Wrapper for plan node that LangGraph can call."""
-            return await self.plan_node(state)
+            return await self.plan_node(state, writer)
 
-        async def act_wrapper(state: AgentState) -> AgentState:
+        async def act_wrapper(state: AgentState, writer: StreamWriter) -> AgentState:
             """Wrapper for act node that LangGraph can call."""
-            return await self.act_node(state)
+            return await self.act_node(state, writer)
 
-        async def reflect_wrapper(state: AgentState) -> AgentState:
+        async def reflect_wrapper(
+            state: AgentState, writer: StreamWriter
+        ) -> AgentState:
             """Wrapper for reflect node that LangGraph can call."""
-            return await self.reflect_node(state)
+            return await self.reflect_node(state, writer)
 
         # Add nodes using wrapper functions
         workflow.add_node("observe", observe_wrapper)
@@ -274,7 +277,6 @@ class LangGraphAgent:
         state.increment_iteration()
         return "observe"
 
-    @safe_node("observe")
     async def observe_node(self, state: AgentState, writer: StreamWriter) -> AgentState:
         """Observe node - generate observation based on current context."""
         node_logger_instance = node_logger("observe")
@@ -304,7 +306,6 @@ class LangGraphAgent:
 
         return state
 
-    @safe_node("plan")
     async def plan_node(self, state: AgentState, writer: StreamWriter) -> AgentState:
         """Plan node - use LLM to create a plan."""
         node_logger_instance = node_logger("plan")
@@ -327,7 +328,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
 
         try:
             # Get LLM response using unified method
-            response_content = await self._get_llm_response(prompt, writer, "plan")
+            response_content = await self._get_llm_result(prompt, writer, "plan")
 
             # Parse response as JSON for structured output
             try:
@@ -347,7 +348,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
                 "reasoning": reasoning,
                 "actions": actions,
                 "confidence": confidence,
-                "metadata": {"llm_response": response_content},
+                "metadata": {"llm_result": response_content},
             }
 
             # Add to state and history
@@ -382,9 +383,9 @@ Please provide a plan with specific actions to take. Respond in JSON format with
 
             return state
 
-    async def _get_llm_response_with_tools(
+    async def _get_llm_result_with_tools(
         self, prompt: str, writer: StreamWriter, phase: str
-    ) -> tuple[str, list[ToolCall]]:
+    ) -> tuple[str, list[LLMToolCall]]:
         """Get LLM response and extract tool calls.
 
         Unified method to interact with llm_manager.stream/ainvoke.
@@ -397,7 +398,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
         Returns:
             Tuple of (response_content, tool_calls)
         """
-        request = LLMRequest(
+        request = LLMTask(
             prompt=prompt,
             tools=self._cached_tools,
         )
@@ -405,23 +406,26 @@ Please provide a plan with specific actions to take. Respond in JSON format with
         if self.streaming:
             # Use astream for streaming mode
             response_content = ""
-            async for chunk in self.llm_manager.stream(request):
-                response_content += chunk
+            async for chunk in self.llm_service.stream(request):
+                response_content += getattr(chunk, "content", str(chunk))
                 # Stream LLM tokens if streaming is enabled
-                writer({"phase": phase, "type": "llm_token", "content": chunk})
-
-            # For streaming mode, we need to get tool calls from complete response
-            response = await self.llm_manager.ainvoke(request)
-            tool_calls = response.tool_calls or []
+                writer(
+                    {
+                        "phase": phase,
+                        "type": "llm_token",
+                        "content": getattr(chunk, "content", str(chunk)),
+                    }
+                )
+            tool_calls = []
         else:
             # Use ainvoke for non-streaming mode
-            response = await self.llm_manager.ainvoke(request)
+            response = await self.llm_service.generate(request)
             response_content = response.content
             tool_calls = response.tool_calls or []
 
         return response_content, tool_calls
 
-    async def _get_llm_response(
+    async def _get_llm_result(
         self, prompt: str, writer: StreamWriter, phase: str
     ) -> str:
         """Get LLM response without tool calls.
@@ -436,24 +440,30 @@ Please provide a plan with specific actions to take. Respond in JSON format with
         Returns:
             Response content as string
         """
-        request = LLMRequest(prompt=prompt)
+        request = LLMTask(prompt=prompt)
 
         if self.streaming:
             # Use stream for streaming mode
             response_content = ""
-            async for chunk in self.llm_manager.stream(request):
-                response_content += chunk
+            async for chunk in self.llm_service.stream(request):
+                response_content += getattr(chunk, "content", str(chunk))
                 # Stream LLM tokens if streaming is enabled
-                writer({"phase": phase, "type": "llm_token", "content": chunk})
+                writer(
+                    {
+                        "phase": phase,
+                        "type": "llm_token",
+                        "content": getattr(chunk, "content", str(chunk)),
+                    }
+                )
         else:
             # Use ainvoke for non-streaming mode
-            response = await self.llm_manager.ainvoke(request)
+            response = await self.llm_service.generate(request)
             response_content = response.content
 
         return response_content
 
     async def _process_tool_calls(
-        self, tool_calls: list[ToolCall], plan: dict[str, Any], state: AgentState
+        self, tool_calls: list[LLMToolCall], plan: dict[str, Any], state: AgentState
     ) -> dict[str, Any] | None:
         """Process tool calls and return action result.
 
@@ -474,7 +484,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
         return None
 
     async def _handle_tool_call(
-        self, tool_call: ToolCall, plan: dict[str, Any], state: AgentState
+        self, tool_call: LLMToolCall, plan: dict[str, Any], state: AgentState
     ) -> dict[str, Any]:
         """Handle execution of a single tool call."""
         func_name = tool_call.name
@@ -527,7 +537,7 @@ Please provide a plan with specific actions to take. Respond in JSON format with
             }
 
     def _create_action_result(
-        self, response_content: str, tool_calls: list[ToolCall]
+        self, response_content: str, tool_calls: list[LLMToolCall]
     ) -> dict[str, Any]:
         """Create action result from LLM response."""
         return {
@@ -536,7 +546,6 @@ Please provide a plan with specific actions to take. Respond in JSON format with
             "metadata": {"tool_calls": tool_calls},
         }
 
-    @safe_node("act")
     async def act_node(self, state: AgentState, writer: StreamWriter) -> AgentState:
         """Act node - execute actions using tools and LLM."""
         node_logger_instance = node_logger("act")
@@ -563,7 +572,7 @@ Please describe what actions were taken and their results.
 """
 
             # Get LLM response and tool calls
-            response_content, tool_calls = await self._get_llm_response_with_tools(
+            response_content, tool_calls = await self._get_llm_result_with_tools(
                 action_prompt, writer, "act"
             )
 
@@ -604,7 +613,6 @@ Please describe what actions were taken and their results.
 
             return state
 
-    @safe_node("reflect")
     async def reflect_node(self, state: AgentState, writer: StreamWriter) -> AgentState:
         """Reflect node - analyze results and learn."""
         node_logger_instance = node_logger("reflect")
@@ -630,7 +638,7 @@ Please provide:
 """
 
             # Get LLM response using unified method
-            response_content = await self._get_llm_response(
+            response_content = await self._get_llm_result(
                 reflection_prompt, writer, "reflect"
             )
 
@@ -755,10 +763,8 @@ Please provide:
 
         try:
             # Use astream for streaming mode
-            async for state_update, metadata in self.graph.astream(
-                state, stream_mode="custom"
-            ):
-                yield state_update, metadata
+            async for event in self.graph.astream(state, stream_mode="custom"):
+                yield event
 
         except Exception as e:
             logger.error(

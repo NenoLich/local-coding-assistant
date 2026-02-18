@@ -1,0 +1,9 @@
+{% set ctx = context %}
+{% if ctx.tools_prompt %}
+
+Available Tools bellow CANNOT BE CALLED DIRECTLY BY JSON,
+they are only accessible through code argument of execute_python_code tool:
+{% for tool in ctx.tools_prompt %}
+{{ tool }}
+{% endfor %}
+{% endif %}

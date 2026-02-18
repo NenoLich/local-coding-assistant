@@ -7,6 +7,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from local_coding_assistant.core.telemetry_types import (
+    ExecutionEnvelope,
+    PresentationOutput,
+    ToolCallTrace,
+)
+
 
 class ToolSource(str, Enum):
     """Source of the tool implementation."""
@@ -66,6 +72,7 @@ class ToolExecutionMode(str, Enum):
 
     CLASSIC = "classic"
     PTC = "ptc"
+    SANDBOX = "sandbox"
 
 
 @dataclass
@@ -144,8 +151,10 @@ class ToolInfo:
             self.source = ToolSource(self.source)
 
         # Set execution mode based on source and category
-        if self.source == ToolSource.SANDBOX or self.category == ToolCategory.PTC:
+        if self.category == ToolCategory.PTC:
             self.execution_mode = ToolExecutionMode.PTC
+        elif self.source == ToolSource.SANDBOX:
+            self.execution_mode = ToolExecutionMode.SANDBOX
         elif self.execution_mode is None:
             self.execution_mode = ToolExecutionMode.CLASSIC
         elif isinstance(self.execution_mode, str):
@@ -176,36 +185,32 @@ class ToolExecutionResponse(BaseModel):
 
     Attributes:
         tool_name: Name of the executed tool
+        tool_args: Arguments passed to the tool (for error reporting)
         success: Whether the execution was successful
         result: Output from the tool (if successful)
         error_message: Error message (if execution failed)
         execution_time_ms: Time taken to execute the tool in milliseconds
-        format: Format of the response (e.g., 'text', 'markdown', 'json')
-        metadata: Additional metadata about the response
         is_final: Whether this is the final response
+        envelope: Wrapper execution metadata (sandbox runs)
+        tool_calls: Normalized tool call traces (sandbox inner calls)
+        output: Presentation output (final answer format/metadata)
     """
 
     tool_name: str
+    tool_args: dict[str, Any] = Field(default_factory=dict)
     success: bool
     result: Any | None = None
     error_message: str | None = None
     execution_time_ms: float | None = None
-    stdout: str | None = None
-    stderr: str | None = None
-    files_created: list[str] | None = None
-    files_modified: list[str] | None = None
-    format: str = "text"
-    metadata: dict[str, Any] = {}
     is_final: bool = False
+    envelope: ExecutionEnvelope | None = None
+    tool_calls: list[ToolCallTrace] | None = None
+    output: PresentationOutput | None = None
 
     def dried_out(self) -> dict[str, Any]:
         output = {}
         for field_name, field_value in self.__dict__.items():
-            if (
-                field_name
-                not in ["tool_name", "success", "format", "metadata", "is_final"]
-                and field_value
-            ):
+            if field_name not in ["tool_name", "success", "is_final"] and field_value:
                 output[field_name] = field_value
         return output
 

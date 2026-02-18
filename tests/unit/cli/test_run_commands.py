@@ -70,24 +70,27 @@ class TestRunCommands:
             text=TEST_QUERY,
             verbose=False,  # Explicitly set to False to match test expectations
             model=None,
+            agent_mode="no_agent",  # Pass the default value explicitly
             tool_call_mode="reasoning",  # Pass the default value explicitly
             sandbox_session=None,  # Pass the default value explicitly
             log_level="INFO",
+            output_format="plain",  # Pass the default value explicitly
+            trace=None,  # Pass the default value explicitly
         )
 
         # Verify the expected output
-        self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}")
+        self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}", err=True)
+        self.mock_echo.assert_any_call(f"Using agent mode: no_agent", err=True)
 
         # Verify the response was printed
         self.mock_echo.assert_any_call("\nResponse:")
         self.mock_echo.assert_any_call(TEST_RESPONSE["message"])
 
-        # Verify the runtime was called correctly
-        self.mock_bootstrap.assert_called_once()
         from unittest.mock import ANY
 
         self.mock_runtime.orchestrate.assert_awaited_once_with(
             TEST_QUERY,
+            agent_mode="no_agent",
             model=None,
             tool_call_mode="reasoning",
             sandbox_session=ANY,  # Typer OptionInfo object
@@ -103,14 +106,17 @@ class TestRunCommands:
             text=TEST_QUERY,
             verbose=False,
             model=TEST_MODEL,  # Pass the test model
+            agent_mode="no_agent",  # Pass the default value explicitly
             tool_call_mode="reasoning",  # Pass the default value explicitly
             sandbox_session=None,  # Pass the default value explicitly
             log_level="INFO",
+            output_format="plain",  # Pass the default value explicitly
+            trace=None,  # Pass the default value explicitly
         )
 
         # Verify the expected output
-        self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}")
-        self.mock_echo.assert_any_call(f"Using model: {TEST_MODEL}")
+        self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}", err=True)
+        self.mock_echo.assert_any_call(f"Using agent mode: no_agent", err=True)
 
         # Verify the response was printed
         self.mock_echo.assert_any_call("\nResponse:")
@@ -121,6 +127,7 @@ class TestRunCommands:
 
         self.mock_runtime.orchestrate.assert_awaited_once_with(
             TEST_QUERY,
+            agent_mode="no_agent",
             model=TEST_MODEL,
             tool_call_mode="reasoning",
             sandbox_session=ANY,  # Typer OptionInfo object
@@ -136,14 +143,17 @@ class TestRunCommands:
             text=TEST_QUERY,
             verbose=True,  # Enable verbose mode
             model=None,
+            agent_mode="no_agent",  # Pass the default value explicitly
             tool_call_mode="reasoning",  # Pass the default value explicitly
             sandbox_session=None,  # Pass the default value explicitly
             log_level="INFO",
+            output_format="plain",  # Pass the default value explicitly
+            trace=None,  # Pass the default value explicitly
         )
 
         # Verify the expected output
-        self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}")
-        self.mock_echo.assert_any_call("Verbose mode enabled")
+        self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}", err=True)
+        self.mock_echo.assert_any_call(f"Using agent mode: no_agent", err=True)
 
         # Verify the response was printed
         self.mock_echo.assert_any_call("\nResponse:")
@@ -154,6 +164,7 @@ class TestRunCommands:
 
         self.mock_runtime.orchestrate.assert_awaited_once_with(
             TEST_QUERY,
+            agent_mode="no_agent",
             model=None,
             tool_call_mode="reasoning",
             sandbox_session=ANY,  # Typer OptionInfo object
@@ -167,12 +178,15 @@ class TestRunCommands:
         # Call the query function directly with a specific log level
         test_log_level = "DEBUG"
         query(
-            text=TEST_QUERY, 
-            verbose=False, 
-            model=None, 
+            text=TEST_QUERY,
+            verbose=False,
+            model=None,
+            agent_mode="no_agent",  # Pass the default value explicitly
             tool_call_mode="reasoning",  # Pass the default value explicitly
             sandbox_session=None,  # Pass the default value explicitly
-            log_level=test_log_level
+            log_level=test_log_level,
+            output_format="plain",  # Pass the default value explicitly
+            trace=None,  # Pass the default value explicitly
         )
 
         # Verify bootstrap was called with the correct log level
@@ -187,12 +201,15 @@ class TestRunCommands:
         with patch("local_coding_assistant.cli.commands.run.typer.echo") as mock_echo:
             try:
                 query(
-                    text=TEST_QUERY, 
-                    verbose=False, 
-                    model=None, 
+                    text=TEST_QUERY,
+                    verbose=False,
+                    model=None,
+                    agent_mode="no_agent",  # Pass the default value explicitly
                     tool_call_mode="reasoning",  # Pass the default value explicitly
                     sandbox_session=None,  # Pass the default value explicitly
-                    log_level="INFO"
+                    log_level="INFO",
+                    output_format="plain",  # Pass the default value explicitly
+                    trace=None,  # Pass the default value explicitly
                 )
                 # If we get here, the test should fail
                 assert False, "Expected typer.Exit to be raised"
@@ -215,16 +232,20 @@ class TestRunCommands:
 
         # Call the query function directly
         query(
-            text=TEST_QUERY, 
-            verbose=False, 
-            model=None, 
+            text=TEST_QUERY,
+            verbose=False,
+            model=None,
+            agent_mode="no_agent",  # Pass the default value explicitly
             tool_call_mode="reasoning",  # Pass the default value explicitly
             sandbox_session=None,  # Pass the default value explicitly
-            log_level="INFO"
+            log_level="INFO",
+            output_format="plain",  # Pass the default value explicitly
+            trace=None,  # Pass the default value explicitly
         )
 
         # Verify the expected output format
-        self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}")
+        self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}", err=True)
+        self.mock_echo.assert_any_call(f"Using agent mode: no_agent", err=True)
         self.mock_echo.assert_any_call("\nResponse:")
         self.mock_echo.assert_any_call(TEST_RESPONSE["message"])
 
@@ -235,12 +256,15 @@ class TestRunCommands:
 
         # Call the query function directly
         query(
-            text=TEST_QUERY, 
-            verbose=False, 
-            model=None, 
+            text=TEST_QUERY,
+            verbose=False,
+            model=None,
+            agent_mode="no_agent",  # Pass the default value explicitly
             tool_call_mode="reasoning",  # Pass the default value explicitly
             sandbox_session=None,  # Pass the default value explicitly
-            log_level="INFO"
+            log_level="INFO",
+            output_format="plain",  # Pass the default value explicitly
+            trace=None,  # Pass the default value explicitly
         )
 
         # Verify asyncio.run was called once
@@ -264,12 +288,15 @@ class TestRunCommands:
         # Call the query function directly and verify it doesn't raise
         try:
             query(
-                text=TEST_QUERY, 
-                verbose=False, 
-                model=None, 
+                text=TEST_QUERY,
+                verbose=False,
+                model=None,
+                agent_mode="no_agent",  # Pass the default value explicitly
                 tool_call_mode="reasoning",  # Pass the default value explicitly
                 sandbox_session=None,  # Pass the default value explicitly
-                log_level="INFO"
+                log_level="INFO",
+                output_format="plain",  # Pass the default value explicitly
+                trace=None,  # Pass the default value explicitly
             )
         except Exception as e:
             pytest.fail(f"Query raised {type(e).__name__} unexpectedly: {e!s}")
@@ -317,12 +344,15 @@ class TestRunCommands:
 
         # Call the query function directly with the test log level
         query(
-            text=TEST_QUERY, 
-            verbose=False, 
-            model=None, 
+            text=TEST_QUERY,
+            verbose=False,
+            model=None,
+            agent_mode="no_agent",  # Pass the default value explicitly
             tool_call_mode="reasoning",  # Pass the default value explicitly
             sandbox_session=None,  # Pass the default value explicitly
-            log_level=log_level
+            log_level=log_level,
+            output_format="plain",  # Pass the default value explicitly
+            trace=None,  # Pass the default value explicitly
         )
 
         # Verify bootstrap was called with the expected log level

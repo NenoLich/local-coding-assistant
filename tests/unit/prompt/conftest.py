@@ -1,9 +1,7 @@
 """Test configuration and fixtures for prompt composition tests."""
 
-import os
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional
 
 import pytest
 from jinja2 import Environment, FileSystemLoader

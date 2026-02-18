@@ -5,12 +5,12 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from .base import Tool
 from .types import ToolCategory, ToolInfo, ToolPermission, ToolSource, ToolTag
 
-T = TypeVar("T", bound=Tool)
+T = TypeVar("T")
 
 
 @dataclass
@@ -30,7 +30,7 @@ class ToolRegistration:
     """
 
     name: str
-    tool_class: type[Tool]
+    tool_class: type[Any]
     description: str = ""
     category: ToolCategory | None = None
     source: ToolSource = ToolSource.BUILTIN

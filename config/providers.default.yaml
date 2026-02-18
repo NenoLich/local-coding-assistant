@@ -7,7 +7,7 @@ providers:
     models:
       qwen/qwen3-coder:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty"]
-      xiaomi/mimo-v2-flash:free:
+      arcee-ai/trinity-large-preview:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format"]
       nvidia/nemotron-3-nano-30b-a3b:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p"]
@@ -23,9 +23,9 @@ providers:
     api_key_env: "GEMINI_API_KEY"
     health_check_endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/models"
     models:
-      gemini-2.5-flash:
+      gemini-3-flash-preview:
         supported_parameters: ["tools", "reasoning_effort", "max_tokens", "stream", "tool_choice", "response_format", "extra_body.thinking_config"]
-      gemini-2.5-flash-lite:
+      gemini-2.5-flash:
         supported_parameters: [ "tools", "reasoning_effort", "max_tokens", "stream", "tool_choice", "response_format", "extra_body.thinking_config" ]
   github_models:
     driver: "openai_chat"

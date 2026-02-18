@@ -263,7 +263,6 @@ def _get_console_processors() -> list[Any]:
                     ),
                 ),
             ],
-            colors=sys.stderr.isatty(),
         ),
         unescape_newlines,
     ]
@@ -375,12 +374,29 @@ def _filter_sensitive_data(logger, method_name, event_dict):
         "credential",
     ]
 
+    # Keys that contain sensitive words but are safe to log
+    safe_keys = [
+        "max_tokens",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+    ]
+
     def filter_value(value):
         """Recursively filter sensitive data in nested structures."""
         if isinstance(value, dict):
             return {
                 k: "***REDACTED***"
-                if any(sensitive in k.lower() for sensitive in sensitive_keys)
+                if k.lower() not in safe_keys
+                and any(
+                    (
+                        sensitive == k.lower()
+                        or k.lower().endswith(f"_{sensitive}")
+                        or k.lower().startswith(f"{sensitive}_")
+                        or f"_{sensitive}_" in k.lower()
+                    )
+                    for sensitive in sensitive_keys
+                )
                 else filter_value(v)
                 for k, v in value.items()
             }
@@ -391,7 +407,15 @@ def _filter_sensitive_data(logger, method_name, event_dict):
     # Process the event dictionary
     for key in list(event_dict.keys()):
         key_lower = key.lower()
-        if any(sensitive in key_lower for sensitive in sensitive_keys):
+        if key_lower not in safe_keys and any(
+            (
+                sensitive == key_lower
+                or key_lower.endswith(f"_{sensitive}")
+                or key_lower.startswith(f"{sensitive}_")
+                or f"_{sensitive}_" in key_lower
+            )
+            for sensitive in sensitive_keys
+        ):
             event_dict[key] = "***REDACTED***"
         else:
             event_dict[key] = filter_value(event_dict[key])
@@ -551,7 +575,7 @@ def setup_logging(
             ],  # Processors are handled by the handlers
             logger_factory=LoggerFactory(),
             wrapper_class=structlog.make_filtering_bound_logger(level),
-            cache_logger_on_first_use=True,
+            cache_logger_on_first_use=False,
         )
 
         logger = structlog.get_logger()

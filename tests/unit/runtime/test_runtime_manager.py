@@ -2,11 +2,12 @@ from collections.abc import AsyncIterator
 from copy import deepcopy
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, Mock
 
 import pytest
 
-from local_coding_assistant.agent.llm_manager import LLMManager, ToolCall
+from local_coding_assistant.agent import LLMService
+from local_coding_assistant.agent.llm.models import LLMToolCall
 
 from local_coding_assistant.core.exceptions import LLMError
 from local_coding_assistant.tools.tool_manager import ToolExecutionResponse
@@ -212,11 +213,11 @@ def base_config_manager():
 
 
 @pytest.fixture(scope="session")
-def llm_manager(
+def llm_service(
     provider_manager: ProviderManager, base_config_manager: MockConfigManager
-) -> LLMManager:
+) -> LLMService:
     """Session-scoped LLM manager."""
-    return LLMManager(
+    return LLMService(
         config_manager=base_config_manager,
         provider_manager=provider_manager,
     )
@@ -231,13 +232,13 @@ def tool_manager(base_config_manager: MockConfigManager) -> ToolManagerHelper:
 
 @pytest.fixture
 def runtime_manager(
-    llm_manager: LLMManager,
+    llm_service: LLMService,
     tool_manager: ToolManagerHelper,
     base_config_manager: MockConfigManager,
 ) -> RuntimeManager:
     """Runtime manager fixture with fresh state for each test."""
     manager = RuntimeManager(
-        llm_manager=llm_manager,
+        llm_service=llm_service,
         tool_manager=tool_manager,
         config_manager=base_config_manager,
     )
@@ -278,13 +279,13 @@ def persistent_runtime_manager(
     }
 
     # Create a new LLM manager with the new config and provider manager
-    llm_manager = LLMManager(
+    llm_service = LLMService(
         config_manager=config,
         provider_manager=provider_manager,
     )
 
     manager = RuntimeManager(
-        llm_manager=llm_manager,
+        llm_service=llm_service,
         tool_manager=tool_manager,
         config_manager=config,
     )
@@ -301,16 +302,18 @@ async def test_orchestrate_with_model_override(runtime_manager: RuntimeManager):
     # Create a mock response
     mock_response = MagicMock()
     mock_response.content = "Test response"
-    mock_response.model_used = "gpt-4"
-    mock_response.tokens_used = MagicMock()
+    mock_response.model = "gpt-4"
+    mock_response.total_tokens = MagicMock()
+    mock_response.finish_reason = None
+    mock_response.metadata = {}
 
     # Create a mock LLM manager
-    mock_llm_manager = AsyncMock()
-    mock_llm_manager.generate.return_value = mock_response
+    mock_llm_service = AsyncMock()
+    mock_llm_service.generate.return_value = mock_response
 
     # Replace the LLM manager in the runtime manager
-    original_llm_manager = runtime_manager._llm_manager
-    runtime_manager._llm_manager = mock_llm_manager
+    original_llm_service = runtime_manager._llm_service
+    runtime_manager._llm_service = mock_llm_service
 
     try:
         # Call with model override and tool_call_mode
@@ -320,25 +323,26 @@ async def test_orchestrate_with_model_override(runtime_manager: RuntimeManager):
 
         # Verify the response contains the expected fields
         assert "message" in result
-        assert "model_used" in result
+        assert "models_used" in result
         assert "tokens_used" in result
         assert "history" in result
 
         # Verify the LLM was called with the correct model
-        assert len(mock_llm_manager.generate.await_args_list) == 1
-        args, _ = mock_llm_manager.generate.await_args_list[0]
+        assert len(mock_llm_service.generate.await_args_list) == 1
+        args, kwargs = mock_llm_service.generate.await_args_list[0]
         llm_request = args[0]
 
-        # The model is passed to to_provider_request, not stored in the request
-        # So we'll verify the request was created correctly
+        # The model is passed in options, not as overrides
+        # So we'll verify the options were created correctly
         assert llm_request.prompt == "test query"
+        assert kwargs["options"].model == "gpt-4"
 
         # Verify the response
-        assert result["model_used"] == "gpt-4"
+        assert result["models_used"] == ["gpt-4"]
         assert result["message"] == "Test response"
     finally:
         # Restore the original LLM manager
-        runtime_manager._llm_manager = original_llm_manager
+        runtime_manager._llm_service = original_llm_service
 
 
 @pytest.mark.asyncio
@@ -347,16 +351,18 @@ async def test_orchestrate_with_multiple_overrides(runtime_manager: RuntimeManag
     # Create a mock response
     mock_response = MagicMock()
     mock_response.content = "Test response"
-    mock_response.model_used = "gpt-4"
-    mock_response.tokens_used = MagicMock()
+    mock_response.model = "gpt-4"
+    mock_response.total_tokens = MagicMock()
+    mock_response.finish_reason = None
+    mock_response.metadata = {}
 
     # Create a mock LLM manager
-    mock_llm_manager = AsyncMock()
-    mock_llm_manager.generate.return_value = mock_response
+    mock_llm_service = AsyncMock()
+    mock_llm_service.generate.return_value = mock_response
 
     # Replace the LLM manager in the runtime manager
-    original_llm_manager = runtime_manager._llm_manager
-    runtime_manager._llm_manager = mock_llm_manager
+    original_llm_service = runtime_manager._llm_service
+    runtime_manager._llm_service = mock_llm_service
 
     try:
         # Call with multiple overrides including tool_call_mode
@@ -370,24 +376,27 @@ async def test_orchestrate_with_multiple_overrides(runtime_manager: RuntimeManag
 
         # Verify the response contains the expected fields
         assert "message" in result
-        assert "model_used" in result
+        assert "models_used" in result
         assert "tokens_used" in result
         assert "history" in result
 
         # Verify the LLM was called with the correct parameters
-        assert len(mock_llm_manager.generate.await_args_list) == 1
-        args, _ = mock_llm_manager.generate.await_args_list[0]
+        assert len(mock_llm_service.generate.await_args_list) == 1
+        args, kwargs = mock_llm_service.generate.await_args_list[0]
         llm_request = args[0]
 
         # Verify the request was created with the correct prompt and parameters
         assert llm_request.prompt == "test query"
+        assert kwargs["options"].model == "gpt-4"
+        assert kwargs["options"].temperature == 0.8
+        assert kwargs["options"].max_tokens == 2000
 
         # Verify the response
-        assert result["model_used"] == "gpt-4"
+        assert result["models_used"] == ["gpt-4"]
         assert result["message"] == "Test response"
     finally:
         # Restore the original LLM manager
-        runtime_manager._llm_manager = original_llm_manager
+        runtime_manager._llm_service = original_llm_service
 
 
 @pytest.mark.asyncio
@@ -397,20 +406,20 @@ async def test_persistent_many_iterations_history_grows_linearly(
     """Test that history grows linearly with many iterations."""
     # Create mock responses
     mock_responses = [
-        MagicMock(content=f"Response {i}", model_used="gpt-4") for i in range(5)
+        MagicMock(content=f"Response {i}", model="gpt-4", finish_reason=None, metadata={}) for i in range(5)
     ]
 
     # Create a mock LLM manager
-    mock_llm_manager = AsyncMock()
-    mock_llm_manager.generate.side_effect = mock_responses
+    mock_llm_service = AsyncMock()
+    mock_llm_service.generate.side_effect = mock_responses
 
     # Replace the LLM manager in the runtime manager
-    original_llm_manager = persistent_runtime_manager._llm_manager
-    persistent_runtime_manager._llm_manager = mock_llm_manager
+    original_llm_service = persistent_runtime_manager._llm_service
+    persistent_runtime_manager._llm_service = mock_llm_service
 
     try:
         # Enable persistent sessions
-        persistent_runtime_manager.config_manager._config.runtime.persistent_sessions = True
+        persistent_runtime_manager.config_manager.global_config.runtime.persistent_sessions = True
 
         # Run multiple iterations
         num_iterations = 5
@@ -438,7 +447,7 @@ async def test_persistent_many_iterations_history_grows_linearly(
             )
     finally:
         # Restore the original LLM manager
-        persistent_runtime_manager._llm_manager = original_llm_manager
+        persistent_runtime_manager._llm_service = original_llm_service
 
 
 @pytest.mark.asyncio
@@ -459,20 +468,34 @@ async def test_directive_success_invokes_tool_and_passes_outputs_to_llm(
     # Create a mock response for the LLM call after tool execution
     mock_llm_response = MagicMock()
     mock_llm_response.content = "Tool result processed"
-    mock_llm_response.model_used = "gpt-4"
-    mock_llm_response.tokens_used = MagicMock()
+    mock_llm_response.model = "gpt-4"
+    mock_llm_response.total_tokens = MagicMock()
+    mock_llm_response.finish_reason = None
+    mock_llm_response.metadata = Mock()
+    mock_llm_response.metadata.get = Mock(return_value=None)
 
     # Create a mock LLM manager
-    mock_llm_manager = AsyncMock()
-    mock_llm_manager.generate.return_value = mock_llm_response
+    mock_llm_service = AsyncMock()
+    mock_llm_service.generate.return_value = mock_llm_response
 
     # Replace the LLM manager in the runtime manager
-    original_llm_manager = runtime_manager._llm_manager
-    runtime_manager._llm_manager = mock_llm_manager
+    original_llm_service = runtime_manager._llm_service
+    runtime_manager._llm_service = mock_llm_service
 
     # Register the test tool
     test_tool = TestTool()
     tool_manager._tools["test_tool"] = test_tool
+
+    # Mock the execute_async to return the expected response
+    runtime_manager._tool_manager.execute_async = AsyncMock(
+        return_value=ToolExecutionResponse(
+            tool_name="test_tool",
+            tool_args={"arg1": "value1"},
+            success=True,
+            result={"output": "Processed: value1"},
+            execution_time_ms=100.0,
+        )
+    )
 
     try:
         # Test direct tool invocation
@@ -481,31 +504,35 @@ async def test_directive_success_invokes_tool_and_passes_outputs_to_llm(
         # Verify the response contains the expected fields
         assert "message" in result
         assert "Tool result processed" in result["message"]
-        assert "model_used" in result
+        assert "models_used" in result
         assert "tokens_used" in result
         assert "history" in result
-        assert len(result["history"]) == 2  # User + Assistant
+        assert len(result["history"]) == 4  # User + Assistant + Tool + Tool
 
         # Verify the LLM was called once with the tool output
-        assert mock_llm_manager.generate.await_count == 1
+        assert mock_llm_service.generate.await_count == 1
 
     finally:
         # Restore the original LLM manager
-        runtime_manager._llm_manager = original_llm_manager
+        runtime_manager._llm_service = original_llm_service
 
 
 @pytest.mark.asyncio
 async def test_directive_unknown_tool_raises(runtime_manager: RuntimeManager):
     """Test that unknown tools raise appropriate errors."""
     # Create a mock LLM manager
-    mock_llm_manager = AsyncMock()
+    mock_llm_service = AsyncMock()
     mock_response = MagicMock()
     mock_response.content = "Error: Tool 'unknown' not found"
-    mock_llm_manager.generate.return_value = mock_response
+    mock_response.model = "gpt-4"
+    mock_response.total_tokens = MagicMock()
+    mock_response.finish_reason = None
+    mock_response.metadata = {}
+    mock_llm_service.generate.return_value = mock_response
 
     # Replace the LLM manager in the runtime manager
-    original_llm_manager = runtime_manager._llm_manager
-    runtime_manager._llm_manager = mock_llm_manager
+    original_llm_service = runtime_manager._llm_service
+    runtime_manager._llm_service = mock_llm_service
 
     try:
         # Test with unknown tool
@@ -513,7 +540,7 @@ async def test_directive_unknown_tool_raises(runtime_manager: RuntimeManager):
         assert "Tool 'unknown' not found" in result["message"]
     finally:
         # Restore the original LLM manager
-        runtime_manager._llm_manager = original_llm_manager
+        runtime_manager._llm_service = original_llm_service
 
 
 @pytest.mark.asyncio
@@ -524,16 +551,18 @@ async def test_directive_invalid_json_raises(runtime_manager: RuntimeManager):
     mock_response.content = (
         "Invalid JSON in tool payload: Expecting value: line 1 column 1 (char 0)"
     )
-    mock_response.model_used = "gpt-4"
-    mock_response.tokens_used = MagicMock()
+    mock_response.model = "gpt-4"
+    mock_response.total_tokens = MagicMock()
+    mock_response.finish_reason = None
+    mock_response.metadata = {}
 
     # Create a mock LLM manager
-    mock_llm_manager = AsyncMock()
-    mock_llm_manager.generate.return_value = mock_response
+    mock_llm_service = AsyncMock()
+    mock_llm_service.generate.return_value = mock_response
 
     # Replace the LLM manager in the runtime manager
-    original_llm_manager = runtime_manager._llm_manager
-    runtime_manager._llm_manager = mock_llm_manager
+    original_llm_service = runtime_manager._llm_service
+    runtime_manager._llm_service = mock_llm_service
 
     try:
         # Test with invalid JSON
@@ -544,7 +573,7 @@ async def test_directive_invalid_json_raises(runtime_manager: RuntimeManager):
             result["message"]
             == "Invalid JSON in tool payload: Expecting value: line 1 column 1 (char 0)"
         )
-        assert result["model_used"] == "gpt-4"
+        assert result["models_used"] == ["gpt-4"]
         assert len(result["history"]) == 2
         assert (
             result["history"][0]["content"]
@@ -555,10 +584,10 @@ async def test_directive_invalid_json_raises(runtime_manager: RuntimeManager):
         assert result["history"][1]["role"] == "assistant"
 
         # Verify LLM was called once with the error message
-        assert mock_llm_manager.generate.await_count == 1
+        assert mock_llm_service.generate.await_count == 1
     finally:
         # Restore the original LLM manager
-        runtime_manager._llm_manager = original_llm_manager
+        runtime_manager._llm_service = original_llm_service
 
 
 @pytest.mark.asyncio
@@ -569,16 +598,18 @@ async def test_directive_invalid_payload_validation_raises(
     # Create a mock response for the error case
     mock_response = MagicMock()
     mock_response.content = "Invalid tool payload: 1 validation error for SumTool\nvalue\n  Input should be a valid dictionary [type=dict_type, input_value=None, input_type=None_type]"
-    mock_response.model_used = "gpt-4"
-    mock_response.tokens_used = MagicMock()
+    mock_response.model = "gpt-4"
+    mock_response.total_tokens = MagicMock()
+    mock_response.finish_reason = None
+    mock_response.metadata = {}
 
     # Create a mock LLM manager
-    mock_llm_manager = AsyncMock()
-    mock_llm_manager.generate.return_value = mock_response
+    mock_llm_service = AsyncMock()
+    mock_llm_service.generate.return_value = mock_response
 
     # Replace the LLM manager in the runtime manager
-    original_llm_manager = runtime_manager._llm_manager
-    runtime_manager._llm_manager = mock_llm_manager
+    original_llm_service = runtime_manager._llm_service
+    runtime_manager._llm_service = mock_llm_service
 
     try:
         # Test with invalid payload (None instead of a dictionary)
@@ -589,7 +620,7 @@ async def test_directive_invalid_payload_validation_raises(
             "validation error" in result["message"]
             or "Input should be a valid dictionary" in result["message"]
         )
-        assert result["model_used"] == "gpt-4"
+        assert result["models_used"] == ["gpt-4"]
         assert len(result["history"]) == 2
         assert any(
             msg in result["history"][0]["content"]
@@ -600,10 +631,10 @@ async def test_directive_invalid_payload_validation_raises(
         assert result["history"][1]["role"] == "assistant"
 
         # Verify LLM was called once with the error message
-        assert mock_llm_manager.generate.await_count == 1
+        assert mock_llm_service.generate.await_count == 1
     finally:
         # Restore the original LLM manager
-        runtime_manager._llm_manager = original_llm_manager
+        runtime_manager._llm_service = original_llm_service
 
 
 @pytest.mark.asyncio
@@ -612,16 +643,18 @@ async def test_empty_text_is_accepted_and_yields_echo(runtime_manager: RuntimeMa
     # Create a mock response for the echo case
     mock_response = MagicMock()
     mock_response.content = "echo:"
-    mock_response.model_used = "gpt-4"
-    mock_response.tokens_used = MagicMock()
+    mock_response.model = "gpt-4"
+    mock_response.total_tokens = MagicMock()
+    mock_response.finish_reason = None
+    mock_response.metadata = {}
 
     # Create a mock LLM manager
-    mock_llm_manager = AsyncMock()
-    mock_llm_manager.generate.return_value = mock_response
+    mock_llm_service = AsyncMock()
+    mock_llm_service.generate.return_value = mock_response
 
     # Replace the LLM manager in the runtime manager
-    original_llm_manager = runtime_manager._llm_manager
-    runtime_manager._llm_manager = mock_llm_manager
+    original_llm_service = runtime_manager._llm_service
+    runtime_manager._llm_service = mock_llm_service
 
     try:
         # Test with empty text and tool_call_mode
@@ -629,14 +662,14 @@ async def test_empty_text_is_accepted_and_yields_echo(runtime_manager: RuntimeMa
 
         # Verify the response is the echo response
         assert result["message"] == "echo:"
-        assert result["model_used"] == "gpt-4"
+        assert result["models_used"] == ["gpt-4"]
         assert len(result["history"]) == 2  # User + Assistant
         assert result["history"][0]["content"] == ""
         assert result["history"][0]["role"] == "user"
         assert result["history"][1]["content"] == "echo:"
     finally:
         # Restore the original LLM manager
-        runtime_manager._llm_manager = original_llm_manager
+        runtime_manager._llm_service = original_llm_service
 
 
 @pytest.mark.asyncio
@@ -645,25 +678,26 @@ async def test_structured_output_shape_and_fields(runtime_manager: RuntimeManage
     # Create mock response
     mock_response = MagicMock()
     mock_response.content = "Test response"
-    mock_response.model_used = "gpt-4"
-    mock_response.tokens_used = 42
+    mock_response.model = "gpt-4"
+    mock_response.total_tokens = 42
+    mock_response.finish_reason = None
+    mock_response.metadata = {}
 
     # Create a mock LLM manager
-    mock_llm_manager = AsyncMock()
-    mock_llm_manager.generate.return_value = mock_response
+    mock_llm_service = AsyncMock()
+    mock_llm_service.generate.return_value = mock_response
 
     # Replace the LLM manager in the runtime manager
-    original_llm_manager = runtime_manager._llm_manager
-    runtime_manager._llm_manager = mock_llm_manager
+    original_llm_service = runtime_manager._llm_service
+    runtime_manager._llm_service = mock_llm_service
 
     try:
         # Test with a simple query
         result = await runtime_manager.orchestrate("test query")
 
         # Verify the response has the expected structure
-        assert isinstance(result, dict)
         assert "message" in result
-        assert "model_used" in result
+        assert "models_used" in result
         assert "tokens_used" in result
         assert "history" in result
         assert isinstance(result["history"], list)
@@ -673,7 +707,7 @@ async def test_structured_output_shape_and_fields(runtime_manager: RuntimeManage
         assert result["history"][1]["role"] == "assistant"
     finally:
         # Restore the original LLM manager
-        runtime_manager._llm_manager = original_llm_manager
+        runtime_manager._llm_service = original_llm_service
 
 
 @pytest.mark.asyncio
@@ -694,16 +728,18 @@ async def test_provider_system_integration(
     base_config_manager._config.providers = {"test": {"api_key": "test_key"}}
 
     # Create a mock LLM manager
-    mock_llm_manager = AsyncMock()
+    mock_llm_service = AsyncMock()
     mock_response = MagicMock()
     mock_response.content = "echo:test query"
-    mock_response.model_used = "test-model"
-    mock_response.tokens_used = 10
-    mock_llm_manager.generate.return_value = mock_response
+    mock_response.model = "test-model"
+    mock_response.total_tokens = 10
+    mock_response.finish_reason = None
+    mock_response.metadata = {}
+    mock_llm_service.generate.return_value = mock_response
 
     # Replace the LLM manager in the runtime manager
-    original_llm_manager = runtime_manager._llm_manager
-    runtime_manager._llm_manager = mock_llm_manager
+    original_llm_service = runtime_manager._llm_service
+    runtime_manager._llm_service = mock_llm_service
 
     try:
         # Test with a simple query
@@ -711,24 +747,24 @@ async def test_provider_system_integration(
 
         # Verify the response
         assert result["message"] == "echo:test query"
-        assert result["model_used"] == "test-model"
+        assert result["models_used"] == ["test-model"]
         assert result["tokens_used"] == 10
         assert len(result["history"]) == 2  # User + Assistant
     finally:
         # Restore the original LLM manager
-        runtime_manager._llm_manager = original_llm_manager
+        runtime_manager._llm_service = original_llm_service
 
 
 @pytest.mark.asyncio
 async def test_llm_provider_failure_handling(runtime_manager: RuntimeManager):
     """Test that LLM provider errors are properly propagated."""
     # Create a mock LLM manager that raises an exception
-    mock_llm_manager = AsyncMock()
-    mock_llm_manager.generate.side_effect = LLMError("Provider error")
+    mock_llm_service = AsyncMock()
+    mock_llm_service.generate.side_effect = LLMError("Provider error")
 
     # Replace the LLM manager in the runtime manager
-    original_llm_manager = runtime_manager._llm_manager
-    runtime_manager._llm_manager = mock_llm_manager
+    original_llm_service = runtime_manager._llm_service
+    runtime_manager._llm_service = mock_llm_service
 
     try:
         # Test that the exception is propagated
@@ -739,29 +775,10 @@ async def test_llm_provider_failure_handling(runtime_manager: RuntimeManager):
         assert "Provider error" in str(exc_info.value)
 
         # Verify the LLM was called once
-        assert mock_llm_manager.generate.await_count == 1
+        assert mock_llm_service.generate.await_count == 1
     finally:
         # Restore the original LLM manager
-        runtime_manager._llm_manager = original_llm_manager
-
-
-@pytest.mark.skip("Skipping as RuntimeManager doesn't have get_available_tools method")
-def test_get_available_tools_returns_function_specs_for_iterable_entries(
-    runtime_manager: RuntimeManager,
-):
-    """This test is skipped as RuntimeManager doesn't have get_available_tools method."""
-    pass
-
-
-@pytest.mark.skip("Skipping as RuntimeManager doesn't have get_available_tools method")
-def test_get_available_tools_returns_empty_list_when_no_valid_tools(
-    runtime_manager: RuntimeManager,
-):
-    """This test is skipped as RuntimeManager doesn't have get_available_tools method."""
-    pass
-
-
-# Using test_tool fixture from conftest instead of a class
+        runtime_manager._llm_service = original_llm_service
 
 
 class TestToolHandling:
@@ -771,7 +788,7 @@ class TestToolHandling:
     async def test_handle_missing_tool_manager(self, runtime_manager: RuntimeManager):
         # Setup
         session = MagicMock()
-        tool_calls = [ToolCall(name="test_tool", arguments={"param1": "value1"})]
+        tool_calls = [LLMToolCall(name="test_tool", arguments={"param1": "value1"})]
 
         # Execute with no tool manager
         with patch.object(runtime_manager, "_tool_manager", None):
@@ -790,7 +807,7 @@ class TestToolHandling:
     ):
         # Setup
         session = MagicMock()
-        tool_calls = [ToolCall(name="test_tool", arguments={})]
+        tool_calls = [LLMToolCall(name="test_tool", arguments={})]
 
         # Execute
         await runtime_manager._handle_missing_tool_manager(session, tool_calls)
@@ -806,7 +823,7 @@ class TestToolHandling:
     ):
         # Setup
         session = MagicMock()
-        tool_call = ToolCall(
+        tool_call = LLMToolCall(
             name="test_tool",
             arguments={"param1": "value1"},
             id="test_id",
@@ -835,7 +852,7 @@ class TestToolHandling:
     ):
         # Setup
         session = MagicMock()
-        tool_call = ToolCall(
+        tool_call = LLMToolCall(
             name="test_tool",
             arguments={"param1": "value1"},
             id="test_id",
@@ -860,6 +877,7 @@ class TestToolHandling:
         runtime_manager._tool_manager.execute_async = AsyncMock(
             return_value=ToolExecutionResponse(
                 tool_name="test_tool",
+                tool_args={"param1": "value1"},
                 success=True,
                 result={"output": "test result"},
                 execution_time_ms=100.0,
@@ -873,6 +891,7 @@ class TestToolHandling:
         assert result == {
             "execution_time_ms": 100.0,
             "result": {"output": "test result"},
+            "tool_args": {"param1": "value1"},
         }
         runtime_manager._tool_manager.execute_async.assert_awaited_once()
 
@@ -883,6 +902,7 @@ class TestToolHandling:
         runtime_manager._tool_manager.execute_async = AsyncMock(
             return_value=ToolExecutionResponse(
                 tool_name="test_tool",
+                tool_args={"param1": "value1"},
                 success=False,
                 error_message="Tool execution failed",
                 execution_time_ms=100.0,
@@ -896,6 +916,7 @@ class TestToolHandling:
         assert result == {
             "error_message": "Tool execution failed",
             "execution_time_ms": 100.0,
+            "tool_args": {"param1": "value1"},
         }
 
     @pytest.mark.asyncio
@@ -916,6 +937,7 @@ class TestToolHandling:
         runtime_manager._tool_manager.execute_async = AsyncMock(
             return_value=ToolExecutionResponse(
                 tool_name="test_tool",
+                tool_args={"param1": "value1"},
                 success=True,
                 result="plain string result",
                 execution_time_ms=100.0,
@@ -926,4 +948,4 @@ class TestToolHandling:
         result = await runtime_manager._execute_tool("test_tool", {"param1": "value1"})
 
         # Verify result is wrapped in a dict
-        assert result == {"execution_time_ms": 100.0, "result": "plain string result"}
+        assert result == {"execution_time_ms": 100.0, "result": "plain string result", "tool_args": {"param1": "value1"}}

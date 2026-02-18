@@ -86,6 +86,9 @@ class MockToolManager:
     def has_runtime(self, runtime_name: str) -> bool:
         return runtime_name == "execute_python_code"
 
+    def get_sandbox_tools_prompt(self, sandbox_tools) -> list[str]:
+        return ["sandbox prompt"]
+
 
 @dataclass
 class AttrDict:
@@ -147,6 +150,7 @@ class MockConfigManager(IConfigManager):
                         "use_graph_mode": False,
                         "stream": True,
                         "tool_call_mode": "classic",  # Changed from "auto" to "classic"
+                        "agent_mode": "no_agent",
                     }
                 ),
                 "llm": AttrDict(
@@ -174,6 +178,15 @@ class MockConfigManager(IConfigManager):
                             "classic": "classic_template.txt",
                             "reasoning_only": "reasoning_only_template.txt",
                             "ptc": "ptc_template.txt",
+                            "system": "base/system_core.jinja2",
+                            "execution_rules": "base/execution_rules.jinja2",
+                            "agent_identity": "base/agent_identity.jinja2",
+                            "constraints": "blocks/constraints.jinja2",
+                            "skills": "blocks/skills.jinja2",
+                            "memories": "blocks/memories.jinja2",
+                            "tools_prompt": "blocks/tools_prompt.jinja2",
+                            "examples": "blocks/examples.jinja2",
+                            "frame": "agents/default.jinja2",  # Add frame template
                         },
                         "enable_jinja_autoescape": True,
                         "trim_blocks": True,
@@ -203,6 +216,9 @@ class MockConfigManager(IConfigManager):
         return self._session_overrides
 
     def set_session_overrides(self, overrides: dict) -> None:
+        for key, value in overrides.items():
+            if key == "runtime.agent_mode":
+                self._global_config.runtime.agent_mode = value
         self._session_overrides.update(overrides)
 
     def resolve(self, *args, **kwargs):

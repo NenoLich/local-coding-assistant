@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -12,6 +13,7 @@ class Message(BaseModel):
 
     role: str  # "user" | "assistant" | "system"
     content: str
+    id: str | None = None  # Optional message identifier for continuation prompts
 
 
 class ToolCall(BaseModel):
@@ -67,7 +69,11 @@ class SessionState(BaseModel):
     def add_tool_message(
         self, name: str, args: dict[str, Any], result: dict[str, Any] | None = None
     ) -> None:
-        self.tool_calls.append(ToolCall(name=name, args=args, result=result))
+        tool_call = ToolCall(name=name, args=args, result=result)
+        self.tool_calls.append(tool_call)
+        self.history.append(
+            Message(role="tool", content=json.dumps(tool_call.model_dump()))
+        )
 
     # ── accessors ───────────────────────────────────────────────────────────
     @property

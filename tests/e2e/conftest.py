@@ -87,8 +87,8 @@ def mock_bootstrap_success():
         mock_bootstrap.return_value = mock_ctx
 
         # Create an async function for the orchestrate mock
-        async def mock_orchestrate_async(*args, **kwargs):
-            return {"message": "[LLMManager] Echo: test query"}
+        async def mock_orchestrate_async(text, *args, **kwargs):
+            return {"message": f"[LLMService] Echo: {text}"}
 
         # Use cast to help the type checker understand the type of mock_runtime
         runtime = cast(MagicMock, mock_ctx["runtime"])
@@ -98,32 +98,32 @@ def mock_bootstrap_success():
 
 
 @pytest.fixture
-def mock_bootstrap_llm_manager():
-    """Mock bootstrap with LLM manager for provider commands."""
+def mock_bootstrap_llm_service():
+    """Mock bootstrap with LLM service for provider commands."""
     # Patch the bootstrap where it's actually imported and used
     with patch(
         "local_coding_assistant.cli.commands.provider.bootstrap"
     ) as mock_bootstrap:
-        # Create mock LLM manager
-        mock_llm_manager = MagicMock()
-        mock_llm_manager.provider_manager = MagicMock()
-        mock_llm_manager.provider_manager.list_providers.return_value = [
+        # Create mock LLM service
+        mock_llm_service = MagicMock()
+        mock_llm_service._provider_manager = MagicMock()
+        mock_llm_service._provider_manager.list_providers.return_value = [
             "openai",
             "google",
         ]
-        mock_llm_manager.provider_manager.get_provider_source.side_effect = (
+        mock_llm_service._provider_manager.get_provider_source.side_effect = (
             lambda name: {"openai": "global", "google": "local"}.get(name)
         )
-        mock_llm_manager.get_provider_status_list.return_value = [
+        mock_llm_service.get_provider_status_list.return_value = [
             {"name": "openai", "source": "global", "status": "available", "models": 2},
             {"name": "google", "source": "local", "status": "available", "models": 1},
         ]
-        mock_llm_manager.reload_providers = MagicMock()
+        mock_llm_service.reload_providers = MagicMock()
 
-        mock_ctx = {"llm": mock_llm_manager}
+        mock_ctx = {"llm": mock_llm_service}
         mock_bootstrap.return_value = mock_ctx
 
-        yield mock_bootstrap, mock_llm_manager
+        yield mock_bootstrap, mock_llm_service
 
 
 @pytest.fixture

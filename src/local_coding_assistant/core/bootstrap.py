@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from local_coding_assistant.agent.llm_manager import LLMManager
+from local_coding_assistant.agent.llm import LLMService
 from local_coding_assistant.config.env_manager import EnvManager, get_env_manager
 from local_coding_assistant.core.app_context import AppContext
 from local_coding_assistant.core.dependencies import AppDependencies
@@ -64,20 +64,24 @@ def bootstrap(
         # 6. Initialize components
         deps.config_manager = config_manager
         deps.sandbox_manager = _initialize_sandbox_manager(config_manager)
-        deps.llm_manager = _initialize_llm_manager(config_manager)
+        deps.llm_service = _initialize_llm_service(config_manager)
+
+        # Initialize langgraph capabilities after LLM service
+        _initialize_langgraph_capabilities(config_manager)
+
         deps.tool_manager = _initialize_tool_manager(
             config_manager=config_manager,
             sandbox_manager=deps.sandbox_manager,
         )
         deps.runtime_manager = _initialize_runtime_manager(
             config_manager=config_manager,
-            llm_manager=deps.llm_manager,
+            llm_service=deps.llm_service,
             tool_manager=deps.tool_manager,
         )
 
-        # 8. Register components in context
-        if deps.llm_manager:
-            ctx.register("llm", deps.llm_manager)
+        # 7. Register components in context
+        if deps.llm_service:
+            ctx.register("llm", deps.llm_service)
         if deps.tool_manager:
             ctx.register("tools", deps.tool_manager)
         if deps.runtime_manager:
@@ -217,27 +221,59 @@ def _setup_logging(
         logging.error(f"Failed to configure logging: {e}", exc_info=True)
 
 
-def _initialize_llm_manager(config_manager: IConfigManager) -> LLMManager | None:
-    """Initialize the LLM manager.
+def _initialize_llm_service(config_manager: IConfigManager) -> LLMService | None:
+    """Initialize the LLM service.
 
     Args:
         config_manager: The config manager implementing IConfigManager
-        config: Loaded configuration
 
     Returns:
-        Initialized LLMManager instance or None if initialization fails
+        Initialized LLMService instance or None if initialization fails
     """
     try:
         # Lazy import to avoid circular imports
         from local_coding_assistant.providers.provider_manager import provider_manager
 
-        llm_manager = LLMManager(config_manager, provider_manager)
-        logger.info("LLM manager initialized successfully")
-        return llm_manager
+        llm_service = LLMService(config_manager, provider_manager)
+        config_manager.register_module("llm_service")
+        logger.info("LLM service initialized successfully")
+        return llm_service
 
     except Exception as e:
-        logger.error("Failed to initialize LLM manager", str(e), exc_info=True)
+        logger.error("Failed to initialize LLM service", str(e), exc_info=True)
         return None
+
+
+def _check_langgraph_availability() -> bool:
+    """Check if langgraph is installed and available."""
+    import importlib.util
+
+    return (
+        importlib.util.find_spec("langgraph") is not None
+        and importlib.util.find_spec("langgraph.graph") is not None
+    )
+
+
+def _initialize_langgraph_capabilities(
+    config_manager: IConfigManager,
+) -> dict[str, bool]:
+    """Initialize and register langgraph capabilities.
+
+    Args:
+        config_manager: The config manager implementing IConfigManager
+
+    Returns:
+        Dictionary of langgraph-related capabilities
+    """
+    langgraph_capabilities = {"langgraph_installed": _check_langgraph_availability()}
+
+    if langgraph_capabilities["langgraph_installed"]:
+        config_manager.register_capability(["langgraph_installed"])
+        logger.debug("LangGraph capabilities registered successfully")
+    else:
+        logger.debug("LangGraph not available - graph mode will be disabled")
+
+    return langgraph_capabilities
 
 
 def _initialize_sandbox_manager(
@@ -254,14 +290,11 @@ def _initialize_sandbox_manager(
     try:
         sandbox_manager = SandboxManager(config_manager)
 
-        # Check sandbox availability and update config if needed
-        if (
-            config_manager.global_config.sandbox.enabled
-            and not sandbox_manager.ensure_availability()
-        ):
-            logger.warning(
-                "Sandbox is not available. Disabling sandbox in session configuration."
-            )
+        # Register sandbox capabilities through ConfigManager
+        sandbox_capabilities = {
+            "sandbox_available": sandbox_manager.ensure_availability()
+        }
+        config_manager.register_module("sandbox_manager", sandbox_capabilities)
 
         logger.info("Sandbox manager initialized successfully")
         return sandbox_manager
@@ -291,39 +324,47 @@ def _initialize_tool_manager(
         tool_manager: IToolManager = ToolManager(
             config_manager=config_manager, sandbox_manager=sandbox_manager
         )
+
+        # Register tool manager capabilities through ConfigManager
+        tool_capabilities = {
+            "python_execution": tool_manager.has_runtime("execute_python_code"),
+            "tool_count": len(tool_manager.list_tools()),
+        }
+        config_manager.register_module("tool_manager", tool_capabilities)
+
         logger.info("Tool manager initialized successfully")
 
         return tool_manager
     except Exception as e:
-        logger.error("Failed to initialize tool manager", str(e), exc_info=True)
+        logger.error("Failed to initialize tool manager", error=str(e), exc_info=True)
         return None
 
 
 def _initialize_runtime_manager(
     config_manager: IConfigManager,
-    llm_manager: LLMManager | None = None,
+    llm_service: LLMService | None = None,
     tool_manager: IToolManager | None = None,
 ) -> RuntimeManager | None:
     """Initialize the runtime manager.
 
     Args:
         config_manager: The config manager instance (required)
-        llm_manager: Optional LLM manager instance
+        llm_service: Optional LLM service instance
         tool_manager: Optional tool manager instance
 
     Returns:
         Initialized RuntimeManager instance or None if initialization fails
     """
     try:
-        if not llm_manager:
+        if not llm_service:
             logger.warning(
-                "LLM manager not available, skipping runtime manager initialization"
+                "LLM service not available, skipping runtime manager initialization"
             )
             return None
 
         runtime_manager = RuntimeManager(
             config_manager=config_manager,
-            llm_manager=llm_manager,
+            llm_service=llm_service,
             tool_manager=tool_manager,
         )
 

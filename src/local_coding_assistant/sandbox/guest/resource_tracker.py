@@ -74,12 +74,24 @@ class ResourceTracker:
             **io_stats,
         }
 
-    def track(self, tool_name: str | None = None) -> Callable[[T], T]:
-        """Decorator to track resource usage of a tool function."""
+    def track(
+        self, tool_name: str | None = None, args: tuple = (), kwargs: dict | None = None
+    ) -> Callable[[T], T]:
+        """Decorator to track resource usage of a tool function.
+
+        Args:
+            tool_name: Name of the tool being tracked
+            args: Actual tool arguments (for when decorator is applied to wrapper functions)
+            kwargs: Actual tool keyword arguments (for when decorator is applied to wrapper functions)
+        """
+        if kwargs is None:
+            kwargs = {}
 
         def decorator(func: T) -> T:
-            nonlocal tool_name
+            nonlocal tool_name, args, kwargs
             name = tool_name or getattr(func, "__name__", "unknown")
+            dec_args = args  # Capture decorator args
+            dec_kwargs = kwargs  # Capture decorator kwargs
 
             if asyncio.iscoroutinefunction(func):
 
@@ -91,12 +103,13 @@ class ResourceTracker:
                     try:
                         result = await func(*args, **kwargs)
                         end_stats = self._get_container_stats()
+                        # Use the captured decorator args/kwargs instead of wrapper args
                         self.record_metrics(
                             tool_name=name,
                             duration=time.time() - start_time,
                             success=True,
-                            args=args,
-                            kwargs=kwargs,
+                            args=dec_args,  # Use decorator args
+                            kwargs=dec_kwargs,  # Use decorator kwargs
                             start_stats=start_stats,
                             end_stats=end_stats,
                             result=result,
@@ -104,12 +117,13 @@ class ResourceTracker:
                         return result
                     except Exception as e:
                         end_stats = self._get_container_stats()
+                        # Use the captured decorator args/kwargs instead of wrapper args
                         self.record_metrics(
                             tool_name=name,
                             duration=time.time() - start_time,
                             success=False,
-                            args=args,
-                            kwargs=kwargs,
+                            args=dec_args,  # Use decorator args
+                            kwargs=dec_kwargs,  # Use decorator kwargs
                             start_stats=start_stats,
                             end_stats=end_stats,
                             error=e,
@@ -128,12 +142,13 @@ class ResourceTracker:
                     try:
                         result = func(*args, **kwargs)
                         end_stats = self._get_container_stats()
+                        # Use the captured decorator args/kwargs instead of wrapper args
                         self.record_metrics(
                             tool_name=name,
                             duration=time.time() - start_time,
                             success=True,
-                            args=args,
-                            kwargs=kwargs,
+                            args=dec_args,  # Use decorator args
+                            kwargs=dec_kwargs,  # Use decorator kwargs
                             start_stats=start_stats,
                             end_stats=end_stats,
                             result=result,
@@ -141,12 +156,13 @@ class ResourceTracker:
                         return result
                     except Exception as e:
                         end_stats = self._get_container_stats()
+                        # Use the captured decorator args/kwargs instead of wrapper args
                         self.record_metrics(
                             tool_name=name,
                             duration=time.time() - start_time,
                             success=False,
-                            args=args,
-                            kwargs=kwargs,
+                            args=dec_args,  # Use decorator args
+                            kwargs=dec_kwargs,  # Use decorator kwargs
                             start_stats=start_stats,
                             end_stats=end_stats,
                             error=e,

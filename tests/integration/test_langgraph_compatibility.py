@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from local_coding_assistant.agent.agent_loop import AgentLoop
-from local_coding_assistant.agent.llm_manager import LLMRequest
+from local_coding_assistant.agent.llm import LLMTask, LLMOptions
 
 
 # Simplified LangGraph-like implementation for testing
@@ -59,12 +59,12 @@ class LangGraphAgentLoop:
 
     def __init__(
         self,
-        llm_manager,
+        llm_service,
         tool_manager,
         name: str = "langgraph_agent",
         max_iterations: int = 10,
     ):
-        self.llm_manager = llm_manager
+        self.llm_service = llm_service
         self.tool_manager = tool_manager
         self.name = name
         self.max_iterations = max_iterations
@@ -116,11 +116,13 @@ Please provide a plan with specific actions to take. Respond in JSON format with
 - confidence: confidence level (0-1)
 """
             try:
-                # Create the LLM request with the model
-                request = LLMRequest(prompt=prompt, tools=self._get_available_tools())
+                # Create the LLM task with the model
+                task = LLMTask(prompt=prompt, tools=self._get_available_tools())
 
                 # Generate the response with the model parameter
-                response = await self.llm_manager.generate(request, model=self.model)
+                response = await self.llm_service.generate(
+                    task, options=LLMOptions(model=self.model)
+                )
 
                 return {
                     "reasoning": f"Based on observation: {observation['content'][:100]}...",
@@ -157,49 +159,48 @@ If you need to provide a final answer, use the final_answer tool.
 
 Please describe what actions were taken and their results.
 """
-                request = LLMRequest(
-                    prompt=action_prompt, tools=self._get_available_tools()
+                task = LLMTask(prompt=action_prompt, tools=self._get_available_tools())
+                response = await self.llm_service.generate(
+                    task, options=LLMOptions(model=self.model)
                 )
-                response = await self.llm_manager.generate(request, model=self.model)
 
                 # Parse tool calls
                 tool_calls = response.tool_calls or []
 
                 if tool_calls:
                     for tool_call in tool_calls:
-                        if "function" in tool_call:
-                            func_name = tool_call["function"]["name"]
-                            try:
-                                args = json.loads(tool_call["function"]["arguments"])
-                                tool_result = self.tool_manager.run_tool(
-                                    func_name, args
-                                )
+                        func_name = tool_call.name
+                        args = tool_call.arguments
+                        try:
+                            tool_result = self.tool_manager.run_tool(
+                                func_name, args
+                            )
 
-                                if func_name == "final_answer":
-                                    self.final_answer = args.get("answer", "")
-                                    return {
-                                        "success": True,
-                                        "output": f"Final answer: {self.final_answer}",
-                                        "metadata": {
-                                            "tool_calls": tool_calls,
-                                            "stopped": True,
-                                        },
-                                    }
-
+                            if func_name == "final_answer":
+                                self.final_answer = args.get("answer", "")
                                 return {
                                     "success": True,
-                                    "output": f"Tool {func_name} executed successfully",
+                                    "output": f"Final answer: {self.final_answer}",
                                     "metadata": {
                                         "tool_calls": tool_calls,
-                                        "tool_results": {func_name: tool_result},
+                                        "stopped": True,
                                     },
                                 }
-                            except Exception as e:
-                                return {
-                                    "success": False,
-                                    "error": str(e),
-                                    "metadata": {"plan_actions": plan["actions"]},
-                                }
+
+                            return {
+                                "success": True,
+                                "output": f"Tool {func_name} executed successfully",
+                                "metadata": {
+                                    "tool_calls": tool_calls,
+                                    "tool_results": {func_name: tool_result},
+                                },
+                            }
+                        except Exception as e:
+                            return {
+                                "success": False,
+                                "error": str(e),
+                                "metadata": {"plan_actions": plan["actions"]},
+                            }
 
                 return {
                     "success": True,
@@ -234,8 +235,10 @@ Please provide:
 - improvements: suggested improvements
 - success_rating: success rating (0-1)
 """
-                request = LLMRequest(prompt=reflection_prompt, model="gpt-4")
-                response = await self.llm_manager.generate(request, model="gpt-4")
+                task = LLMTask(prompt=reflection_prompt)
+                response = await self.llm_service.generate(
+                    task, options=LLMOptions(model="gpt-4")
+                )
 
                 return {
                     "analysis": f"Plan execution {'succeeded' if action_result['success'] else 'failed'}: {response.content[:200]}",
@@ -369,7 +372,7 @@ class TestLangGraphCompatibility:
 
             # Run AgentLoop with model parameter
             agent_loop = AgentLoop(
-                llm_manager=mock_llm_with_tools,
+                llm_service=mock_llm_with_tools,
                 tool_manager=tool_manager,
                 name="test_agent_loop",
                 max_iterations=5,
@@ -392,7 +395,7 @@ class TestLangGraphCompatibility:
 
             # Run LangGraph version with model specified
             langgraph_agent = LangGraphAgentLoop(
-                llm_manager=mock_llm_with_tools,
+                llm_service=mock_llm_with_tools,
                 tool_manager=tool_manager,
                 name="test_langgraph",
                 max_iterations=5,
@@ -534,7 +537,7 @@ class TestLangGraphCompatibility:
 
         # Test the orchestration
         agent_loop = AgentLoop(
-            llm_manager=mock_llm_with_tools,
+            llm_service=mock_llm_with_tools,
             tool_manager=tool_manager,
             name="orchestration_test",
             max_iterations=3,
@@ -576,7 +579,7 @@ class TestLangGraphCompatibility:
 
         # Test with streaming enabled (if supported)
         agent_loop = AgentLoop(
-            llm_manager=streaming_llm,
+            llm_service=streaming_llm,
             tool_manager=tool_manager,
             name="streaming_test",
             max_iterations=3,
@@ -587,7 +590,7 @@ class TestLangGraphCompatibility:
         streaming_llm.default_model = "gpt-4"
 
         langgraph_agent = LangGraphAgentLoop(
-            llm_manager=streaming_llm,
+            llm_service=streaming_llm,
             tool_manager=tool_manager,
             name="streaming_langgraph",
             max_iterations=3,

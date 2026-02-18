@@ -20,6 +20,7 @@ from local_coding_assistant.tools.types import (
 if TYPE_CHECKING:
     from local_coding_assistant.config import AppConfig
     from local_coding_assistant.config.path_manager import PathManager
+    from local_coding_assistant.core.system_registry import SystemCapabilityRegistry
 
 
 @runtime_checkable
@@ -53,6 +54,15 @@ class IConfigManager(Protocol):
         """
         ...
 
+    @property
+    def system_registry(self) -> "SystemCapabilityRegistry":
+        """Get the system capability registry.
+
+        Returns:
+            The SystemCapabilityRegistry instance.
+        """
+        ...
+
     def load_global_config(self) -> Any:
         """Load and validate the global configuration.
 
@@ -69,6 +79,31 @@ class IConfigManager(Protocol):
 
         Returns:
             Dictionary mapping tool names to their configuration data.
+        """
+        ...
+
+    def register_module(
+        self, module_name: str, capabilities: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Register a module and update config with resolved pending validations.
+
+        Args:
+            module_name: Name of the module being registered
+            capabilities: Dictionary of capabilities this module provides
+
+        Returns:
+            Dictionary of setting names to their new values (only actual changes)
+        """
+        ...
+
+    def register_capability(self, capabilities: list[str]) -> dict[str, Any]:
+        """Register a capability directly.
+
+        Args:
+            capabilities: List of the capability to add
+
+        Returns:
+            Dictionary of setting names to their new values (only actual changes)
         """
         ...
 
@@ -89,27 +124,6 @@ class IConfigManager(Protocol):
 
         Raises:
             ConfigError: If the overrides are invalid
-        """
-        ...
-
-    def resolve(
-        self,
-        global_config: dict | None = None,
-        session_overrides: dict | None = None,
-        call_overrides: dict | None = None,
-    ) -> Any:
-        """Resolve configuration with all layers applied.
-
-        Args:
-            global_config: Base configuration dictionary. If None, uses instance's global config.
-            session_overrides: Session-level overrides. If None, uses instance's session overrides.
-            call_overrides: Call-specific overrides (highest priority). If None, uses empty dict.
-
-        Returns:
-            AppConfig: The resolved and validated configuration
-
-        Raises:
-            ConfigError: If no global config is loaded or resolution fails
         """
         ...
 
@@ -219,8 +233,18 @@ class IToolManager(Iterable[Any], Protocol):
         """
         ...
 
-    def get_sandbox_tools_prompt(self) -> str:
-        """Get the tools prompt for the sandbox."""
+    def get_sandbox_tools_prompt(
+        self, tools: list[ToolInfo] | None = None
+    ) -> list[str]:
+        """Generate prompt segment for sandbox tools in PTC mode.
+
+        Args:
+            tools: Optional list of tools to include in the prompt
+
+        Returns:
+            Formatted list of strings containing tool documentation and usage examples
+            for sandbox tools, or an empty list if no tools found.
+        """
         ...
 
     def has_runtime(self, tool_name: str) -> bool:
@@ -231,6 +255,13 @@ class IToolManager(Iterable[Any], Protocol):
 
         Returns:
             bool: True if the tool exists and has a valid runtime, False otherwise
+        """
+        ...
+
+    def check_sandbox_availability(self) -> bool:
+        """
+        Check if sandbox is available
+        Returns: available
         """
         ...
 

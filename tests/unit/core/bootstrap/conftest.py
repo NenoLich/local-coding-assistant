@@ -19,7 +19,7 @@ def mock_config_manager():
 
 
 @pytest.fixture
-def mock_llm_manager():
+def mock_llm_service():
     """Create a mock LLM manager."""
     mock = Mock()
     mock.generate.return_value = "Generated response"

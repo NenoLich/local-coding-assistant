@@ -25,7 +25,7 @@ class TestBootstrapInitialization:
         return mock
 
     @pytest.fixture
-    def mock_llm_manager(self):
+    def mock_llm_service(self):
         """Create a mock LLM manager."""
         return Mock()
 
@@ -42,7 +42,7 @@ class TestBootstrapInitialization:
         return mock
 
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
-    @patch("local_coding_assistant.core.bootstrap._initialize_llm_manager")
+    @patch("local_coding_assistant.core.bootstrap._initialize_llm_service")
     @patch("local_coding_assistant.core.bootstrap._initialize_tool_manager")
     @patch("local_coding_assistant.core.bootstrap._initialize_runtime_manager")
     def test_bootstrap_initialization(
@@ -52,7 +52,7 @@ class TestBootstrapInitialization:
         mock_init_llm,
         mock_init_config,
         mock_config_manager,
-        mock_llm_manager,
+        mock_llm_service,
         mock_tool_manager,
         mock_runtime_manager,
     ):
@@ -67,7 +67,7 @@ class TestBootstrapInitialization:
         mock_config_manager.path_manager = Mock()
         mock_config_manager.path_manager.get_log_dir.return_value = Path("/tmp/logs")
         mock_init_config.return_value = mock_config_manager
-        mock_init_llm.return_value = mock_llm_manager
+        mock_init_llm.return_value = mock_llm_service
         mock_init_tools.return_value = mock_tool_manager
         mock_init_runtime.return_value = mock_runtime_manager
 
@@ -92,7 +92,7 @@ class TestBootstrapInitialization:
         )
         mock_init_runtime.assert_called_once_with(
             config_manager=mock_config_manager,
-            llm_manager=mock_llm_manager,
+            llm_service=mock_llm_service,
             tool_manager=mock_tool_manager,
         )
 
@@ -109,7 +109,7 @@ class TestBootstrapInitialization:
         assert mock_init_config.return_value == mock_config_manager
 
         # Verify context setup
-        assert ctx.get("llm") == mock_llm_manager
+        assert ctx.get("llm") == mock_llm_service
         assert ctx.get("tools") == mock_tool_manager
         assert ctx.get("runtime") == mock_runtime_manager
 
@@ -117,13 +117,13 @@ class TestBootstrapInitialization:
         assert hasattr(ctx, "deps")
         assert isinstance(ctx.deps, AppDependencies)
         assert ctx.deps.config_manager == mock_config_manager
-        assert ctx.deps.llm_manager == mock_llm_manager
+        assert ctx.deps.llm_service == mock_llm_service
         assert ctx.deps.tool_manager == mock_tool_manager
         assert ctx.deps.runtime_manager == mock_runtime_manager
         assert ctx.deps.is_initialized()
 
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
-    @patch("local_coding_assistant.core.bootstrap._initialize_llm_manager")
+    @patch("local_coding_assistant.core.bootstrap._initialize_llm_service")
     @patch("local_coding_assistant.core.bootstrap._initialize_tool_manager")
     @patch("local_coding_assistant.core.bootstrap._initialize_runtime_manager")
     def test_bootstrap_with_custom_config_path(
@@ -176,9 +176,7 @@ class TestSetupLogging:
         # Test with log level override
         _setup_logging(log_level=logging.DEBUG)
         mock_setup_logging.assert_called_once_with(
-            level=logging.DEBUG,
-            log_file=None,
-            time_rotation=None
+            level=logging.DEBUG, log_file=None, time_rotation=None
         )
 
     @patch("local_coding_assistant.core.bootstrap.setup_logging")
@@ -191,9 +189,7 @@ class TestSetupLogging:
         config.global_config = {"runtime": {"enabled_logging": False}}
         _setup_logging(config_manager=config)
         mock_setup_logging.assert_called_once_with(
-            level=logging.CRITICAL,
-            log_file=None,
-            time_rotation=None
+            level=logging.CRITICAL, log_file=None, time_rotation=None
         )
 
     @patch("local_coding_assistant.core.bootstrap.setup_logging")
@@ -206,9 +202,7 @@ class TestSetupLogging:
         config.global_config = {"runtime": {"log_level": "DEBUG"}}  # DEBUG level
         _setup_logging(config_manager=config)
         mock_setup_logging.assert_called_once_with(
-            level=logging.DEBUG,
-            log_file=None,
-            time_rotation=None
+            level=logging.DEBUG, log_file=None, time_rotation=None
         )
 
     @patch("local_coding_assistant.core.bootstrap.setup_logging")
@@ -232,9 +226,7 @@ class TestSetupLogging:
             config.global_config = {"runtime": {"log_level": level_str}}
             _setup_logging(config_manager=config)
             mock_setup_logging.assert_called_once_with(
-                level=expected_level,
-                log_file=None,
-                time_rotation=None
+                level=expected_level, log_file=None, time_rotation=None
             )
 
     @patch("local_coding_assistant.core.bootstrap.setup_logging")
@@ -245,7 +237,5 @@ class TestSetupLogging:
         # Test with no config and no log level (should use default INFO)
         _setup_logging()
         mock_setup_logging.assert_called_once_with(
-            level=logging.INFO,
-            log_file=None,
-            time_rotation=None
+            level=logging.INFO, log_file=None, time_rotation=None
         )

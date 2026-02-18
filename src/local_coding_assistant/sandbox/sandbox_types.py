@@ -1,10 +1,14 @@
 """Type definitions for the sandbox environment."""
 
 from datetime import UTC, datetime
-from enum import Enum
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+from local_coding_assistant.core.telemetry_types import (
+    ResourceMetric,
+    ToolCallTrace,
+)
 
 
 class SandboxExecutionRequest(BaseModel):
@@ -17,35 +21,10 @@ class SandboxExecutionRequest(BaseModel):
     persistence: bool = False
 
 
-class ResourceType(str, Enum):
-    CPU = "cpu"
-    MEMORY = "memory"
-    NETWORK = "network"
-    DISK = "disk"
+class ToolCallMetric(ToolCallTrace):
+    """Backward-compatible alias for tool call metrics."""
 
-
-class ResourceMetric(BaseModel):
-    """Base class for resource metrics."""
-
-    type: ResourceType
-    name: str
-    value: float | int | dict[str, Any]
-    unit: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
-
-
-class ToolCallMetric(BaseModel):
-    """Metrics for a single tool call."""
-
-    tool_name: str
-    call_id: str
-    start_time: datetime
-    end_time: datetime
-    duration: float  # in seconds
-    success: bool
-    error: str | None = None
-    resource_metrics: list[ResourceMetric] = Field(default_factory=list)
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    pass
 
 
 class SandboxExecutionResponse(BaseModel):

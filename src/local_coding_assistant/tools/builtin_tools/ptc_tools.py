@@ -119,6 +119,7 @@ class ExecutePythonCodeTool(SandboxTool):
             ...,
             description="""
 Python code to execute. It can import from the Python standard library and any pre-approved tools.
+All stdout prints will be captured and returned.
 Example:
 ```python
 # Simple calculation

@@ -9,20 +9,9 @@ import statistics
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
 from typing import Any, TypedDict
 
-from pydantic import BaseModel, Field
-
-
-class ResourceType(str, Enum):
-    """Type of resource being measured."""
-
-    CPU = "cpu"
-    MEMORY = "memory"
-    NETWORK = "network"
-    DISK = "disk"
-    CUSTOM = "custom"
+from local_coding_assistant.core.telemetry_types import ResourceMetric, ResourceType
 
 
 class MetricStats(TypedDict):
@@ -35,16 +24,6 @@ class MetricStats(TypedDict):
     total: float
     values: list[float]
     timestamps: list[datetime]
-
-
-class ResourceMetric(BaseModel):
-    """Base class for resource metrics."""
-
-    type: ResourceType
-    name: str
-    value: float | int | dict[str, Any]
-    unit: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass

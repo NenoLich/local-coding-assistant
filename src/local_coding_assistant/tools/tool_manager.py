@@ -9,6 +9,7 @@ import asyncio
 import inspect
 import logging
 import time
+import uuid
 from collections.abc import AsyncIterator, Awaitable, Iterable, Iterator
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -17,6 +18,13 @@ from pydantic import BaseModel
 
 from local_coding_assistant.core.exceptions import ToolRegistryError
 from local_coding_assistant.core.protocols import IToolManager
+from local_coding_assistant.core.telemetry_types import (
+    ExecutionEnvelope,
+    PresentationOutput,
+    ResourceMetric,
+    ResourceType,
+    ToolCallTrace,
+)
 from local_coding_assistant.tools.statistics import StatisticsManager, ToolStatistics
 from local_coding_assistant.tools.tool_api_generator import ToolAPIGenerator
 from local_coding_assistant.tools.tool_runtime import ToolRuntime
@@ -343,36 +351,63 @@ class ToolManager(IToolManager, Iterable[Any]):
                 # Check for final answer from sandbox
                 if "final_answer" in result and result["final_answer"] is not None:
                     final_answer = result["final_answer"]
+                    output = PresentationOutput(
+                        final_answer=final_answer.get("answer"),
+                        format=final_answer.get("format", "text"),
+                        metadata=final_answer.get("metadata", {}),
+                    )
+                    envelope = self._build_execution_envelope(
+                        tool_name=tool_name,
+                        session_id=request.payload.get("session_id"),
+                        sandbox_result=result,
+                        system_metrics=self._parse_resource_metrics(
+                            result.get("system_metrics") or []
+                        ),
+                    )
+                    tool_calls = self._parse_tool_call_traces(
+                        result.get("tool_calls") or []
+                    )
                     return ToolExecutionResponse(
                         success=True,
                         tool_name="final_answer",
-                        result=final_answer.get("answer"),
-                        format=final_answer.get("format", "text"),
-                        metadata=final_answer.get("metadata", {}),
+                        tool_args=request.payload,
+                        result=output.final_answer,
                         is_final=True,
                         execution_time_ms=execution_time_ms,
-                        stdout=result.get("stdout"),
-                        stderr=result.get("stderr"),
+                        envelope=envelope,
+                        tool_calls=tool_calls or None,
+                        output=output,
                     )
 
                 # Handle regular sandbox responses
+                envelope = self._build_execution_envelope(
+                    tool_name=tool_name,
+                    session_id=request.payload.get("session_id"),
+                    sandbox_result=result,
+                    system_metrics=self._parse_resource_metrics(
+                        result.get("system_metrics") or []
+                    ),
+                )
+                tool_calls = self._parse_tool_call_traces(
+                    result.get("tool_calls") or []
+                )
                 error_message = result.get("error_message", result.get("error"))
                 return ToolExecutionResponse(
                     success=result.get("success", True),
                     tool_name=tool_name,
+                    tool_args=request.payload,
                     result=result.get("result"),
                     error_message=error_message,
                     execution_time_ms=execution_time_ms,
-                    stdout=result.get("stdout"),
-                    stderr=result.get("stderr"),
-                    files_created=result.get("files_created"),
-                    files_modified=result.get("files_modified"),
+                    envelope=envelope,
+                    tool_calls=tool_calls or None,
                 )
 
             # Handle standard tool responses
             return ToolExecutionResponse(
                 success=True,
                 tool_name=tool_name,
+                tool_args=request.payload,
                 result=result,
                 execution_time_ms=execution_time_ms,
             )
@@ -387,6 +422,7 @@ class ToolManager(IToolManager, Iterable[Any]):
             return ToolExecutionResponse(
                 success=False,
                 tool_name=tool_name,
+                tool_args=request.payload,
                 error_message=error_msg,
                 execution_time_ms=execution_time_ms,
             )
@@ -415,19 +451,25 @@ class ToolManager(IToolManager, Iterable[Any]):
             # Handle sandbox responses
             if result and result.get("response"):
                 result = result.get("response")
-                # Extract tool_calls and system_metrics from result
-                tool_calls = (
-                    result.get("tool_calls") if result.get("tool_calls") else None
-                )
-                system_metrics = (
-                    result.get("system_metrics")
-                    if result.get("system_metrics")
-                    else None
-                )
+                raw_tool_calls = result.get("tool_calls") or []
+                raw_system_metrics = result.get("system_metrics") or []
+                tool_calls = self._parse_tool_call_traces(raw_tool_calls)
+                system_metrics = self._parse_resource_metrics(raw_system_metrics)
 
-                # If no tool_calls, but we have a result, create a synthetic tool call
-                if not tool_calls and result.get("result"):
+                if not tool_calls and result.get("result") is not None:
                     tool_calls = [
+                        ToolCallTrace(
+                            call_id=str(hash((tool_name, time.time()))),
+                            tool_name=tool_name,
+                            start_time=datetime.now(UTC)
+                            - timedelta(seconds=execution_time_ms / 1000.0),
+                            end_time=datetime.now(UTC),
+                            duration_ms=execution_time_ms,
+                            success=True,
+                            output=result.get("result"),
+                        )
+                    ]
+                    raw_tool_calls = [
                         {
                             "tool_name": tool_name,
                             "result": result.get("result"),
@@ -435,43 +477,55 @@ class ToolManager(IToolManager, Iterable[Any]):
                             - timedelta(seconds=execution_time_ms / 1000.0),
                             "end_time": datetime.now(UTC),
                             "success": True,
-                            "resource_metrics": system_metrics or [],
+                            "resource_metrics": raw_system_metrics,
                         }
                     ]
 
                 await self._record_success(
                     tool_name,
                     execution_time_ms / 1000.0,
-                    tool_calls=tool_calls,
+                    tool_calls=raw_tool_calls or None,
+                    system_metrics=raw_system_metrics or None,
+                )
+
+                envelope = self._build_execution_envelope(
+                    tool_name=tool_name,
+                    session_id=payload.get("session_id"),
+                    sandbox_result=result,
                     system_metrics=system_metrics,
                 )
 
-                # Check for final answer from sandbox
-                if result.get("final_answer"):
-                    final_answer = result.get("final_answer")
-                    return ToolExecutionResponse(
-                        success=True,
-                        tool_name="final_answer",
-                        result=final_answer.get("answer"),
+                final_answer = result.get("final_answer")
+                output = None
+                if final_answer:
+                    output = PresentationOutput(
+                        final_answer=final_answer.get("answer"),
                         format=final_answer.get("format", "text"),
                         metadata=final_answer.get("metadata", {}),
-                        is_final=True,
-                        execution_time_ms=execution_time_ms,
-                        stdout=result.get("stdout"),
-                        stderr=result.get("stderr"),
                     )
 
-                # Handle regular sandbox responses
+                    return ToolExecutionResponse(
+                        success=True,
+                        tool_name=tool_name,
+                        tool_args=payload,
+                        result=output.final_answer if output else None,
+                        is_final=True,
+                        execution_time_ms=execution_time_ms,
+                        envelope=envelope,
+                        tool_calls=tool_calls or None,
+                        output=output,
+                    )
+
                 return ToolExecutionResponse(
-                    success=result.get("success"),
+                    success=result.get("success", False),
                     tool_name=tool_name,
+                    tool_args=payload,
                     result=result.get("result"),
                     error_message=result.get("error"),
                     execution_time_ms=execution_time_ms,
-                    stdout=result.get("stdout"),
-                    stderr=result.get("stderr"),
-                    files_created=result.get("files_created"),
-                    files_modified=result.get("files_modified"),
+                    envelope=envelope,
+                    tool_calls=tool_calls or None,
+                    output=output,
                 )
 
             else:
@@ -481,6 +535,7 @@ class ToolManager(IToolManager, Iterable[Any]):
                 return ToolExecutionResponse(
                     success=True,
                     tool_name=tool_name,
+                    tool_args=payload,
                     result=result,
                     execution_time_ms=execution_time_ms,
                 )
@@ -505,9 +560,130 @@ class ToolManager(IToolManager, Iterable[Any]):
             return ToolExecutionResponse(
                 success=False,
                 tool_name=tool_name,
+                tool_args=payload,
                 error_message=error_msg,
                 execution_time_ms=execution_time_ms,
             )
+
+    def _parse_resource_metrics(
+        self, metrics: list[dict[str, Any]] | None
+    ) -> list[ResourceMetric]:
+        parsed: list[ResourceMetric] = []
+        for metric_data in metrics or []:
+            try:
+                if isinstance(metric_data, ResourceMetric):
+                    parsed.append(metric_data)
+                    continue
+
+                timestamp = metric_data.get("timestamp")
+                if timestamp is None:
+                    timestamp = datetime.now(UTC)
+                elif isinstance(timestamp, str):
+                    timestamp = datetime.fromisoformat(timestamp)
+
+                metric_type = metric_data.get("type", "custom")
+                try:
+                    metric_type = ResourceType(metric_type)
+                except ValueError:
+                    metric_type = ResourceType.CUSTOM
+
+                parsed.append(
+                    ResourceMetric(
+                        type=metric_type,
+                        name=metric_data["name"],
+                        value=metric_data["value"],
+                        unit=metric_data.get("unit", "count"),
+                        timestamp=timestamp,
+                    )
+                )
+            except (KeyError, ValueError, TypeError, AttributeError):
+                continue
+        return parsed
+
+    def _parse_tool_call_traces(
+        self, tool_calls: list[dict[str, Any]] | None
+    ) -> list[ToolCallTrace]:
+        traces: list[ToolCallTrace] = []
+        for call in tool_calls or []:
+            try:
+                if isinstance(call, ToolCallTrace):
+                    traces.append(call)
+                    continue
+
+                start_time = call.get("start_time")
+                if isinstance(start_time, str):
+                    start_time = datetime.fromisoformat(start_time)
+                end_time = call.get("end_time")
+                if isinstance(end_time, str):
+                    end_time = datetime.fromisoformat(end_time)
+
+                input_data = call.get("input")
+                if input_data is None:
+                    args = call.get("args")
+                    kwargs = call.get("kwargs")
+                    if args is not None or kwargs is not None:
+                        input_data = {}
+                        if isinstance(args, (list, tuple)):
+                            input_data["args"] = list(args)
+                        if isinstance(kwargs, dict):
+                            input_data["kwargs"] = kwargs
+
+                traces.append(
+                    ToolCallTrace(
+                        call_id=call.get("call_id", str(uuid.uuid4())),
+                        tool_name=call.get("tool_name", "unknown"),
+                        start_time=start_time,
+                        end_time=end_time,
+                        duration_ms=call.get("duration_ms", 0.0),
+                        success=call.get("success", False),
+                        error=call.get("error"),
+                        input=input_data,
+                        output=call.get("output", call.get("result")),
+                        resource_metrics=self._parse_resource_metrics(
+                            call.get("resource_metrics")
+                        ),
+                        metadata=call.get("metadata", {}),
+                    )
+                )
+            except Exception as err:
+                logger.exception(f"Failed to parse tool call trace: {err}")
+                continue
+        return traces
+
+    def _build_execution_envelope(
+        self,
+        *,
+        tool_name: str,
+        session_id: str | None,
+        sandbox_result: dict[str, Any],
+        system_metrics: list[ResourceMetric],
+    ) -> ExecutionEnvelope:
+        start_time = sandbox_result.get("start_time")
+        if isinstance(start_time, str):
+            start_time = datetime.fromisoformat(start_time)
+        end_time = sandbox_result.get("end_time")
+        if isinstance(end_time, str):
+            end_time = datetime.fromisoformat(end_time)
+
+        duration_ms = None
+        if sandbox_result.get("duration") is not None:
+            duration_ms = sandbox_result.get("duration", 0.0) * 1000.0
+
+        return ExecutionEnvelope(
+            tool_name=tool_name,
+            session_id=session_id,
+            start_time=start_time,
+            end_time=end_time,
+            duration_ms=duration_ms,
+            success=sandbox_result.get("success", False),
+            stdout=sandbox_result.get("stdout"),
+            stderr=sandbox_result.get("stderr"),
+            error=sandbox_result.get("error"),
+            files_created=sandbox_result.get("files_created") or [],
+            files_modified=sandbox_result.get("files_modified") or [],
+            return_code=sandbox_result.get("return_code"),
+            system_metrics=system_metrics,
+        )
 
     def get_tool_info(self, tool_name: str) -> ToolInfo | None:
         """Get detailed information about a registered tool.
@@ -925,22 +1101,32 @@ class ToolManager(IToolManager, Iterable[Any]):
             has_output_validation=has_output_validation,
         )
 
-    def get_sandbox_tools_prompt(self) -> str:
-        """Generate prompt segment for non-sandbox tools in PTC mode.
+    def get_sandbox_tools_prompt(
+        self, tools: list[ToolInfo] | None = None
+    ) -> list[str]:
+        """Generate prompt segment for sandbox tools in PTC mode.
+
+        Args:
+            tools: Optional list of tools to include in the prompt
 
         Returns:
-            Formatted string containing tool documentation and usage examples
-            for non-sandbox tools, or an empty string if no tools found.
+            Formatted list of strings containing tool documentation and usage examples
+            for sandbox tools, or an empty list if no tools found.
         """
         prompt_segments = []
 
-        for tool_name, tool_info in self._tools.items():
+        if not tools:
+            tools = [value for key, value in self._tools.items()]
+
+        for tool_info in tools:
             # Skip none-sandbox tools
             if tool_info.source != ToolSource.SANDBOX:
                 continue
 
             if not tool_info.available:
                 continue
+
+            tool_name = tool_info.name
 
             # Use tool_info.description as the main description
             description = tool_info.description or "No description available."
@@ -1000,7 +1186,7 @@ print(result)
 
             prompt_segments.append(tool_doc.strip())
 
-        return "\n\n".join(prompt_segments) if prompt_segments else ""
+        return prompt_segments
 
     async def _build_sandbox_result_string(
         self, sandbox_result: dict, tool_name: str, session_id: str
@@ -1312,6 +1498,7 @@ print(result)
         if not self._sandbox_manager:
             return ToolExecutionResponse(
                 tool_name="execute_python_code",
+                tool_args={"code": code, "session_id": session_id},
                 success=False,
                 error_message="Sandbox manager is not initialized",
                 result="",
@@ -1347,6 +1534,16 @@ print(result)
             - /app/tools/tools_api/tools_api.py
         """
         return self._api_generator.generate(tools, output_dir)
+
+    def check_sandbox_availability(self) -> bool:
+        """
+        Check if sandbox is available
+        Returns: available
+        """
+        return (
+            self._sandbox_manager is not None
+            and self._sandbox_manager.ensure_availability()
+        )
 
     def cleanup(self) -> None:
         """Clean up any resources used by the tool manager."""

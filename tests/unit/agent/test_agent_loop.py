@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 
 from local_coding_assistant.agent.agent_loop import AgentLoop
-from local_coding_assistant.agent.llm_manager import LLMManager, LLMResponse
+from local_coding_assistant.agent import LLMService
+from local_coding_assistant.agent.llm.models import LLMResult
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.tools.tool_manager import ToolManager
 
@@ -16,11 +17,11 @@ class TestAgentLoopInitialization:
 
     def test_agent_loop_initializes_with_zero_iterations(self):
         """Test that a new AgentLoop starts with iteration count 0."""
-        llm_manager = MagicMock(spec=LLMManager)
+        llm_service = MagicMock(spec=LLMService)
         tool_manager = MagicMock(spec=ToolManager)
 
         agent_loop = AgentLoop(
-            llm_manager=llm_manager, tool_manager=tool_manager, name="test_agent"
+            llm_service=llm_service, tool_manager=tool_manager, name="test_agent"
         )
 
         assert agent_loop.current_iteration == 0
@@ -31,11 +32,11 @@ class TestAgentLoopInitialization:
 
     def test_agent_loop_initializes_handlers(self):
         """Test that AgentLoop creates default handlers during initialization."""
-        llm_manager = MagicMock(spec=LLMManager)
+        llm_service = MagicMock(spec=LLMService)
         tool_manager = MagicMock(spec=ToolManager)
 
         agent_loop = AgentLoop(
-            llm_manager=llm_manager, tool_manager=tool_manager, name="test_agent"
+            llm_service=llm_service, tool_manager=tool_manager, name="test_agent"
         )
 
         # Check that handlers are created
@@ -46,7 +47,7 @@ class TestAgentLoopInitialization:
 
     def test_agent_loop_caches_tools(self):
         """Test that AgentLoop caches tools during initialization."""
-        llm_manager = MagicMock(spec=LLMManager)
+        llm_service = MagicMock(spec=LLMService)
 
         # Create a mock tool
         mock_tool = MagicMock()
@@ -59,11 +60,13 @@ class TestAgentLoopInitialization:
         tool_manager.list_tools.return_value = [mock_tool]
 
         agent_loop = AgentLoop(
-            llm_manager=llm_manager, tool_manager=tool_manager, name="test_agent"
+            llm_service=llm_service, tool_manager=tool_manager, name="test_agent"
         )
 
         # Verify list_tools was called with available_only=True
-        tool_manager.list_tools.assert_called_once_with(available_only=True, execution_mode='classic')
+        tool_manager.list_tools.assert_called_once_with(
+            available_only=True, execution_mode="classic"
+        )
 
         # Check that tools are cached
         assert hasattr(agent_loop, "_cached_tools")
@@ -72,12 +75,12 @@ class TestAgentLoopInitialization:
 
     def test_agent_loop_streaming_initialization(self):
         """Test that AgentLoop initializes correctly with streaming flag."""
-        llm_manager = MagicMock(spec=LLMManager)
+        llm_service = MagicMock(spec=LLMService)
         tool_manager = MagicMock(spec=ToolManager)
 
         # Test with streaming enabled
         agent_loop_streaming = AgentLoop(
-            llm_manager=llm_manager,
+            llm_service=llm_service,
             tool_manager=tool_manager,
             name="test_agent_streaming",
             streaming=True,
@@ -88,7 +91,7 @@ class TestAgentLoopInitialization:
 
         # Test with streaming disabled (default)
         agent_loop_no_streaming = AgentLoop(
-            llm_manager=llm_manager,
+            llm_service=llm_service,
             tool_manager=tool_manager,
             name="test_agent_no_streaming",
         )
@@ -101,18 +104,18 @@ class TestAgentLoopControlFlow:
     """Test AgentLoop control flow and iteration logic."""
 
     @pytest.fixture
-    def mock_llm_manager(self):
+    def mock_llm_service(self):
         """Create a mock LLM manager for testing."""
-        llm_manager = MagicMock(spec=LLMManager)
+        llm_service = MagicMock(spec=LLMService)
 
         # Mock LLM response for planning
-        mock_response = MagicMock(spec=LLMResponse)
+        mock_response = MagicMock(spec=LLMResult)
         mock_response.content = (
             '{"reasoning": "Test plan", "actions": ["test_action"], "confidence": 0.8}'
         )
-        llm_manager.generate = AsyncMock(return_value=mock_response)
+        llm_service.generate = AsyncMock(return_value=mock_response)
 
-        return llm_manager
+        return llm_service
 
     @pytest.fixture
     def mock_tool_manager(self):
@@ -122,20 +125,20 @@ class TestAgentLoopControlFlow:
         return tool_manager
 
     @pytest.fixture
-    def agent_loop(self, mock_llm_manager, mock_tool_manager):
+    def agent_loop(self, mock_llm_service, mock_tool_manager):
         """Create an AgentLoop instance for testing."""
         return AgentLoop(
-            llm_manager=mock_llm_manager,
+            llm_service=mock_llm_service,
             tool_manager=mock_tool_manager,
             name="test_agent",
             max_iterations=3,
         )
 
     @pytest.fixture
-    def agent_loop_single(self, mock_llm_manager, mock_tool_manager):
+    def agent_loop_single(self, mock_llm_service, mock_tool_manager):
         """Create an AgentLoop instance for single iteration testing."""
         return AgentLoop(
-            llm_manager=mock_llm_manager,
+            llm_service=mock_llm_service,
             tool_manager=mock_tool_manager,
             name="test_agent_single",
             max_iterations=1,
@@ -153,7 +156,7 @@ class TestAgentLoopControlFlow:
 
     @pytest.mark.asyncio
     async def test_agent_loop_single_iteration_execution(
-        self, agent_loop_single, mock_llm_manager
+        self, agent_loop_single, mock_llm_service
     ):
         """Test single iteration execution with proper state management."""
         # Mock the handlers to return predictable results
@@ -207,7 +210,7 @@ class TestAgentLoopControlFlow:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_agent_loop_multiple_iterations(self, agent_loop, mock_llm_manager):
+    async def test_agent_loop_multiple_iterations(self, agent_loop, mock_llm_service):
         """Test multiple iterations with proper accumulation."""
         # Mock handlers for multiple iterations
         call_count = {"observe": 0, "plan": 0, "act": 0, "reflect": 0}
@@ -279,18 +282,18 @@ class TestAgentLoopToolInvocation:
     @pytest.fixture
     def mock_llm_with_tools(self):
         """Create a mock LLM manager that returns tool calls."""
-        llm_manager = MagicMock(spec=LLMManager)
+        llm_service = MagicMock(spec=LLMService)
 
         # Mock response with tool call
-        mock_response = MagicMock(spec=LLMResponse)
+        mock_response = MagicMock(spec=LLMResult)
         mock_response.content = "I'll use the sum tool to add 2 + 3"
         mock_response.tool_calls = [
             {"function": {"name": "sum", "arguments": '{"a": 2, "b": 3}'}}
         ]
         # Mock the generate method to return the response for act handler
-        llm_manager.generate = AsyncMock(return_value=mock_response)
+        llm_service.generate = AsyncMock(return_value=mock_response)
 
-        return llm_manager
+        return llm_service
 
     @pytest.fixture
     def mock_tool_manager_with_sum(self):
@@ -313,7 +316,7 @@ class TestAgentLoopToolInvocation:
     def agent_loop_with_tools(self, mock_llm_with_tools, mock_tool_manager_with_sum):
         """Create an AgentLoop with tool capabilities."""
         return AgentLoop(
-            llm_manager=mock_llm_with_tools,
+            llm_service=mock_llm_with_tools,
             tool_manager=mock_tool_manager_with_sum,
             name="test_agent_tools",
             max_iterations=1,  # Changed to 1 for single iteration tests
@@ -440,13 +443,13 @@ class TestAgentLoopErrorHandling:
     """Test AgentLoop error handling and recovery."""
 
     @pytest.fixture
-    def mock_llm_manager_error(self):
+    def mock_llm_service_error(self):
         """Create a mock LLM manager that raises errors."""
-        llm_manager = MagicMock(spec=LLMManager)
-        llm_manager.generate = AsyncMock(
+        llm_service = MagicMock(spec=LLMService)
+        llm_service.generate = AsyncMock(
             side_effect=Exception("LLM service unavailable")
         )
-        return llm_manager
+        return llm_service
 
     @pytest.fixture
     def mock_tool_manager_error(self):
@@ -459,10 +462,10 @@ class TestAgentLoopErrorHandling:
         return tool_manager
 
     @pytest.fixture
-    def agent_loop_error(self, mock_llm_manager_error, mock_tool_manager_error):
+    def agent_loop_error(self, mock_llm_service_error, mock_tool_manager_error):
         """Create an AgentLoop that will encounter errors."""
         return AgentLoop(
-            llm_manager=mock_llm_manager_error,
+            llm_service=mock_llm_service_error,
             tool_manager=mock_tool_manager_error,
             name="test_agent_error",
             max_iterations=2,
@@ -620,18 +623,18 @@ class TestAgentLoopMessageAccumulation:
     @pytest.fixture
     def agent_loop_accumulation(self):
         """Create an AgentLoop for testing message accumulation."""
-        llm_manager = MagicMock(spec=LLMManager)
+        llm_service = MagicMock(spec=LLMService)
 
         # Mock consistent responses
-        mock_response = MagicMock(spec=LLMResponse)
+        mock_response = MagicMock(spec=LLMResult)
         mock_response.content = "Consistent response"
-        llm_manager.generate = AsyncMock(return_value=mock_response)
+        llm_service.generate = AsyncMock(return_value=mock_response)
 
         tool_manager = MagicMock(spec=ToolManager)
         tool_manager.__iter__ = MagicMock(return_value=iter([]))
 
         return AgentLoop(
-            llm_manager=llm_manager,
+            llm_service=llm_service,
             tool_manager=tool_manager,
             name="test_agent_accumulation",
             max_iterations=3,

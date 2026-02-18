@@ -41,8 +41,20 @@ class EnvManager:
 
     def __new__(cls, *args: Any, **kwargs: Any) -> "EnvManager":
         """Return the singleton instance of EnvManager."""
-        if cls._instance is None or os.getenv("LOCCA_ENV") == "test":
+        global _instance
+
+        # Check if we already have an instance from either source
+        if cls._instance is None and _instance is None:
+            # No instance exists, create one
             cls._instance = _EnvManager(*args, **kwargs)
+            _instance = cls._instance
+        elif cls._instance is None and _instance is not None:
+            # Module-level instance exists but class-level doesn't, sync them
+            cls._instance = _instance
+        elif os.getenv("LOCCA_ENV") == "test":
+            # Test environment, always create fresh instance
+            cls._instance = _EnvManager(*args, **kwargs)
+            _instance = cls._instance
 
         # Create and return an EnvManager instance that will delegate to the singleton
         instance = super().__new__(cls)

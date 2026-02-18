@@ -122,7 +122,7 @@ class TestProviderAddCommand:
         """Helper function to mock _extract_value."""
         return value
 
-    def verify_side_effect(self, llm_manager, provider_name):
+    def verify_side_effect(self, llm_service, provider_name):
         """Helper function to mock _verify_provider_health."""
         return True
 
@@ -424,15 +424,15 @@ class TestProviderRemoveCommand:
                 raise ValueError(f"Provider '{provider_name}' not found")
             return MagicMock()  # Return a mock for other provider names
 
-        mock_llm.get_provider.side_effect = get_provider_side_effect
+        mock_llm.provider_manager.get_provider.side_effect = get_provider_side_effect
         mock_llm.get_provider_status_list.return_value = [
             {"name": "another_provider", "status": "available"}
         ]
         mock_bootstrap.return_value = {"llm": mock_llm}
 
         # Setup verify mock to call reload_providers
-        def verify_side_effect(llm_manager, provider_name):
-            llm_manager.reload_providers()
+        def verify_side_effect(llm_service, provider_name):
+            llm_service.reload_providers()
             return None
 
         mock_verify.side_effect = verify_side_effect

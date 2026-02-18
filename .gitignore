@@ -21,6 +21,7 @@ logs/
 tests/logs/
 tests/cache/
 htmlcov/
+docs/
 
 
 # IDE specific
@@ -40,6 +41,7 @@ config/*.local.toml
 
 # Logs
 *.log
+report.json
 
 # Coverage reports
 .coverage

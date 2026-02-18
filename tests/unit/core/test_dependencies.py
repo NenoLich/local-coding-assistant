@@ -20,7 +20,7 @@ class TestAppDependencies:
         """Test initialization with required dependencies."""
         deps = AppDependencies(config_manager=mock_config_manager)
         assert deps.config_manager is mock_config_manager
-        assert deps.llm_manager is None
+        assert deps.llm_service is None
         assert deps.tool_manager is None
         assert deps.runtime_manager is None
         assert not deps.is_initialized()
@@ -35,11 +35,11 @@ class TestAppDependencies:
         """Test setting optional dependencies."""
         deps = AppDependencies(
             config_manager=mock_config_manager,
-            llm_manager="llm_mock",
+            llm_service="llm_mock",
             tool_manager="tool_mock",
             runtime_manager="runtime_mock",
         )
-        assert deps.llm_manager == "llm_mock"
+        assert deps.llm_service == "llm_mock"
         assert deps.tool_manager == "tool_mock"
         assert deps.runtime_manager == "runtime_mock"
         assert not deps.is_initialized()
@@ -53,12 +53,12 @@ class TestAppDependencies:
         """Test string representation of AppDependencies."""
         deps = AppDependencies(
             config_manager=mock_config_manager,
-            llm_manager="llm_mock",
+            llm_service="llm_mock",
             tool_manager="tool_mock",
             runtime_manager="runtime_mock",
         )
         assert "AppDependencies(" in repr(deps)
         assert "config_manager=" in repr(deps)
-        assert "llm_manager='llm_mock'" in repr(deps)
+        assert "llm_service='llm_mock'" in repr(deps)
         assert "tool_manager='tool_mock'" in repr(deps)
         assert "runtime_manager='runtime_mock'" in repr(deps)

@@ -36,7 +36,7 @@ LOCCA implements a sophisticated agent architecture with the following key compo
 - **LangGraph Opar-Agent** - Advanced agent implementation using LangGraph for sophisticated reasoning
 
 ### Core Systems
-- **LLM Manager** - Unified interface for local and remote LLMs with streaming support
+- **LLM Service** - Unified interface for local and remote LLMs with streaming support, routing, and fallback
 - **Provider Manager & Router** - Discovers providers, merges layered configs, and handles fallback routing
 - **Tool Registry** - Dynamic tool loading and management with schema validation
 - **Runtime Manager** - Session and context management with persistence
@@ -157,16 +157,37 @@ All paths in configuration files can use the `@` aliases (e.g., `@data/models`) 
 ├── src/                      # Source code
 │   └── local_coding_assistant/
 │       ├── agent/            # Agent loop and LLM management
-│       │   ├── agent_loop.py # Observe-Plan-Act-Reflect implementation
+│       │   ├── frame_agent.py # Frame-based agent implementation
 │       │   ├── langgraph_agent.py # LangGraph opar-agent
-│       │   └── llm_manager.py # LLM interface with streaming & routing
+│       │   ├── llm/          # LLM service components
+│       │   │   ├── service.py # Main LLM service interface
+│       │   │   ├── models.py # LLM models and schemas
+│       │   │   ├── pipeline.py # Request processing pipeline
+│       │   │   ├── routing.py # Provider routing logic
+│       │   │   ├── fallback.py # Fallback mechanisms
+│       │   │   └── telemetry.py # LLM telemetry and monitoring
+│       │   └── agent_loop.py # Observe-Plan-Act-Reflect implementation
 │       ├── cli/              # CLI commands and interface
+│       │   ├── rendering/    # CLI rendering components
 │       │   └── commands/     # Command implementations
 │       ├── config/           # Configuration management
+│       │   ├── builder.py    # Configuration builder
+│       │   ├── cache.py      # Configuration caching
+│       │   ├── dependencies.py # Configuration dependencies
+│       │   ├── field.py      # Configuration fields
+│       │   ├── validation_engine.py # Configuration validation
+│       │   ├── config_manager.py # Multi-source configuration management
+│       │   ├── providers.default.yaml # Default provider configurations
+│       │   ├── providers.local.yaml  # Local provider overrides (gitignored)
+│       │   ├── schemas.py    # Pydantic models for configuration
 │       │   └── path_manager.py # Path resolution utility
 │       ├── core/             # Core infrastructure
 │       ├── providers/        # LLM provider implementations
 │       ├── runtime/          # Runtime and session management
+│       │   ├── execution_types.py # Execution type definitions
+│       │   ├── executor.py   # Execution engine
+│       │   ├── handlers/     # Execution handlers
+│       │   └── runtime_manager.py # Session orchestration
 │       ├── sandbox/          # Secure code execution environment
 │       │   ├── guest/        # Guest-side sandbox components
 │       │   │   ├── agent.py  # Guest agent implementation
@@ -346,14 +367,20 @@ uv run pytest tests/e2e/ -v
 ```
 
 - **LangGraph Opar-Agent** - Sophisticated graph-based agent implementation with advanced reasoning
+- **Frame Agent** - New frame-based agent implementation for flexible execution patterns
+- **LLM Service** - Refactored LLM management with modular components (service, routing, fallback, telemetry)
 - **Provider Module** - Declarative provider configs, layered reloads, and CLI management
 - **Config Manager v2** - Three-layer hierarchy with validation and runtime overrides
+- **Configuration Builder** - Advanced configuration building, caching, and validation engine
 - **CLI Provider Commands** - `locca provider add|list|remove|validate|reload`
+- **CLI Rendering** - Enhanced CLI output with dedicated rendering components
 - **Integration Tests** - Expanded coverage for config merging and provider routing
 - **Streaming LLM Responses** - Real-time streaming for better user experience
 - **Advanced Agent Loop** - Observe-Plan-Act-Reflect pattern implementation
+- **Enhanced Runtime** - New execution engine with handlers and execution types
 - **Session & Context Awareness** - Persistent sessions with context management
 - **Enhanced Tool System** - JSON schema validation and better error handling
+- **Sandbox Tool Processing** - Advanced tool call processing in sandbox environment
 - **Centralized Logging** - Structured logging throughout the application
 - **Error Handling** - Robust error handling with safe entry points
 

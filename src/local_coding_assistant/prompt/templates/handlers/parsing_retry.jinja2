@@ -1,0 +1,20 @@
+{% set ctx = context.handler_context %}
+The previous response generated malformed tool arguments:
+
+Error: {{ ctx["message"] }}
+{% if ctx["raw_response"] %}
+Raw Response Context: 
+{{ ctx["raw_response"] }}
+{% endif %}
+{% if ctx["reasoning"] %}
+Previous Reasoning:
+{{ ctx["reasoning"] }}
+{% endif %}
+
+Please provide valid JSON for tool arguments. Ensure all commas, quotes, and brackets are correctly placed and escaped.
+
+{% if ctx["raw_tool_calls"] %}
+Following tool calls were invalid:
+{{ ctx["raw_tool_calls"] }}
+Please retry with properly formatted arguments.
+{% endif %}

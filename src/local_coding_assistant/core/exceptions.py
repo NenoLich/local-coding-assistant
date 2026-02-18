@@ -21,13 +21,21 @@ class AgentError(LocalAssistantError):
 
 
 class LLMError(AgentError):
-    """Raised for issues specific to LLM communication or generation.
-
-    This class combines the core LLM error handling with provider-specific
-    error handling.
-    """
+    """Raised for issues specific to LLM communication or generation."""
 
     subsystem = "llm"
+
+
+class LLMInfrastructureError(LLMError):
+    """Raised for provider-level infrastructure issues (auth, network, rate limits)."""
+
+
+class LLMContentError(LLMError):
+    """Raised when the LLM returns malformed or unparseable content."""
+
+    def __init__(self, message: str, raw_response: str | None = None, **kwargs):
+        super().__init__(message, **kwargs)
+        self.raw_response = raw_response
 
 
 class ToolRegistryError(LocalAssistantError):

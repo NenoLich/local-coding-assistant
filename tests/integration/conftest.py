@@ -2,22 +2,24 @@ import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import yaml
 from typer.testing import CliRunner
 
 from local_coding_assistant.agent.agent_loop import AgentLoop
-from local_coding_assistant.agent.llm_manager import (
-    LLMManager,
-    LLMRequest,
-    LLMResponse,
-    ToolCall,
+from local_coding_assistant.agent.llm import (
+    LLMResult,
+    LLMService,
+    LLMTask,
+    LLMToolCall, LLMOptions,
 )
+from local_coding_assistant.agent.llm.models import LLMStreamChunk
 from local_coding_assistant.cli.commands import sandbox as sandbox_cli
 from local_coding_assistant.config.path_manager import PathManager
 from local_coding_assistant.config.schemas import AppConfig, SandboxConfig
@@ -81,8 +83,8 @@ def sandbox_config_manager(tmp_path: Path):
     return StubConfigManager(app_config, path_manager, project_root)
 
 
-class MockStreamingLLMManager(LLMManager):
-    """Mock LLM manager that supports streaming responses and tool calls."""
+class MockStreamingLLMService(LLMService):
+    """Mock LLM service that supports streaming responses and tool calls."""
 
     def __init__(
         self,
@@ -90,7 +92,7 @@ class MockStreamingLLMManager(LLMManager):
         config_manager=None,
         provider_manager: Any = None,
     ):
-        # Initialize the parent LLMManager first
+        # Initialize the parent LLMService first
         super().__init__(
             config_manager=config_manager, provider_manager=provider_manager
         )
@@ -100,14 +102,12 @@ class MockStreamingLLMManager(LLMManager):
 
     async def generate(
         self,
-        request: LLMRequest,
+        task: LLMTask,
         *,
-        provider: str | None = None,
-        model: str | None = None,
-        policy: str | None = None,
-        overrides: dict[str, Any] | None = None,
-    ) -> LLMResponse:
-        """Generate a response based on the request."""
+        policy: Any = None,
+        options: Any = None,
+    ) -> LLMResult:
+        """Generate a response based on the task."""
         if self.call_count >= len(self.responses):
             # Return a default response if we've exhausted our predefined responses
             response_data = {"content": "I've completed my analysis.", "tool_calls": []}
@@ -118,22 +118,21 @@ class MockStreamingLLMManager(LLMManager):
 
         tool_calls = self._parse_tool_calls(response_data.get("tool_calls", []))
 
-        return LLMResponse(
+        return LLMResult(
             content=str(response_data.get("content", "")),
-            model_used="mock-model",
-            tokens_used=50,
+            model="mock-model",
+            provider="mock-provider",
+            total_tokens=50,
             tool_calls=tool_calls,
         )
 
     async def stream(
         self,
-        request: LLMRequest,
+        task: LLMTask,
         *,
-        provider: str | None = None,
-        model: str | None = None,
-        policy: str | None = None,
-        overrides: dict[str, Any] | None = None,
-    ) -> AsyncIterator[str]:
+        policy: Any = None,
+        options: Any = None,
+    ) -> AsyncIterator[LLMStreamChunk]:
         """Generate a streaming response."""
         if self.call_count >= len(self.responses):
             response_data = {"content": "I've completed my analysis.", "tool_calls": []}
@@ -149,32 +148,51 @@ class MockStreamingLLMManager(LLMManager):
             current_chunk = ""
             for word in words:
                 current_chunk += word + " "
-                yield current_chunk.strip()
+                yield LLMStreamChunk(
+                    content=current_chunk.strip(),
+                    provider="mock-provider",
+                    model="mock-model",
+                    is_final=False,
+                )
                 await asyncio.sleep(0.01)  # Simulate streaming delay
 
         tool_calls = self._parse_tool_calls(response_data.get("tool_calls", []))
 
         if tool_calls:
-            serializable_calls = [
-                tc.model_dump() if hasattr(tc, "model_dump") else tc
-                for tc in tool_calls
-            ]
-            yield f"\n\nTool calls: {json.dumps(serializable_calls)}"
-
-    async def ainvoke(self, request: LLMRequest) -> LLMResponse:
-        """Async invoke (alias for generate)."""
-        return await self.generate(request)
+            serializable_calls = []
+            for tc in tool_calls:
+                if hasattr(tc, "model_dump"):
+                    serializable_calls.append(tc.model_dump())
+                elif is_dataclass(tc):
+                    serializable_calls.append(asdict(tc))
+                elif isinstance(tc, dict):
+                    serializable_calls.append(tc)
+                else:
+                    serializable_calls.append(
+                        {
+                            "id": getattr(tc, "id", None),
+                            "name": getattr(tc, "name", ""),
+                            "arguments": getattr(tc, "arguments", {}),
+                            "type": getattr(tc, "type", "function"),
+                        }
+                    )
+            yield LLMStreamChunk(
+                content=f"\n\nTool calls: {json.dumps(serializable_calls)}",
+                provider="mock-provider",
+                model="mock-model",
+                is_final=True,
+            )
 
     def _parse_tool_calls(
         self, tool_calls_data: list[dict[str, Any]] | None
-    ) -> list[ToolCall] | None:
-        """Normalize raw tool call payloads into ToolCall objects."""
+    ) -> list[LLMToolCall] | None:
+        """Normalize raw tool call payloads into LLMToolCall objects."""
         if not tool_calls_data:
             return None
 
-        parsed_calls: list[ToolCall] = []
+        parsed_calls: list[LLMToolCall] = []
         for index, tool_call in enumerate(tool_calls_data):
-            if isinstance(tool_call, ToolCall):
+            if isinstance(tool_call, LLMToolCall):
                 parsed_calls.append(tool_call)
                 continue
 
@@ -199,7 +217,7 @@ class MockStreamingLLMManager(LLMManager):
                 arguments = {}
 
             parsed_calls.append(
-                ToolCall(
+                LLMToolCall(
                     id=tool_call.get("id") if isinstance(tool_call, dict) else None,
                     name=name,
                     arguments=arguments,
@@ -405,6 +423,7 @@ class MockToolManager:
         if tool_name == "final_answer":
             return ToolExecutionResponse(
                 tool_name=tool_name,
+                tool_args={"answer": result.get("answer")},
                 success=success,
                 result=result.get("answer"),
                 execution_time_ms=elapsed,
@@ -413,10 +432,27 @@ class MockToolManager:
 
         return ToolExecutionResponse(
             tool_name=tool_name,
+            tool_args={},
             success=success,
             result=result,
             execution_time_ms=elapsed,
         )
+
+
+# ---------------------------------------------------------------------------
+# Helper utilities
+# ---------------------------------------------------------------------------
+
+
+def _to_plain(value: Any) -> Any:
+    """Convert dataclass-heavy structures (e.g., LLMToolCall) into JSON-safe types."""
+    if is_dataclass(value):
+        return asdict(value)
+    if isinstance(value, list):
+        return [_to_plain(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _to_plain(val) for key, val in value.items()}
+    return value
 
 
 # Integration test fixtures
@@ -467,8 +503,8 @@ def mock_llm_with_tools():
     # Create a test config manager
     config_manager = TestConfigManager()
 
-    # Create a custom MockStreamingLLMManager that validates the model
-    class ValidatingMockStreamingLLMManager(MockStreamingLLMManager):
+    # Create a custom MockStreamingLLMService that validates the model
+    class ValidatingMockStreamingLLMService(MockStreamingLLMService):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.valid_models = {
@@ -476,21 +512,21 @@ def mock_llm_with_tools():
                 "gpt-3.5-turbo",
             }  # Add other valid models as needed
 
-        async def generate(self, *args, **kwargs):
-            model = kwargs.get("model")
+        async def generate(self, task, *, policy=None, options=None):
+            model = options.model if options else None
             if model == "invalid-model":
                 raise ValueError("Model 'invalid-model' not found")
-            if model not in self.valid_models:
+            if model is not None and model not in self.valid_models:
                 raise ValueError(
                     f"Model '{model}' not found. Available models: {', '.join(self.valid_models)}"
                 )
-            return await super().generate(*args, **kwargs)
+            return await super().generate(task, policy=policy, options=options)
 
         # Alias generate to chat_completion for backward compatibility
         chat_completion = generate
 
-    # Return our validating mock LLM manager
-    return ValidatingMockStreamingLLMManager(
+    # Return our validating mock LLM service
+    return ValidatingMockStreamingLLMService(
         responses=responses, config_manager=config_manager, provider_manager=None
     )
 
@@ -624,7 +660,7 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
     config_manager.load_global_config()
 
     runtime = MagicMock(spec=RuntimeManager)
-    runtime._llm_manager = mock_llm_with_tools
+    runtime._llm_service = mock_llm_with_tools
     runtime._tool_manager = tool_manager
     runtime._config_manager = config_manager
 
@@ -663,8 +699,8 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
 
         # Reuse existing agent loop for this session or create a new one
         if session_id not in agent_loops:
-            # Create a new mock LLM manager with the same responses
-            llm_manager = MockStreamingLLMManager(
+            # Create a new mock LLM service with the same responses
+            llm_service = MockStreamingLLMService(
                 responses=mock_llm_with_tools.responses,
                 config_manager=config_manager,
                 provider_manager=None,
@@ -672,7 +708,7 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
 
             # Create a new agent loop for this session
             agent_loop = AgentLoop(
-                llm_manager=llm_manager,
+                llm_service=llm_service,
                 tool_manager=tool_manager,
                 name="integration_test_agent",
                 max_iterations=max_iterations,
@@ -705,13 +741,15 @@ def runtime_manager(mock_llm_with_tools, tool_manager):
         if final_answer is None:
             final_answer = "Mock final answer for testing purposes"
 
-        return {
-            "final_answer": final_answer,
-            "iterations": getattr(agent_loop, "current_iteration", 1),
-            "history": getattr(agent_loop, "get_history", lambda: [])(),
-            "session_id": session_id,
-            "streaming_enabled": streaming,
-        }
+        return _to_plain(
+            {
+                "final_answer": final_answer,
+                "iterations": getattr(agent_loop, "current_iteration", 1),
+                "history": getattr(agent_loop, "get_history", lambda: [])(),
+                "session_id": session_id,
+                "streaming_enabled": streaming,
+            }
+        )
 
     runtime._run_agent_mode = mock_run_agent_mode
     return runtime
@@ -724,7 +762,7 @@ def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
     config_manager.load_global_config()
 
     runtime = MagicMock(spec=RuntimeManager)
-    runtime._llm_manager = mock_llm_with_tools
+    runtime._llm_service = mock_llm_with_tools
     runtime._tool_manager = tool_manager
     runtime._config_manager = config_manager
 
@@ -745,8 +783,8 @@ def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
     ):
         nonlocal agent_loop_instance, session_id
 
-        # Create a new mock LLM manager with the same responses
-        llm_manager = MockStreamingLLMManager(
+        # Create a new mock LLM service with the same responses
+        llm_service = MockStreamingLLMService(
             responses=mock_llm_with_tools.responses,
             config_manager=config_manager,
             provider_manager=None,
@@ -754,7 +792,7 @@ def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
 
         # Create a new agent loop for each request to ensure clean state
         agent_loop_instance = AgentLoop(
-            llm_manager=llm_manager,
+            llm_service=llm_service,
             tool_manager=tool_manager,
             name="integration_test_agent_streaming",
             max_iterations=max_iterations,
@@ -774,13 +812,15 @@ def runtime_manager_with_streaming(mock_llm_with_tools, tool_manager):
         # Ensure we maintain the same session ID for the next request
         session_id = agent_loop_instance.session_id
 
-        return {
-            "final_answer": final_answer,
-            "iterations": agent_loop_instance.current_iteration,
-            "history": agent_loop_instance.get_history(),
-            "session_id": session_id,  # Use the maintained session ID
-            "streaming_enabled": streaming,
-        }
+        return _to_plain(
+            {
+                "final_answer": final_answer,
+                "iterations": agent_loop_instance.current_iteration,
+                "history": agent_loop_instance.get_history(),
+                "session_id": session_id,  # Use the maintained session ID
+                "streaming_enabled": streaming,
+            }
+        )
 
     runtime._run_agent_mode = mock_run_agent_mode
     return runtime
@@ -834,7 +874,7 @@ def complex_scenario_llm():
     config_manager = MagicMock(spec=IConfigManager)
     config_manager.get_tool_config.return_value = {}
 
-    return MockStreamingLLMManager(
+    return MockStreamingLLMService(
         responses, config_manager=config_manager, provider_manager=None
     )
 
@@ -855,7 +895,7 @@ def streaming_llm_single_response():
             "tool_calls": [],
         }
     ]
-    return MockStreamingLLMManager(
+    return MockStreamingLLMService(
         responses, config_manager=None, provider_manager=None
     )
 
@@ -931,18 +971,19 @@ def tmp_yaml_config(tmp_path):
 
 
 @pytest.fixture
-def mock_llm_response():
+def mock_llm_result():
     """Create a mock LLM response for testing."""
-    return LLMResponse(
+    return LLMResult(
         content="[LLMManager] Echo: Received request with tool outputs",
-        model_used="gpt-5-mini",
-        tokens_used=50,
-        tool_calls=None,
+        model="gpt-5-mini",
+        provider="test-provider",
+        total_tokens=50,
+        tool_calls=[],
     )
 
 
 @pytest.fixture
-def mock_llm_manager(mock_llm_response):
+def mock_llm_service(mock_llm_result):
     """
     Create a mock LLM manager that doesn't make real API calls.
     This mock supports both generate() and update_config().
@@ -973,27 +1014,13 @@ def mock_llm_manager(mock_llm_response):
     mock_session_overrides.copy.return_value = {"llm.model_name": "gpt-4.1"}
     mock_config_manager.session_overrides = mock_session_overrides
 
-    async def mock_generate(request: LLMRequest, *, overrides=None) -> LLMResponse:
-        # Use the model from overrides if provided, otherwise use default
-        model_used = "gpt-5-mini"
-
-        # Handle both dict and MagicMock cases
-        if overrides:
-            try:
-                # Try to get model from dict-like object
-                if hasattr(overrides, "get"):
-                    model_name = overrides.get("llm.model_name")
-                    if model_name:
-                        model_used = model_name
-                elif "llm.model_name" in overrides:
-                    model_used = overrides["llm.model_name"]
-            except (KeyError, TypeError, AttributeError):
-                # If we can't extract the model, use default
-                pass
-
+    async def mock_generate(request: LLMTask, *, options:LLMOptions | None=None) -> LLMResult:
         # Check if we have a model in the request (from orchestrate)
-        if hasattr(request, "model") and request.model:
-            model_used = request.model
+        model_used = "mocked_model"
+        provider = "test-provider"
+        if options is not None:
+            model_used = options.model
+            provider = options.provider
 
         # Check if tool outputs are present and modify response accordingly
         if request.tool_outputs:
@@ -1001,11 +1028,13 @@ def mock_llm_manager(mock_llm_response):
         else:
             content = f"[LLMManager] Echo: Received request with model {model_used}"
 
-        return LLMResponse(
+
+        return LLMResult(
+            provider=provider,
             content=str(content),
-            model_used=model_used,
-            tokens_used=50,
-            tool_calls=None,  # Mock responses don't need tool calls
+            model=model_used,
+            total_tokens=50,
+            tool_calls=[],  # Mock responses don't need tool calls
         )
 
     mock_manager.generate = AsyncMock(side_effect=mock_generate)
@@ -1034,7 +1063,7 @@ def mock_llm_manager(mock_llm_response):
 
 
 @pytest.fixture
-def ctx_with_mocked_llm(mock_llm_manager):
+def ctx_with_mocked_llm(mock_llm_service):
     """
     Create a context with mocked LLM manager to avoid API quota issues.
     """
@@ -1049,10 +1078,12 @@ def ctx_with_mocked_llm(mock_llm_manager):
     # Create a mock runtime manager
     runtime = MagicMock(spec=RuntimeManager)
     runtime.config_manager = config_manager
-    runtime.llm_manager = mock_llm_manager
-    runtime._llm_manager = (
-        mock_llm_manager  # Add _llm_manager for backward compatibility
+    runtime.llm_service = mock_llm_service
+    runtime._llm_service = (
+        mock_llm_service  # Add _llm_service for backward compatibility
     )
+    # Add _llm_manager for tests that access it
+    runtime._llm_manager = mock_llm_service
 
     # Set up the orchestrate method to use the mock LLM manager
     async def mock_orchestrate(
@@ -1060,6 +1091,7 @@ def ctx_with_mocked_llm(mock_llm_manager):
     ):
         from dataclasses import make_dataclass
 
+        from local_coding_assistant.agent.llm import LLMOptions
         from local_coding_assistant.core.exceptions import AgentError
 
         # Validate temperature
@@ -1079,24 +1111,27 @@ def ctx_with_mocked_llm(mock_llm_manager):
 
         # Create a simple request object with model and tool_outputs
         Request = make_dataclass("Request", ["model", "tool_outputs"])
-        request = Request(model=model_used, tool_outputs=None)
+        request = Request(model=model, tool_outputs=None)
+
+        # Create options with the model
+        options = LLMOptions(model=model, provider="test-provider")
 
         # If the LLM manager has a side effect set, let it raise the error
-        if hasattr(mock_llm_manager.generate, "side_effect"):
+        if hasattr(mock_llm_service.generate, "side_effect"):
             try:
-                result = await mock_llm_manager.generate(request)
+                result = await mock_llm_service.generate(request, options=options)
                 # Convert LLMResponse to dict for the test
                 return {
                     "message": str(result.content),
-                    "model_used": result.model_used,
-                    "tokens_used": result.tokens_used,
+                    "model_used": [result.model],
+                    "tokens_used": result.total_tokens,
                 }
             except AgentError as e:
                 raise e
 
         return {
             "message": f"Processed query with model: {model_used}",
-            "model_used": model_used,
+            "model_used": [model_used],
             "tokens_used": 50,
         }
 
@@ -1361,26 +1396,6 @@ def mock_router_with_fallback():
     router.mark_provider_success = MagicMock()
 
     return router
-
-
-@pytest.fixture
-def integration_llm_manager_with_providers(mock_provider_manager):
-    """Create LLM manager with provider manager for integration tests."""
-    with patch("local_coding_assistant.config.get_config_manager"):
-        with patch(
-            "local_coding_assistant.agent.llm_manager.ProviderManager"
-        ) as mock_pm_class:
-            mock_pm_class.return_value = mock_provider_manager
-
-            llm_manager = LLMManager.__new__(LLMManager)
-            llm_manager.provider_manager = mock_provider_manager
-            llm_manager.config_manager = MagicMock()
-            llm_manager.router = MagicMock(spec=ProviderRouter)
-            llm_manager._provider_status_cache = {}
-            llm_manager._last_health_check = 0
-            llm_manager._cache_ttl = 30 * 60
-
-            return llm_manager
 
 
 @pytest.fixture

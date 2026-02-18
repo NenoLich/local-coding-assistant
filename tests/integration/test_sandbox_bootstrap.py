@@ -33,7 +33,7 @@ def mock_env_manager(tmp_path):
 def mock_dependencies():
     with (
         patch(
-            "local_coding_assistant.core.bootstrap._initialize_llm_manager"
+            "local_coding_assistant.core.bootstrap._initialize_llm_service"
         ) as mock_llm,
         patch(
             "local_coding_assistant.core.bootstrap._initialize_runtime_manager"
@@ -42,7 +42,9 @@ def mock_dependencies():
         patch(
             "local_coding_assistant.config.tool_loader.ToolLoader"
         ) as mock_tool_loader_cls,
-        patch("local_coding_assistant.sandbox.manager.SandboxManager.ensure_availability") as mock_availability,
+        patch(
+            "local_coding_assistant.sandbox.manager.SandboxManager.ensure_availability"
+        ) as mock_availability,
     ):
         # Configure mocks
         mock_tool_manager = MagicMock()

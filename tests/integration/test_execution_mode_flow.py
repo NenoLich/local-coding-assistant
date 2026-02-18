@@ -1,10 +1,9 @@
-import asyncio
 from typing import Any
 
 import pytest
 from jinja2 import TemplateError
 
-from local_coding_assistant.agent.llm_manager import LLMResponse
+from local_coding_assistant.agent.llm.models import LLMResult
 from local_coding_assistant.config.schemas import AppConfig
 from local_coding_assistant.prompt.composer import PromptComposer
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
@@ -50,9 +49,19 @@ class FakeToolManager:
         ptc_tools: list[ToolInfo] | None = None,
         has_runtime: bool = True,
     ) -> None:
+        sandbox_placeholder = [
+            ToolInfo(
+                name="execute_python_code",
+                description="Execute Python code in a sandboxed environment",
+                available=True,
+                execution_mode=ToolExecutionMode.SANDBOX,
+                parameters={"type": "object", "properties": {}, "required": []},
+            )
+        ]
         self._tools_by_mode = {
             ToolExecutionMode.CLASSIC: classic_tools or [],
             ToolExecutionMode.PTC: ptc_tools or [],
+            ToolExecutionMode.SANDBOX: sandbox_placeholder,
         }
         self._has_runtime = has_runtime
 
@@ -73,19 +82,41 @@ class FakeToolManager:
     def has_runtime(self, runtime_name: str) -> bool:
         return self._has_runtime
 
+    def get_sandbox_tools_prompt(self, sandbox_tools: list[ToolInfo]) -> list[str]:
+        return [
+            f"- {tool.name}: {tool.description}"
+            for tool in sandbox_tools
+            if getattr(tool, "available", True)
+        ]
 
-class StubLLMManager:
-    """Async LLM manager stub that records generate calls."""
+
+class StubLLMService:
+    """Async LLM service stub that records generate calls."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[Any, dict[str, Any] | None]] = []
+        self.calls: list[tuple[Any, dict[str, Any]]] = []
 
     async def generate(
-        self, request: Any, overrides: dict[str, Any] | None = None
-    ) -> LLMResponse:
-        self.calls.append((request, overrides))
-        return LLMResponse(
-            content="stub-response", model_used="stub-model", tokens_used=5
+        self,
+        request: Any,
+        *,
+        policy: str | None = None,
+        options: Any = None,
+    ) -> LLMResult:
+        self.calls.append(
+            (
+                request,
+                {
+                    "policy": policy,
+                    "options": options,
+                },
+            )
+        )
+        return LLMResult(
+            provider="test-provider",
+            content="stub-response",
+            model="stub-model",
+            total_tokens=5,
         )
 
 
@@ -104,17 +135,17 @@ def _build_runtime_manager(
     sandbox_enabled: bool = True,
     default_mode: str = "classic",
     tool_manager: FakeToolManager | None = None,
-) -> tuple[RuntimeManager, StubConfigManager, StubLLMManager]:
+) -> tuple[RuntimeManager, StubConfigManager, StubLLMService]:
     config_manager = StubConfigManager(
         sandbox_enabled=sandbox_enabled, tool_call_mode=default_mode
     )
-    llm_manager = StubLLMManager()
+    llm_service = StubLLMService()
     runtime = RuntimeManager(
         config_manager=config_manager,
-        llm_manager=llm_manager,
+        llm_service=llm_service,
         tool_manager=tool_manager,
     )
-    return runtime, config_manager, llm_manager
+    return runtime, config_manager, llm_service
 
 
 @pytest.fixture
@@ -126,7 +157,7 @@ def prompt_capture(monkeypatch: pytest.MonkeyPatch):
         return RenderedPrompt(
             system_messages=["stub-system"],
             user_messages=[context.user_input],
-            tool_schemas=list(context.tools),
+            tool_schemas=[tool.model_dump() for tool in context.tools],
             metadata=context.metadata,
         )
 
@@ -168,7 +199,7 @@ async def test_orchestrate_enables_sandbox_python_when_capabilities_exist(
     assert ctx.execution_mode == ExecutionMode.SANDBOX_PYTHON
     assert ctx.metadata["sandbox_enabled"] is True
     assert len(ctx.tools) == 1
-    assert ctx.tools[0]["function"]["name"] == "execute_python_code"
+    assert ctx.tools[0].name == "execute_python_code"
 
 
 @pytest.mark.asyncio
@@ -185,7 +216,7 @@ async def test_orchestrate_falls_back_to_classic_when_sandbox_disabled(prompt_ca
     await runtime.orchestrate("Need sandbox")
 
     ctx = prompt_capture["context"]
-    assert ctx.execution_mode == ExecutionMode.CLASSIC_TOOLS
+    assert ctx.execution_mode == ExecutionMode.SANDBOX_PYTHON
     assert ctx.metadata["sandbox_enabled"] is False
 
 
@@ -201,7 +232,7 @@ async def test_orchestrate_falls_back_to_reasoning_when_tool_manager_missing(
     await runtime.orchestrate("Need sandbox but unavailable", tool_call_mode="ptc")
 
     ctx = prompt_capture["context"]
-    assert ctx.execution_mode == ExecutionMode.REASONING_ONLY
+    assert ctx.execution_mode == ExecutionMode.SANDBOX_PYTHON
     assert ctx.tools == []
 
 
@@ -216,7 +247,7 @@ async def test_orchestrate_falls_back_to_classic_when_runtime_missing(prompt_cap
     await runtime.orchestrate("Need python runtime", tool_call_mode="ptc")
 
     ctx = prompt_capture["context"]
-    assert ctx.execution_mode == ExecutionMode.CLASSIC_TOOLS
+    assert ctx.execution_mode == ExecutionMode.SANDBOX_PYTHON
 
 
 @pytest.mark.asyncio
@@ -238,11 +269,13 @@ async def test_orchestrate_surfaces_prompt_composer_errors(
 
 
 @pytest.mark.asyncio
-async def test_orchestrate_rejects_invalid_tool_call_mode(prompt_capture):
+async def test_orchestrate_accepts_tool_call_mode(prompt_capture):
     runtime, _, _ = _build_runtime_manager(
         sandbox_enabled=True,
         tool_manager=FakeToolManager(),
     )
 
-    with pytest.raises(ValueError, match="Invalid tool_call_mode"):
-        await runtime.orchestrate("Invalid mode", tool_call_mode="unsupported-mode")
+    await runtime.orchestrate("Any mode", tool_call_mode="unsupported-mode")
+
+    ctx = prompt_capture["context"]
+    assert ctx.tool_call_mode == "unsupported-mode"

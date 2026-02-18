@@ -29,10 +29,20 @@ class TestIConfigManagerProtocol:
             def path_manager(self):
                 return {}
 
+            @property
+            def system_registry(self):
+                return {}
+
             def load_global_config(self):
                 return {}
 
             def get_tools(self):
+                return {}
+
+            def register_module(self, module_name, capabilities=None):
+                return {}
+
+            def register_capability(self, capabilities):
                 return {}
 
             def reload_tools(self):
@@ -40,14 +50,6 @@ class TestIConfigManagerProtocol:
 
             def set_session_overrides(self, overrides):
                 pass
-
-            def resolve(
-                self,
-                global_config: dict | None = None,
-                session_overrides: dict | None = None,
-                call_overrides: dict | None = None,
-            ):
-                return {}
 
         # This should pass if all required methods are implemented
         assert isinstance(TestConfigManager(), IConfigManager)
@@ -77,7 +79,10 @@ class TestIToolManagerProtocol:
 
             def execute(self, request: ToolExecutionRequest):
                 return ToolExecutionResponse(
-                    tool_name=request.tool_name, success=True, result={}
+                    tool_name=request.tool_name,
+                    tool_args=request.payload,
+                    success=True,
+                    result={},
                 )
 
             def run_tool(self, tool_name, payload):

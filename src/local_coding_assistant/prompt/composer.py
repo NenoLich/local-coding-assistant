@@ -64,6 +64,14 @@ class PromptComposer:
         system_messages = self._render_system_messages(payload)
         user_messages = self._render_user_messages(payload)
 
+        # If we have handler_context with template_path, render that as user message
+        if context.handler_context and "template_path" in context.handler_context:
+            handler_template = context.handler_context["template_path"]
+            handler_message = self._render_template(handler_template, payload)
+            user_messages.append(handler_message)
+
+        tool_schemas = self._render_tool_schemas(payload)
+
         log.debug(
             "Rendered prompt for session=%s system=%d user=%d",
             context.session_id,
@@ -74,7 +82,8 @@ class PromptComposer:
         return RenderedPrompt(
             system_messages=system_messages,
             user_messages=user_messages,
-            tool_schemas=list(context.tools),
+            tool_schemas=tool_schemas,
+            history=context.history,
             metadata=context.metadata,
         )
 
@@ -95,7 +104,7 @@ class PromptComposer:
         blocks = [
             (self.get_template_path("skills"), bool(context.active_skills)),
             (self.get_template_path("memories"), bool(context.memories)),
-            (self.get_template_path("tools"), bool(context.tools)),
+            (self.get_template_path("tools_prompt"), bool(context.tools_prompt)),
             (self.get_template_path("examples"), bool(context.examples)),
             (self.get_template_path("constraints"), True),  # Always include constraints
         ]
@@ -111,6 +120,12 @@ class PromptComposer:
         """Render just the user's input as the user message."""
         context: PromptContext = payload["context"]
         return [context.user_input] if context.user_input.strip() else []
+
+    def _render_tool_schemas(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        """Render tool schemas for the given context."""
+        context: PromptContext = payload["context"]
+        tool_schemas = [tool.to_openai_function() for tool in context.tools]
+        return tool_schemas
 
     def _render_templates(
         self, template_names: list[str], payload: dict[str, Any]

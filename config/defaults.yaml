@@ -10,6 +10,8 @@ llm:
   max_tokens: 1000
   max_retries: 1
   retry_delay: 1.0
+  capture_reasoning: true
+  reasoning_max_chars: 1000
   # Providers will be dynamically managed at runtime
   providers: []
 
@@ -19,8 +21,8 @@ runtime:
   max_session_history: 100
   enable_logging: true
   log_level: "INFO"
-  use_graph_mode: True
-  stream: true
+  agent_mode: "no_agent"
+  stream: false
   # Tool calling mode: 'classic' (default), 'ptc' (programmatic tool calling), 'reasoning_only' (no tool calls)
   tool_call_mode: "classic"
 
@@ -28,7 +30,6 @@ providers: {}
 
 agent:
   # Agent profiles define different behaviors and configurations
-  policies: {}
   profiles:
     default:
       name: "default"
@@ -51,7 +52,7 @@ agent:
         - "Summarize objectives"
         - "Outline numbered plan with verification points"
       tone: "Analytical and structured"
-      model_policy: "planner"
+      model_policy: "planning_mode"
 
     executor:
       name: "executor"
@@ -64,29 +65,43 @@ agent:
       tone: "Hands-on and detail oriented"
       model_policy: "general"
 
-  # Default fallback policies for different agent roles
-  planner:
-    models:
-      - "openrouter:qwen/qwen3-coder:free"
-      - "google_gemini:gemini-2.5-flash"
-      - "fallback:any"
+  # Include your custom policies directly
+  policies:
+    # Plan mode with strong reasoning
+    planning_mode:
+      models:
+        - "mistral-ai/Codestral-2501"
+        - "z-ai/glm-4.5-air:free"
+        - "fallback:any"
+      max_failovers: 3
+      fallback_strategy: "exponential"
 
-  researcher:
-    models:
-      - "google_gemini:gemini-2.5-flash"
-      - "openrouter:qwen/qwen3-235b-a22b:free"
-      - "fallback:any"
+    # Custom policy with exponential backoff
+    coding_task:
+      models:
+        - "mistral-ai/Codestral-2501"
+        - "kwaipilot/kat-coder-pro:free"
+        - "fallback:any"
+      max_failovers: 3
+      fallback_strategy: "exponential"
 
-  analyzer:
-    models:
-      - "openrouter:moonshotai/kimi-dev-72b:free"
-      - "google_gemini:gemini-2.5-flash"
-      - "fallback:any"
+    # Fast policy for simple tasks
+    general:
+      models:
+        - "nvidia/nemotron-3-nano-30b-a3b:free"
+        - "arcee-ai/trinity-large-preview:free"
+        - "fallback:any"
+      max_failovers: 3
+      fallback_strategy: "sequential"
 
-  general:
-    models:
-      - "google_gemini:gemini-2.5-flash"
-      - "fallback:any"
+    # Cost-optimized policy
+    budget_mode:
+      models:
+        - "kwaipilot/kat-coder-pro:free"
+        - "github_models:microsoft/Phi-4"
+        - "fallback:any"
+      max_failovers: 1
+      fallback_strategy: "sequential"
 
 # Prompt template configuration
 prompt:
@@ -105,7 +120,7 @@ prompt:
     agent_identity: "base/agent_identity.jinja2"
     skills: "blocks/skills.jinja2"
     memories: "blocks/memories.jinja2"
-    tools: "blocks/tools.jinja2"
+    tools_prompt: "blocks/tools_prompt.jinja2"
     examples: "blocks/examples.jinja2"
     constraints: "blocks/constraints.jinja2"
 

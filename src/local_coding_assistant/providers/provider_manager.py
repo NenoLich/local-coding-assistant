@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from local_coding_assistant.config import EnvManager
+from local_coding_assistant.config.env_manager import EnvManager, get_env_manager
 from local_coding_assistant.providers.base import BaseProvider
 from local_coding_assistant.providers.generic_provider import GenericProvider
 from local_coding_assistant.utils.logging import get_logger
@@ -45,7 +45,9 @@ _provider_sources: dict[str, str] = {}
 class ProviderManager:
     """Manages dynamic loading and registration of LLM providers"""
 
-    def __init__(self, env_manager: EnvManager, allow_test_requests: bool = False):
+    def __init__(
+        self, env_manager: EnvManager | None = None, allow_test_requests: bool = False
+    ):
         self._providers: dict[str, type[BaseProvider]] = {}
         self._instances: dict[str, BaseProvider] = {}
         self._provider_configs: dict[
@@ -54,7 +56,7 @@ class ProviderManager:
         self._auto_discovery_paths = [
             Path(__file__).parent,  # Current providers directory
         ]
-        self._env_manager = env_manager
+        self._env_manager = env_manager or get_env_manager()
         self._allow_test_requests = allow_test_requests
 
         # Reference the module-level registry

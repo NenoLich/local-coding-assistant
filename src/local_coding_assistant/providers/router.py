@@ -93,7 +93,7 @@ class ProviderRouter:
             ProviderNotFoundError: If no suitable provider/model can be found
         """
         # If provider is specified, try to use it first
-        if provider and request.model:
+        if provider and request.model and request.model != "auto":
             try:
                 provider_instance = self.provider_manager.get_provider(provider)
                 if provider_instance and provider_instance.supports_model(
@@ -113,7 +113,7 @@ class ProviderRouter:
                 pass
 
         # If we have a model but no provider, try to find a provider that supports it
-        if request.model and not provider:
+        if request.model and not provider and request.model != "auto":
             try:
                 return await self._resolve_model_only(request.model, request)
             except ProviderNotFoundError as e:
@@ -133,6 +133,11 @@ class ProviderRouter:
 
         # If we get here, either no provider/model was specified or the specified ones failed
         # Fall back to policy-based routing
+        if not role:
+            raise ProviderNotFoundError(
+                f"Provider router failed to find provider for the model: {request.model}"
+            )
+
         logger.info(f"Falling back to policy-based routing for {role} role")
 
         return await self._route_by_policy(role, request)
@@ -526,7 +531,7 @@ class ProviderRouter:
         # Try to get role-specific policy from config
         try:
             if hasattr(self.config_manager, "global_config"):
-                models = self.config_manager.global_config.agents.get_policy_by_role(
+                models = self.config_manager.global_config.agent.get_policy_for_role(
                     role
                 )
                 if models:

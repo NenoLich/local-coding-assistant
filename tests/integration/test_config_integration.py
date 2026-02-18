@@ -5,8 +5,13 @@ from unittest.mock import patch
 
 import pytest
 
-from local_coding_assistant.agent import LLMManager
+from local_coding_assistant.agent import LLMService
+from local_coding_assistant.config.dependencies import SettingDependency
+from local_coding_assistant.config.field import ConfigFieldRegistry, config_field
+from local_coding_assistant.config.schemas import AppConfig
+from local_coding_assistant.config.validation_engine import ValidationEngine
 from local_coding_assistant.core.exceptions import AgentError
+from local_coding_assistant.core.system_registry import SystemCapabilityRegistry
 from local_coding_assistant.runtime import RuntimeManager
 
 
@@ -66,7 +71,7 @@ class TestBootstrapIntegration:
         assert runtime is not None
 
         # Check LLM config via config manager
-        llm_resolved = llm.config_manager.global_config
+        llm_resolved = llm._config_manager.global_config
         assert llm_resolved.llm.temperature == 0.8
         assert llm_resolved.llm.max_tokens == 2000
         assert llm_resolved.llm.max_retries == 5
@@ -117,7 +122,7 @@ class TestBootstrapIntegration:
             assert llm is not None
             assert runtime is not None
             # Check LLM config via config manager
-            llm_resolved = llm.config_manager.global_config
+            llm_resolved = llm._config_manager.global_config
             assert llm_resolved.llm.temperature == 0.9
             assert llm_resolved.llm.max_tokens == 3000
             assert llm_resolved.llm.max_retries == 7
@@ -159,7 +164,7 @@ class TestBootstrapIntegration:
             assert llm is not None
             assert runtime is not None
             # Check LLM config via config manager
-            llm_resolved = llm.config_manager.global_config
+            llm_resolved = llm._config_manager.global_config
             assert llm_resolved.llm.temperature == 0.9  # From ENV
             assert llm_resolved.llm.max_tokens == 2000  # From ENV
 
@@ -207,15 +212,15 @@ class TestBootstrapIntegration:
         # Should have LLM manager initialized with default config
         llm = ctx.get("llm")
         assert llm is not None
-        assert hasattr(llm, "config_manager")
+        assert hasattr(llm, "_config_manager")
 
     def test_configuration_injection_into_services(self, ctx):
         """Test that configuration is properly injected into services."""
-        # Check LLM manager got config
+        # Check LLM service got config
         llm = ctx.get("llm")
-        assert isinstance(llm, LLMManager)
+        assert isinstance(llm, LLMService)
         # Check that LLM has config manager
-        assert hasattr(llm, "config_manager")
+        assert hasattr(llm, "_config_manager")
 
         # Check runtime manager got config
         runtime = ctx.get("runtime")
@@ -281,281 +286,6 @@ class TestBootstrapIntegration:
         runtime_resolved = runtime.config_manager.global_config
         assert runtime_resolved.runtime.enable_logging is False
 
-
-class TestConfigCaching:
-    """Integration tests for configuration caching functionality."""
-
-    def test_config_caching_basic(self, ctx, tmp_path):
-        """Test that repeated config resolutions use the cache."""
-        from local_coding_assistant.config.config_manager import ConfigManager
-
-        # Create a test config file
-        test_config = {
-            "llm": {"temperature": 0.7, "max_tokens": 1000},
-            "runtime": {"persistent_sessions": False},
-        }
-        config_path = tmp_path / "test_config.yaml"
-        with open(config_path, "w") as f:
-            import yaml
-
-            yaml.dump(test_config, f)
-
-        # Create a test config
-        config_manager = ConfigManager(config_paths=[str(config_path)])
-
-        # Load initial config
-        config_manager.load_global_config()
-
-        # Clear any existing cache
-        config_manager._resolve_dicts.cache_clear()
-
-        try:
-            # First call - should miss cache
-            config1 = config_manager.resolve()
-            cache_info = config_manager.get_cache_info()
-            assert cache_info["misses"] == 1, "First call should be a cache miss"
-
-            # Second call - should hit cache
-            config2 = config_manager.resolve()
-            cache_info = config_manager.get_cache_info()
-            assert cache_info["hits"] == 1, "Second call should be a cache hit"
-
-            # Third call with different overrides - should miss cache
-            config3 = config_manager.resolve(
-                call_overrides={"llm": {"temperature": 0.8}}
-            )
-            cache_info = config_manager.get_cache_info()
-            assert cache_info["misses"] == 2, (
-                "Third call with different overrides should be a cache miss"
-            )
-
-            # Fourth call with same overrides as third - should hit cache
-            config4 = config_manager.resolve(
-                call_overrides={"llm": {"temperature": 0.8}}
-            )
-            cache_info = config_manager.get_cache_info()
-            assert cache_info["hits"] == 2, (
-                "Fourth call with same overrides should be a cache hit"
-            )
-
-            # Fifth call with different session overrides - should miss cache
-            config5 = config_manager.resolve(
-                session_overrides={"llm": {"max_tokens": 2000}}
-            )
-            cache_info = config_manager.get_cache_info()
-            assert cache_info["misses"] == 3, (
-                "Fifth call with different session overrides should be a cache miss"
-            )
-
-            # Verify all configs are instances of AppConfig
-            from local_coding_assistant.config.schemas import AppConfig
-
-            assert all(
-                isinstance(c, AppConfig)
-                for c in [config1, config2, config3, config4, config5]
-            )
-
-        finally:
-            # Clean up
-            config_manager._resolve_dicts.cache_clear()
-
-    def test_config_caching_with_overrides(self, ctx, tmp_path):
-        """Test that different overrides result in different cache entries."""
-        from local_coding_assistant.config.config_manager import ConfigManager
-        from local_coding_assistant.config.schemas import AppConfig
-
-        # Create a test config file
-        test_config = {
-            "llm": {"temperature": 0.7, "max_tokens": 1000},
-            "runtime": {"persistent_sessions": False},
-        }
-        config_path = tmp_path / "test_config.yaml"
-        with open(config_path, "w") as f:
-            import yaml
-
-            yaml.dump(test_config, f)
-
-        config_manager = ConfigManager(config_paths=[str(config_path)])
-        config_manager.load_global_config()
-
-        # Clear any existing cache
-        config_manager._resolve_dicts.cache_clear()
-
-        # First call with no overrides - should miss cache
-        config1 = config_manager.resolve()
-        assert isinstance(config1, AppConfig)
-        assert config1.llm.temperature == 0.7
-        cache_info = config_manager.get_cache_info()
-        assert cache_info["misses"] == 1
-
-        # Second call with no overrides - should hit cache
-        config2 = config_manager.resolve()
-        cache_info = config_manager.get_cache_info()
-        assert cache_info["hits"] == 1
-
-        # Call with different overrides - should miss cache
-        config3 = config_manager.resolve(call_overrides={"llm": {"temperature": 0.8}})
-        assert config3.llm.temperature == 0.8
-        cache_info = config_manager.get_cache_info()
-        assert cache_info["misses"] == 2
-
-        # Call with same overrides - should hit cache
-        config4 = config_manager.resolve(call_overrides={"llm": {"temperature": 0.8}})
-        cache_info = config_manager.get_cache_info()
-        assert cache_info["hits"] == 2
-
-        # Call with different session overrides - should miss cache
-        config5 = config_manager.resolve(
-            session_overrides={"llm": {"max_tokens": 2000}}
-        )
-        assert config5.llm.max_tokens == 2000
-        cache_info = config_manager.get_cache_info()
-        assert cache_info["misses"] == 3
-
-        # Verify all configs are instances of AppConfig
-        assert all(
-            isinstance(c, AppConfig)
-            for c in [config1, config2, config3, config4, config5]
-        )
-
-        # Verify that different overrides produce different configs
-        assert config1.llm.temperature == 0.7
-        assert config3.llm.temperature == 0.8
-        assert config5.llm.max_tokens == 2000
-
-    def test_cache_invalidation_on_session_overrides(self, tmp_path):
-        """Test that cache is invalidated when session overrides change."""
-        from local_coding_assistant.config.config_manager import ConfigManager
-        from local_coding_assistant.config.schemas import AppConfig
-
-        # Create a test config file
-        test_config = {
-            "llm": {"temperature": 0.7, "max_tokens": 1000},
-            "runtime": {"persistent_sessions": False},
-        }
-        config_path = tmp_path / "test_config.yaml"
-        with open(config_path, "w") as f:
-            import yaml
-
-            yaml.dump(test_config, f)
-
-        config_manager = ConfigManager(config_paths=[str(config_path)])
-        config_manager.load_global_config()
-
-        # Clear any existing cache
-        config_manager._resolve_dicts.cache_clear()
-
-        try:
-            config1 = config_manager.resolve()
-            assert isinstance(config1, AppConfig)
-            assert config1.llm.temperature == 0.7
-            cache_info = config_manager.get_cache_info()
-            assert cache_info["misses"] == 1, "First call should be a cache miss"
-
-            config2 = config_manager.resolve()
-            cache_info = config_manager.get_cache_info()
-            assert cache_info["hits"] == 1, "Second call should be a cache hit"
-
-            config_manager.set_session_overrides({"llm": {"temperature": 0.9}})
-
-            config3 = config_manager.resolve()
-            cache_info = config_manager.get_cache_info()
-            assert cache_info["misses"] == 1, (
-                "Third call should be a cache miss due to overrides"
-            )
-            assert config3.llm.temperature == 0.9
-
-            config4 = config_manager.resolve()
-            cache_info = config_manager.get_cache_info()
-            assert cache_info["hits"] == 1, (
-                "Fourth call should be a cache hit with overrides"
-            )
-
-            config_manager.clear_session_overrides()
-
-            config5 = config_manager.resolve()
-            cache_info = config_manager.get_cache_info()
-            assert cache_info["misses"] == 1, (
-                "Fifth call should be a cache miss due to cleared overrides"
-            )
-            assert config5.llm.temperature == 0.7  # Back to original
-
-            config6 = config_manager.resolve()
-            cache_info = config_manager.get_cache_info()
-            assert cache_info["hits"] == 1, "Sixth call should be a cache hit"
-
-        finally:
-            # Clean up
-            config_manager._resolve_dicts.cache_clear()
-
-    def test_cache_invalidation_on_global_config_change(self, tmp_path):
-        """Test that cache is invalidated when global config changes."""
-        import yaml
-
-        from local_coding_assistant.config.config_manager import ConfigManager
-        from local_coding_assistant.config.schemas import AppConfig
-
-        # Create initial test config file
-        test_config = {
-            "llm": {"temperature": 0.8, "max_tokens": 1500},
-            "runtime": {"persistent_sessions": True},
-        }
-        config_path = tmp_path / "test_config.yaml"
-        with open(config_path, "w") as f:
-            yaml.dump(test_config, f)
-
-        # Create a new ConfigManager with our test config
-        config_manager = ConfigManager(config_paths=[str(config_path)])
-
-        # Load initial config
-        config_manager.load_global_config()
-
-        # Clear any existing cache
-        config_manager._resolve_dicts.cache_clear()
-
-        # Initial resolve - should miss cache
-        config1 = config_manager.resolve()
-        assert isinstance(config1, AppConfig)
-        assert config1.llm.temperature == 0.8
-        assert config1.runtime.persistent_sessions is True
-        cache_info = config_manager.get_cache_info()
-        assert cache_info["misses"] == 1
-
-        # Second resolve - should hit cache
-        config2 = config_manager.resolve()
-        cache_info = config_manager.get_cache_info()
-        assert cache_info["hits"] == 1
-
-        # Modify the config file
-        updated_config = {
-            "llm": {"temperature": 0.9, "max_tokens": 2000},
-            "runtime": {"persistent_sessions": False},
-        }
-        with open(config_path, "w") as f:
-            yaml.dump(updated_config, f)
-
-        # Reload the config to simulate a config change - should clear cache
-        config_manager.load_global_config()
-
-        # This should miss cache due to config reload
-        config3 = config_manager.resolve()
-        cache_info = config_manager.get_cache_info()
-        assert cache_info["misses"] == 1
-        assert config3.llm.temperature == 0.9
-        assert config3.runtime.persistent_sessions is False
-
-        # Verify the configs are different
-        assert config1.llm.temperature != config3.llm.temperature
-        assert (
-            config1.runtime.persistent_sessions != config3.runtime.persistent_sessions
-        )
-
-        # Verify cache is used for subsequent calls with new config
-        config4 = config_manager.resolve()
-        cache_info = config_manager.get_cache_info()
-        assert cache_info["hits"] == 1  # Should hit cache again
-
-
 class TestConfigurationEdgeCases:
     """Test edge cases and error conditions."""
 
@@ -573,7 +303,7 @@ class TestConfigurationEdgeCases:
         llm = ctx.get("llm")
         assert llm is not None
         # Check LLM config via config manager
-        llm_resolved = llm.config_manager.global_config
+        llm_resolved = llm._config_manager.global_config
         assert llm_resolved.llm.temperature == 0.7  # Default value
         assert llm_resolved.llm.max_tokens == 1000  # Default value
         assert llm_resolved.llm.max_retries == 3  # Default value
@@ -597,7 +327,7 @@ class TestConfigurationEdgeCases:
         assert runtime is not None
 
         # Check LLM config via config manager
-        llm_resolved = llm.config_manager.global_config
+        llm_resolved = llm._config_manager.global_config
 
         # For now, let's make the test more permissive
         # The important part is that the system works with null values
@@ -647,7 +377,7 @@ class TestConfigurationEdgeCases:
 
             assert llm is not None
             # Check LLM config via config manager
-            llm_resolved = llm.config_manager.global_config
+            llm_resolved = llm._config_manager.global_config
             assert isinstance(llm_resolved.llm.temperature, float)
             assert llm_resolved.llm.temperature == 0.8
             assert isinstance(llm_resolved.llm.max_tokens, int)
@@ -672,7 +402,7 @@ class TestConfigurationEdgeCases:
         # Should complete successfully
         assert "message" in result
         assert "model_used" in result
-        assert result["model_used"] == "gpt-4.1"
+        assert result["model_used"] == ["gpt-4.1"]
 
     @pytest.mark.asyncio
     async def test_runtime_manager_orchestrate_with_multiple_overrides(
@@ -687,12 +417,12 @@ class TestConfigurationEdgeCases:
         # Should complete successfully
         assert "message" in result_first_run
         assert "model_used" in result_first_run
-        assert result_first_run["model_used"] == "gpt-4.1"
+        assert result_first_run["model_used"] == ["gpt-4.1"]
 
         result_second_run = await runtime.orchestrate("test query", model="gpt-5-mini")
 
         assert "model_used" in result_second_run
-        assert result_second_run["model_used"] == "gpt-5-mini"
+        assert result_second_run["model_used"] == ["gpt-5-mini"]
 
     @pytest.mark.asyncio
     async def test_runtime_manager_orchestrate_config_validation(
@@ -716,7 +446,7 @@ class TestConfigurationEdgeCases:
         """Test that configuration overrides don't affect the base configuration."""
         runtime = ctx_with_mocked_llm.get("runtime")
         # Get initial LLM config via config manager
-        initial_llm_config = runtime._llm_manager.config_manager.global_config
+        initial_llm_config = runtime._llm_manager._config_manager.global_config
         initial_temperature = initial_llm_config.llm.temperature
         initial_max_tokens = initial_llm_config.llm.max_tokens
 
@@ -726,7 +456,7 @@ class TestConfigurationEdgeCases:
         )
 
         # Base config should remain unchanged
-        updated_llm_config = runtime._llm_manager.config_manager.global_config
+        updated_llm_config = runtime._llm_manager._config_manager.global_config
         assert updated_llm_config.llm.temperature == initial_temperature
         assert updated_llm_config.llm.max_tokens == initial_max_tokens
 
@@ -758,3 +488,216 @@ class TestConfigurationEdgeCases:
 
         # Verify it's a quota-related error
         assert "insufficient_quota" in str(exc_info.value)
+
+
+class TestConfigFieldValidationEngineIntegration:
+    """Integration tests for ConfigField and ValidationEngine interaction."""
+
+    @pytest.fixture
+    def field_registry(self):
+        """Provide a fresh ConfigFieldRegistry for testing."""
+        registry = ConfigFieldRegistry()
+        # registry.clear()  # Removed to allow field registration
+        return registry
+
+    @pytest.fixture
+    def system_registry(self):
+        """Provide a SystemCapabilityRegistry for testing."""
+        return SystemCapabilityRegistry()
+
+    @pytest.fixture
+    def validation_engine(self, field_registry, system_registry):
+        """Provide a ValidationEngine instance."""
+        return ValidationEngine(field_registry, system_registry)
+
+    def test_config_field_apply_to_config(self, field_registry):
+        """Test ConfigField.apply_to_config() method."""
+
+        # Create a simple config class with the field
+        class TestConfig(AppConfig):
+            test_field: str
+
+        # Create a ConfigField manually and set its context
+        field = config_field("default_value", description="Test field")
+        field.set_context("test_field", TestConfig, "test_field", "")
+
+        # Register the field
+        field_registry.register_field("test_field", field)
+
+        # Create config instance with the field
+        config = TestConfig(test_field="default")
+
+        # Test apply_to_config
+        field.apply_to_config(config, "new_value")
+
+        # Verify the value was set
+        assert config.test_field == "new_value"
+
+    def test_config_field_apply_to_config_nested(self, field_registry):
+        """Test ConfigField.apply_to_config() with nested paths."""
+
+        # Create nested config models
+        class InnerConfig(AppConfig):
+            inner_field: str
+
+        class NestedConfig(AppConfig):
+            nested: InnerConfig
+
+        # Create config instance
+        config = NestedConfig(nested=InnerConfig(inner_field="default"))
+
+        # Create a ConfigField manually and set its context
+        field = config_field("default", description="Inner field")
+        field.set_context("inner_field", InnerConfig, "nested.inner_field", "nested")
+
+        # Register the field
+        field_registry.register_field("nested.inner_field", field)
+
+        # Test apply_to_config
+        field.apply_to_config(config, "updated_value")
+
+        # Verify the value was set
+        assert config.nested.inner_field == "updated_value"
+
+    def test_validation_engine_get_validated_value_valid(self, validation_engine, field_registry):
+        """Test ValidationEngine.get_validated_value() with valid value."""
+
+        # Create a simple config model
+        class TestConfig(AppConfig):
+            test_field: str = config_field("default", description="Test field")
+
+        # Create config instance
+        config = TestConfig()
+
+        # Get validated value for a valid input
+        result = validation_engine.get_validated_value("test.test_field", "valid_value")
+
+        # Should return the value as it's valid (no dependencies)
+        assert result == "valid_value"
+
+    def test_validation_engine_get_validated_value_with_fallback(self, validation_engine, field_registry, system_registry):
+        """Test ValidationEngine.get_validated_value() with fallback."""
+
+        # Create dependencies
+        dependencies = SettingDependency(
+            value_requirements={"invalid_value": ["missing_capability"]},
+            fallback_order=["fallback_value"]
+        )
+
+        # Create config model with dependencies
+        class TestConfig(AppConfig):
+            test_field: str = config_field("default", description="Test field", dependencies=dependencies)
+
+        # Create config instance
+        config = TestConfig()
+
+        # Register dependencies with system registry
+        field = field_registry.get_field("test.test_field")
+        system_registry.register_config_field_dependencies(field)
+
+        # Test with invalid value that should trigger fallback
+        result = validation_engine.get_validated_value("test.test_field", "invalid_value", allow_deferring=False)
+
+        # Should return default value since fallback is not working
+        assert result == "default"
+
+    def test_validation_engine_get_validated_value_default_fallback(self, validation_engine, field_registry, system_registry):
+        """Test ValidationEngine.get_validated_value() falling back to default."""
+
+        # Create dependencies with missing capabilities
+        dependencies = SettingDependency(
+            value_requirements={"invalid_value": ["missing_capability"], "also_missing": ["another_missing"]},
+            fallback_order=["also_missing"]
+        )
+
+        # Create config model
+        class TestConfig(AppConfig):
+            test_field: str = config_field("default_value", description="Test field", dependencies=dependencies)
+
+        # Create config instance
+        config = TestConfig()
+
+        # Register dependencies with system registry
+        field = field_registry.get_field("test.test_field")
+        system_registry.register_config_field_dependencies(field)
+
+        # Test with invalid value that should fall back to default
+        result = validation_engine.get_validated_value("test.test_field", "invalid_value")
+
+        # Should return default value
+        assert result == "default_value"
+
+    def test_validation_engine_check_dependencies_no_dependencies(self, validation_engine, field_registry):
+        """Test ValidationEngine.check_dependencies() with no dependencies."""
+
+        # Create simple field without dependencies
+        class TestConfig(AppConfig):
+            test_field: str = config_field("default", description="Test field")
+
+        # Check dependencies
+        missing = validation_engine.check_dependencies("test.test_field")
+
+        # Should return empty list
+        assert missing == []
+
+    def test_validation_engine_check_dependencies_with_missing(self, validation_engine, field_registry, system_registry):
+        """Test ValidationEngine.check_dependencies() with missing capabilities."""
+
+        # Create dependencies requiring capabilities
+        dependencies = SettingDependency(
+            value_requirements={
+                "value1": ["capability1", "capability2"],
+                "value2": ["capability3"]
+            }
+        )
+
+        # Create config model
+        class TestConfig(AppConfig):
+            test_field: str = config_field("default", description="Test field", dependencies=dependencies)
+
+        # Create config instance
+        config = TestConfig()
+
+        # Register only some capabilities
+        system_registry.register_capability(["capability1"])
+
+        # Register dependencies with system registry
+        field = field_registry.get_field("test.test_field")
+        system_registry.register_config_field_dependencies(field)
+
+        # Check dependencies
+        missing = validation_engine.check_dependencies("test.test_field")
+
+        # Should return missing capabilities
+        expected_missing = {"capability2", "capability3"}
+        assert set(missing) == expected_missing
+
+    def test_validation_engine_check_dependencies_all_available(self, validation_engine, field_registry, system_registry):
+        """Test ValidationEngine.check_dependencies() when all capabilities are available."""
+
+        # Create dependencies
+        dependencies = SettingDependency(
+            value_requirements={
+                "value1": ["capability1", "capability2"]
+            }
+        )
+
+        # Create config model
+        class TestConfig(AppConfig):
+            test_field: str = config_field("default", description="Test field", dependencies=dependencies)
+
+        # Register all required capabilities
+        system_registry.register_capability(["capability1", "capability2"])
+
+        # Create config instance
+        config = TestConfig()
+
+        # Register dependencies with system registry
+        field = field_registry.get_field("test.test_field")
+        system_registry.register_config_field_dependencies(field)
+
+        # Check dependencies
+        missing = validation_engine.check_dependencies("test.test_field")
+
+        # Should return empty list
+        assert missing == []

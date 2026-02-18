@@ -12,7 +12,7 @@ from typing import Any
 import typer
 import yaml
 
-from local_coding_assistant.config.env_manager import EnvManager
+from local_coding_assistant.config.env_manager import EnvManager, get_env_manager
 from local_coding_assistant.core.bootstrap import bootstrap
 from local_coding_assistant.core.error_handler import safe_entrypoint
 from local_coding_assistant.utils.logging import get_logger
@@ -44,7 +44,7 @@ def _get_config_path(
         return Path(config_file)
 
     # Create or use provided env_manager
-    env_manager = env_manager or EnvManager()
+    env_manager = env_manager or get_env_manager()
 
     # Use PathManager to resolve the config path based on environment
     return env_manager.path_manager.resolve_path("@config/providers.local.yaml")
@@ -214,10 +214,10 @@ def _create_provider_config(
     return config
 
 
-def _verify_provider_health(llm_manager, provider_name: str) -> None:
+def _verify_provider_health(llm_service, provider_name: str) -> None:
     """Verify that the provider was loaded correctly and is healthy."""
     try:
-        provider_status_list = llm_manager.get_provider_status_list()
+        provider_status_list = llm_service.get_provider_status_list()
         available_providers = [p["name"] for p in provider_status_list]
 
         if provider_name not in available_providers:
@@ -348,14 +348,14 @@ def add(
     level = getattr(logging, actual_log_level.upper(), logging.INFO)
     try:
         ctx = bootstrap(log_level=level)
-        llm_manager = ctx["llm"]
-        if llm_manager is None:
+        llm_service = ctx["llm"]
+        if llm_service is None:
             typer.echo(
-                "Error: LLM manager not available (initialization failed)", err=True
+                "Error: LLM service not available (initialization failed)", err=True
             )
             raise typer.Exit(code=1)
 
-        _verify_provider_health(llm_manager, name)
+        _verify_provider_health(llm_service, name)
         if models:
             typer.echo(
                 f"✅ Successfully added and verified provider '{name}'. "
@@ -392,24 +392,24 @@ def list_providers(
     level = getattr(logging, actual_log_level.upper(), logging.INFO)
 
     ctx = bootstrap(log_level=level)
-    llm_manager = ctx["llm"]
+    llm_service = ctx["llm"]
 
-    if llm_manager is None:
-        typer.echo("Error: LLM manager not available (provider initialization failed)")
+    if llm_service is None:
+        typer.echo("Error: LLM service not available (provider initialization failed)")
         raise typer.Exit(code=1)
 
     if actual_provider:
-        _list_specific_provider(llm_manager, actual_provider)
+        _list_specific_provider(llm_service, actual_provider)
     else:
-        _list_all_providers(llm_manager)
+        _list_all_providers(llm_service)
 
 
-def _list_specific_provider(llm_manager, provider_name: str) -> None:
+def _list_specific_provider(llm_service, provider_name: str) -> None:
     """List models for a specific provider."""
-    if provider_name in llm_manager.provider_manager.list_providers():
-        provider_instance = llm_manager.provider_manager.get_provider(provider_name)
+    if provider_name in llm_service.provider_manager.list_providers():
+        provider_instance = llm_service.provider_manager.get_provider(provider_name)
         source = (
-            llm_manager.provider_manager.get_provider_source(provider_name) or "unknown"
+            llm_service.provider_manager.get_provider_source(provider_name) or "unknown"
         )
 
         typer.echo(f"Provider: {provider_name} ({source})")
@@ -427,9 +427,9 @@ def _list_specific_provider(llm_manager, provider_name: str) -> None:
         typer.echo(f"Provider '{provider_name}' not found")
 
 
-def _list_all_providers(llm_manager) -> None:
+def _list_all_providers(llm_service) -> None:
     """List all available providers."""
-    status_list = llm_manager.get_provider_status_list()
+    status_list = llm_service.get_provider_status_list()
     if status_list:
         typer.echo("Available providers:")
         typer.echo(f"{'Name':<20} {'Source':<10} {'Status':<12} {'Models'}")
@@ -492,16 +492,16 @@ def remove(
 
     # Bootstrap with updated configuration
     ctx = bootstrap(log_level=level)
-    llm_manager = ctx["llm"]
+    llm_service = ctx["llm"]
 
-    if llm_manager is None:
-        typer.echo("Error: LLM manager not available (provider initialization failed)")
+    if llm_service is None:
+        typer.echo("Error: LLM service not available (provider initialization failed)")
         raise typer.Exit(code=1)
 
     # Verify the provider is no longer available
     try:
         # This should raise an exception if the provider doesn't exist
-        provider = llm_manager.get_provider(name)
+        provider = llm_service.provider_manager.get_provider(name)
         if provider is not None:
             typer.echo(
                 f"❌ Error: Provider '{name}' is still available after removal",
@@ -750,12 +750,12 @@ def reload(
         level = getattr(logging, actual_log_level.upper(), logging.INFO)
 
     ctx = bootstrap(log_level=level)
-    llm_manager = ctx["llm"]
+    llm_service = ctx["llm"]
 
-    if llm_manager is None:
-        typer.echo("Error: LLM manager not available (provider initialization failed)")
+    if llm_service is None:
+        typer.echo("Error: LLM service not available (provider initialization failed)")
         raise typer.Exit(code=1)
 
     # Trigger reload through the bootstrap system
-    llm_manager.reload_providers()
+    llm_service.reload_providers()
     typer.echo("Providers reloaded successfully")

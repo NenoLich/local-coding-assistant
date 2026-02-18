@@ -1,22 +1,35 @@
 policies:
-  planner:
+  # Plan mode with strong reasoning
+  planning_mode:
     models:
-      - openrouter:qwen/qwen3-coder:free
-      - google_gemini:gemini-2.5-flash
-      - github_models:microsoft/Phi-4
-      - fallback:any
-  researcher:
+      - "mistral-ai/Codestral-2501"
+      - "z-ai/glm-4.5-air:free"
+      - "fallback:any"
+    max_failovers: 3
+    fallback_strategy: "exponential"
+
+  # Custom policy with exponential backoff
+  coding_task:
     models:
-      - google_gemini:gemini-2.5-flash
-      - openrouter:qwen/qwen3-235b-a22b:free
-      - fallback:any
-  analyzer:
-    models:
-      - openrouter:moonshotai/kimi-dev-72b:free
-      - github_models:mistral-ai/Codestral-2501
-      - google_gemini:gemini-2.5-flash
-      - fallback:any
+      - "mistral-ai/Codestral-2501"
+      - "kwaipilot/kat-coder-pro:free"
+      - "fallback:any"
+    max_failovers: 3
+    fallback_strategy: "exponential"
+
+  # Fast policy for simple tasks
   general:
     models:
-      - google_gemini:gemini-2.5-flash
-      - fallback:any
+      - "xiaomi/mimo-v2-flash:free"
+      - "fallback:any"
+    max_failovers: 1
+    fallback_strategy: "sequential"
+
+  # Cost-optimized policy
+  budget_mode:
+    models:
+      - "kwaipilot/kat-coder-pro:free"
+      - "github_models:microsoft/Phi-4"
+      - "fallback:any"
+    max_failovers: 1
+    fallback_strategy: "sequential"

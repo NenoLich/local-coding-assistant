@@ -1,0 +1,13 @@
+                Run Summary                
+┌──────────────┬──────────────────────────┐
+│ Field        │ Value                    │
+├──────────────┼──────────────────────────┤
+│ Run ID       │ run_123                  │
+│ Session ID   │ session_123              │
+│ Mode         │ frame                    │
+│ Status       │ success                  │
+│ Models       │ mock-model1, mock-model2 │
+│ Tokens       │ 20                       │
+│ Iterations   │ 1                        │
+│ Final Answer │ All done                 │
+└──────────────┴──────────────────────────┘

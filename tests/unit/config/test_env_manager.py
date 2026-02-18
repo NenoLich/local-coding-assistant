@@ -344,31 +344,43 @@ class TestEnvManager:
         """Test _resolve_env_paths handles @ and ~ symbols correctly."""
         # Setup mock PathManager
         mock_path_manager = MagicMock(spec=PathManager)
-        mock_path_manager.resolve_path.side_effect = lambda x: tmp_path / x.replace("@project/", "").replace("~", "home")
-        
+        mock_path_manager.resolve_path.side_effect = lambda x: tmp_path / x.replace(
+            "@project/", ""
+        ).replace("~", "home")
+
         # Create test paths with special symbols - need to set them as strings directly
         test_paths = [
             "@project/.env",  # Should be resolved
-            "~/.env.local",   # Should be resolved
+            "~/.env.local",  # Should be resolved
             "/absolute/path/.env",  # Should not be resolved (no special symbols)
             str(tmp_path / "direct.env"),  # Direct path
         ]
-        
-        manager = EnvManager(env_paths=test_paths, load_env=False, path_manager=mock_path_manager)
-        
+
+        manager = EnvManager(
+            env_paths=test_paths, load_env=False, path_manager=mock_path_manager
+        )
+
         # Reset env_paths to strings to test _resolve_env_paths properly
         manager.env_paths = test_paths
-        
+
         # Manually call _resolve_env_paths
         manager._resolve_env_paths()
-        
+
         # Verify paths were resolved correctly
         assert len(manager.env_paths) == 4
         # Check that @project path was resolved (no longer contains @project)
-        resolved_project_paths = [path for path in manager.env_paths if str(path).endswith(".env") and "@project" not in str(path)]
+        resolved_project_paths = [
+            path
+            for path in manager.env_paths
+            if str(path).endswith(".env") and "@project" not in str(path)
+        ]
         assert len(resolved_project_paths) >= 1
         # Check that ~ path was resolved (no longer contains ~)
-        resolved_home_paths = [path for path in manager.env_paths if str(path).endswith(".env.local") and "~" not in str(path)]
+        resolved_home_paths = [
+            path
+            for path in manager.env_paths
+            if str(path).endswith(".env.local") and "~" not in str(path)
+        ]
         assert len(resolved_home_paths) >= 1
 
     def test_resolve_env_paths_with_resolution_errors(self, tmp_path):
@@ -376,28 +388,33 @@ class TestEnvManager:
         # Setup mock PathManager that raises errors for special paths
         mock_path_manager = MagicMock(spec=PathManager)
         mock_path_manager.resolve_path.side_effect = ValueError("Invalid path")
-        
+
         test_paths = ["@project/.env", "/normal/path/.env"]
-        
+
         # Patch the logger at module level where it's imported
         with patch("local_coding_assistant.config.env_manager.logger") as mock_logger:
-            manager = EnvManager(env_paths=test_paths, load_env=False, path_manager=mock_path_manager)
-            
+            manager = EnvManager(
+                env_paths=test_paths, load_env=False, path_manager=mock_path_manager
+            )
+
             # Reset env_paths to strings to test _resolve_env_paths properly
             manager.env_paths = test_paths
-            
+
             # Manually call _resolve_env_paths
             manager._resolve_env_paths()
-            
+
             # Should log warning for failed resolution but continue
             assert mock_logger.warning.called
             warning_call = mock_logger.warning.call_args
             assert "Failed to resolve path" in warning_call[0][0]
             assert "@project/.env" in warning_call[0][0]
-            
+
             # Should still have both paths (failed resolution falls back to Path constructor)
             assert len(manager.env_paths) == 2
-            assert any("normal" in str(path) and "path" in str(path) for path in manager.env_paths)
+            assert any(
+                "normal" in str(path) and "path" in str(path)
+                for path in manager.env_paths
+            )
             assert any("@project" in str(path) for path in manager.env_paths)
 
     def test_get_default_env_paths_fallback_project_root(self, tmp_path):
@@ -405,21 +422,29 @@ class TestEnvManager:
         # Setup mock PathManager that returns None for project root but resolves paths
         mock_path_manager = MagicMock(spec=PathManager)
         mock_path_manager.get_project_root.return_value = None
-        mock_path_manager.resolve_path.side_effect = lambda x: tmp_path / x.replace("@project/", "")
-        
+        mock_path_manager.resolve_path.side_effect = lambda x: tmp_path / x.replace(
+            "@project/", ""
+        )
+
         # Create a temporary directory structure with pyproject.toml
         project_dir = tmp_path / "test_project"
         project_dir.mkdir()
         (project_dir / "pyproject.toml").touch()
-        
+
         # Mock the current file path and cwd to simulate being in the test project
-        with patch("local_coding_assistant.config.env_manager.Path.cwd", return_value=project_dir):
-            with patch("local_coding_assistant.config.env_manager.__file__", str(project_dir / "src" / "env_manager.py")):
+        with patch(
+            "local_coding_assistant.config.env_manager.Path.cwd",
+            return_value=project_dir,
+        ):
+            with patch(
+                "local_coding_assistant.config.env_manager.__file__",
+                str(project_dir / "src" / "env_manager.py"),
+            ):
                 manager = EnvManager(path_manager=mock_path_manager, load_env=False)
-                
+
                 # Should find the project root via pyproject.toml
                 default_paths = manager._get_default_env_paths()
-                
+
                 # Verify paths are based on the detected project root
                 assert any(str(project_dir) in str(path) for path in default_paths)
 
@@ -428,26 +453,27 @@ class TestEnvManager:
         # Setup test environment
         existing_file = tmp_path / ".env.local"
         existing_file.touch()
-        
+
         non_existent_dir = tmp_path / "subdir"
         non_existent_file = non_existent_dir / ".env.test"
-        
+
         manager = EnvManager(
-            env_paths=[existing_file, non_existent_file], 
-            load_env=False
+            env_paths=[existing_file, non_existent_file], load_env=False
         )
-        
+
         # Test finding existing file
         found_path = manager.get_env_path(".env.local")
         assert found_path == existing_file
-        
+
         # Test creating directories for non-existent file
         created_path = manager.get_env_path(".env.test")
         assert created_path.parent.exists()
         assert created_path.parent == non_existent_dir
-        
+
         # Test fallback to cwd when no paths match
-        with patch("local_coding_assistant.config.env_manager.Path.cwd", return_value=tmp_path):
+        with patch(
+            "local_coding_assistant.config.env_manager.Path.cwd", return_value=tmp_path
+        ):
             fallback_path = manager.get_env_path("custom.env")
             assert fallback_path == tmp_path / "custom.env"
             assert fallback_path.parent.exists()

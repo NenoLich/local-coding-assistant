@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import field_validator
 
+from local_coding_assistant.config.dependencies import SettingDependency
+from local_coding_assistant.config.field import ConfigModel, config_field
 from local_coding_assistant.tools.types import (
     ToolCategory,
     ToolInfo,
@@ -16,38 +18,52 @@ from local_coding_assistant.tools.types import (
 )
 
 
-class ProviderStatus(BaseModel):
+class ProviderStatus(ConfigModel, section="provider_status"):
     """Status information for a provider."""
 
-    name: str = Field(description="Provider name")
-    is_alive: bool = Field(
+    name: str = config_field(description="Provider name")
+    is_alive: bool = config_field(
         default=True,
         description="Whether the provider is currently available and healthy",
     )
-    last_health_check: float = Field(
+    last_health_check: float = config_field(
         default_factory=lambda: 0.0, description="Unix timestamp of last health check"
     )
-    error_count: int = Field(default=0, description="Number of consecutive errors")
+    error_count: int = config_field(
+        default=0, description="Number of consecutive errors"
+    )
 
 
-class LLMConfig(BaseModel):
+class LLMConfig(ConfigModel, section="llm"):
     """Configuration for LLM provider and model settings."""
 
-    temperature: float = Field(
+    model_name: str | None = config_field(
+        default=None, description="Name of the LLM model to use"
+    )
+    temperature: float = config_field(
         default=0.7, ge=0.0, le=2.0, description="Sampling temperature"
     )
-    max_tokens: int | None = Field(
+    max_tokens: int | None = config_field(
         default=None, gt=0, description="Maximum tokens to generate"
     )
-    max_retries: int = Field(
+    max_retries: int = config_field(
         default=3,
         gt=0,
         description="Maximum number of retry attempts for failed requests",
     )
-    retry_delay: float = Field(
+    capture_reasoning: bool = config_field(
+        default=False,
+        description="Whether to capture internal reasoning text for diagnostics",
+    )
+    reasoning_max_chars: int = config_field(
+        default=1000,
+        gt=0,
+        description="Maximum number of reasoning characters to store when captured",
+    )
+    retry_delay: float = config_field(
         default=1.0, gt=0.0, description="Base delay in seconds between retry attempts"
     )
-    providers: list[ProviderStatus] = Field(
+    providers: list[ProviderStatus] = config_field(
         default_factory=list,
         description="List of available providers with their status",
     )
@@ -109,33 +125,54 @@ class LLMConfig(BaseModel):
         self.providers = [p for p in self.providers if p.name != provider_name]
 
 
-class RuntimeConfig(BaseModel):
+class RuntimeConfig(ConfigModel, section="runtime"):
     """Configuration for runtime behavior and settings."""
 
-    persistent_sessions: bool = Field(
+    persistent_sessions: bool = config_field(
         default=False, description="Whether to maintain persistent sessions"
     )
-    max_session_history: int = Field(
+    max_session_history: int = config_field(
         default=100,
         gt=0,
         description="Maximum number of messages to keep in session history",
     )
-    enable_logging: bool = Field(
+    enable_logging: bool = config_field(
         default=True, description="Whether to enable runtime logging"
     )
-    log_level: str | None = Field(
+    log_level: str | None = config_field(
         default="INFO", description="Logging level for runtime operations"
     )
-    use_graph_mode: bool = Field(
-        default=False,
-        description="Whether to use LangGraph-based agent instead of legacy AgentLoop",
+    agent_mode: str = config_field(
+        default="no_agent",
+        description="Agent execution mode: 'default_loop' (legacy AgentLoop), 'graph' (LangGraph-based agent), 'frame' (new ExecutionFrame workflow), or 'no_agent'",
+        dependencies=SettingDependency(
+            value_requirements={
+                "default_loop": ["llm_service", "tool_manager"],
+                "graph": ["llm_service", "tool_manager", "langgraph_installed"],
+                "frame": ["llm_service", "tool_manager"],
+                "no_agent": [],
+            }
+        ),
     )
-    stream: bool = Field(
+    stream: bool = config_field(
         default=True, description="Default streaming mode for agent responses"
     )
-    tool_call_mode: str = Field(
+    tool_call_mode: str = config_field(
         default="classic",
         description="Tool calling mode: 'classic' (default) uses function calling, 'ptc' uses programmatic tool calling, 'reasoning_only' uses no tool calls",
+        dependencies=SettingDependency(
+            value_requirements={
+                "ptc": [
+                    "tool_manager",
+                    "sandbox_manager",
+                    "python_execution",
+                    "sandbox_available",
+                ],
+                "classic": ["tool_manager"],
+                "reasoning_only": [],
+            },
+            fallback_order=["ptc", "classic", "reasoning_only"],
+        ),
     )
 
     @field_validator("tool_call_mode")
@@ -156,11 +193,11 @@ class RuntimeConfig(BaseModel):
         return v
 
 
-class ModelConfig(BaseModel):
+class ModelConfig(ConfigModel, section="model"):
     """Configuration for a specific model within a provider."""
 
-    name: str = Field(description="Model identifier")
-    supported_parameters: list[str] = Field(
+    name: str = config_field(description="Model identifier")
+    supported_parameters: list[str] = config_field(
         default_factory=list,
         description="List of supported parameter names for this model",
     )
@@ -173,27 +210,27 @@ class ModelConfig(BaseModel):
         )
 
 
-class ProviderConfig(BaseModel):
+class ProviderConfig(ConfigModel, section="provider"):
     """Configuration for LLM providers."""
 
-    name: str = Field(description="Provider name")
-    driver: str = Field(
+    name: str = config_field(description="Provider name")
+    driver: str = config_field(
         description="Driver type (openai_chat, openai_responses, local)"
     )
-    base_url: str = Field(description="Base URL for the provider API")
-    api_key_env: str | None = Field(
+    base_url: str = config_field(description="Base URL for the provider API")
+    api_key_env: str | None = config_field(
         default=None, description="Environment variable name for API key"
     )
-    models: list[ModelConfig] = Field(
+    models: list[ModelConfig] = config_field(
         default_factory=list, description="List of available model configurations"
     )
-    health_check_endpoint: str | None = Field(
+    health_check_endpoint: str | None = config_field(
         default=None, description="Endpoint to check provider health"
     )
-    health_check_method: str = Field(
+    health_check_method: str = config_field(
         default="GET", description="HTTP method to use for health checks"
     )
-    health_check_timeout: float = Field(
+    health_check_timeout: float = config_field(
         default=5.0, description="Timeout in seconds for health checks"
     )
 
@@ -240,26 +277,29 @@ class ProviderConfig(BaseModel):
         return param in model.supported_parameters
 
 
-class AgentProfileConfig(BaseModel):
+class AgentProfileConfig(ConfigModel, section="agent_profile"):
     """Configuration for an agent profile."""
 
-    name: str = Field(..., description="Unique identifier for the profile")
-    kind: str = Field("default", description="Type/category of the profile")
-    description: str = Field(
-        ..., description="Description of the agent's role and behavior"
-    )
-    goals: list[str] = Field(
+    name: Annotated[
+        str, config_field(..., description="Unique identifier for the profile")
+    ]
+    kind: str = config_field("default", description="Type/category of the profile")
+    description: Annotated[
+        str,
+        config_field(..., description="Description of the agent's role and behavior"),
+    ]
+    goals: list[str] = config_field(
         default_factory=list,
         description="List of primary objectives for this agent profile",
     )
-    tone: str | None = Field(
+    tone: str | None = config_field(
         None, description="Communication style and tone for this profile"
     )
-    constraints: list[str] = Field(
+    constraints: list[str] = config_field(
         default_factory=list,
         description="List of constraints or guidelines for this profile",
     )
-    model_policy: str | None = Field(
+    model_policy: str | None = config_field(
         None,
         description=(
             "Name of the model policy to use for this profile. "
@@ -321,11 +361,29 @@ class AgentProfileConfig(BaseModel):
         )
 
 
-class AgentConfig(BaseModel):
+class ModelPolicyConfig(ConfigModel, section="model_policy"):
+    """Typed representation of a routing/fallback policy."""
+
+    models: list[str] = config_field(
+        default_factory=list,
+        description="Ordered list of provider:model routes plus fallback directives",
+    )
+    max_failovers: int | None = config_field(
+        default=None,
+        ge=1,
+        description="Maximum number of failovers allowed for this policy",
+    )
+    fallback_strategy: str = config_field(
+        default="sequential",
+        description="Fallback strategy name (sequential, exponential, etc.)",
+    )
+
+
+class AgentConfig(ConfigModel, section="agent"):
     """Configuration for agent behavior and model policies."""
 
     # Agent profiles define different behaviors and configurations
-    profiles: dict[str, AgentProfileConfig] = Field(
+    profiles: dict[str, AgentProfileConfig] = config_field(
         default_factory=dict,
         description=(
             "Available agent profiles. Each profile defines a different "
@@ -334,53 +392,15 @@ class AgentConfig(BaseModel):
     )
 
     # Model policies for different agent roles
-    policies: dict[str, dict[str, Any]] = Field(
+    policies: dict[str, ModelPolicyConfig] = config_field(
         default_factory=dict,
-        description=(
-            "Agent role to model fallback policies. "
-            "Each key is a role name, and the value is a dict containing 'models' list."
-        ),
+        description="Agent role to model fallback policies.",
     )
 
-    # Default fallback policies if YAML file is missing
-    planner: dict[str, list[str]] = Field(
-        default_factory=lambda: {
-            "models": [
-                "openrouter:qwen/qwen3-coder:free",
-                "google_gemini:gemini-2.5-flash",
-                "fallback:any",
-            ]
-        },
-        description="Default planner model fallback policy",
-    )
-
-    researcher: dict[str, list[str]] = Field(
-        default_factory=lambda: {
-            "models": [
-                "google_gemini:gemini-2.5-flash",
-                "openrouter:qwen/qwen3-235b-a22b:free",
-                "fallback:any",
-            ]
-        },
-        description="Default researcher model fallback policy",
-    )
-
-    analyzer: dict[str, list[str]] = Field(
-        default_factory=lambda: {
-            "models": [
-                "openrouter:moonshotai/kimi-dev-72b:free",
-                "google_gemini:gemini-2.5-flash",
-                "fallback:any",
-            ]
-        },
-        description="Default analyzer model fallback policy",
-    )
-
-    general: dict[str, list[str]] = Field(
-        default_factory=lambda: {
-            "models": ["google_gemini:gemini-2.5-flash", "fallback:any"]
-        },
-        description="Default general purpose model fallback policy",
+    # Minimal fallback policies for safety (used only if policies dict is empty)
+    general: dict[str, list[str]] = config_field(
+        default_factory=lambda: {"models": ["fallback:any"]},
+        description="Ultimate fallback policy",
     )
 
     def get_profile(self, name: str) -> AgentProfileConfig:
@@ -397,7 +417,7 @@ class AgentConfig(BaseModel):
             return self.profiles[name]
 
         # Try to create a default profile based on the name
-        if name == "planner":
+        if name == "planning_mode":
             return AgentProfileConfig.planner()
         elif name == "executor":
             return AgentProfileConfig.executor()
@@ -421,15 +441,15 @@ class AgentConfig(BaseModel):
 
         # First try the profile's model_policy
         if profile.model_policy and profile.model_policy in self.policies:
-            return self.policies[profile.model_policy].get("models", [])
+            return self.policies[profile.model_policy].models
 
         # Then try the profile name as a policy
         if profile_name in self.policies:
-            return self.policies[profile_name].get("models", [])
+            return self.policies[profile_name].models
 
         # Fall back to the 'general' policy
         if "general" in self.policies:
-            return self.policies["general"].get("models", [])
+            return self.policies["general"].models
 
         # As a last resort, use the hardcoded defaults
         if hasattr(self, profile_name) and isinstance(
@@ -451,43 +471,45 @@ class AgentConfig(BaseModel):
     def get_policy_for_role(self, role: str) -> list[str]:
         """Get model fallback policy for a specific role."""
         if role in self.policies:
-            return self.policies[role].get("models", [])
+            return self.policies[role].models
         elif hasattr(self, role):
             return getattr(self, role)["models"]
         else:
             return self.general["models"]
 
 
-class ToolConfig(BaseModel):
+class ToolConfig(ConfigModel, section="tool"):
     """Configuration for a tool (YAML/JSON representation).
 
     This is the configuration model used for loading tool definitions from
     configuration files. It can be converted to a ToolInfo object for runtime use.
     """
 
-    id: str = Field(..., description="Unique identifier for the tool")
-    name: str | None = Field(
+    id: Annotated[str, config_field(..., description="Unique identifier for the tool")]
+    name: str | None = config_field(
         None, description="Display name of the tool (defaults to id if not provided)"
     )
-    description: str = Field(..., description="Description of what the tool does")
-    source: ToolSource | str = Field(
+    description: Annotated[
+        str, config_field(..., description="Description of what the tool does")
+    ]
+    source: ToolSource | str = config_field(
         ToolSource.EXTERNAL, description="Source of the tool implementation"
     )
-    path: str | None = Field(
+    path: str | None = config_field(
         None,
         description=(
             "Path to the Python module containing the tool implementation. "
             "Can be relative to the config directory or absolute."
         ),
     )
-    module: str | None = Field(
+    module: str | None = config_field(
         None,
         description=(
             "Python import path to the module containing the tool implementation. "
             "Alternative to path, used for installed packages."
         ),
     )
-    tool_class: type | str | None = Field(
+    tool_class: type | str | None = config_field(
         None,
         description=(
             "The tool class type. This should be set by the ToolLoader "
@@ -502,39 +524,41 @@ class ToolConfig(BaseModel):
             return v
         return str(v)  # Convert any non-None, non-type value to string
 
-    endpoint: str | None = Field(
+    endpoint: str | None = config_field(
         None,
         description="Endpoint URL for remote tools (MCP tools)",
     )
-    provider: str | None = Field(
+    provider: str | None = config_field(
         None,
         description="Provider name for MCP or external tools",
     )
-    category: ToolCategory | str | None = Field(
+    category: ToolCategory | str | None = config_field(
         None,
         description="Category for organizing tools (e.g., 'math', 'network')",
     )
-    permissions: list[ToolPermission | str] = Field(
+    permissions: list[ToolPermission | str] = config_field(
         default_factory=list, description="List of permissions required by this tool"
     )
-    tags: list[ToolTag | str] = Field(
+    tags: list[ToolTag | str] = config_field(
         default_factory=list, description="Tags for categorizing and filtering tools"
     )
-    enabled: bool = Field(
+    enabled: bool = config_field(
         True, description="Whether this tool is enabled and should be loaded"
     )
-    available: bool = Field(
+    available: bool = config_field(
         True,
         description="Whether this tool was successfully loaded and is ready to use",
     )
-    is_async: bool = Field(False, description="Whether the tool's run method is async")
-    supports_streaming: bool = Field(
+    is_async: bool = config_field(
+        False, description="Whether the tool's run method is async"
+    )
+    supports_streaming: bool = config_field(
         False, description="Whether the tool supports streaming output"
     )
-    config: dict[str, Any] = Field(
+    config: dict[str, Any] = config_field(
         default_factory=dict, description="Tool-specific configuration options"
     )
-    parameters: dict[str, Any] = Field(
+    parameters: dict[str, Any] = config_field(
         default_factory=lambda: {"type": "object", "properties": {}, "required": []},
         description=(
             "OpenAI-compatible parameter schema for the tool. "
@@ -681,10 +705,10 @@ class ToolConfig(BaseModel):
         return data
 
 
-class ToolConfigList(BaseModel):
+class ToolConfigList(ConfigModel, section="tools"):
     """Wrapper for a list of tool configurations."""
 
-    tools: list[ToolConfig] = Field(
+    tools: list[ToolConfig] = config_field(
         default_factory=list, description="List of tool configurations"
     )
 
@@ -721,147 +745,166 @@ class ToolConfigList(BaseModel):
         return {"tools": [tool.model_dump(exclude_unset=True) for tool in self.tools]}
 
 
-class PromptTemplateConfig(BaseModel):
+class PromptTemplateConfig(ConfigModel, section="prompt"):
     """Configuration for prompt templates and rendering."""
 
-    template_root: str | None = Field(
+    template_root: str | None = config_field(
         None,
         description=(
             "Root directory for prompt templates. "
             "If not provided, will use package defaults."
         ),
     )
-    templates: dict[str, str] = Field(
+    templates: dict[str, str] = config_field(
         default_factory=lambda: {
             "system": "base/system_core.jinja2",
             "execution_rules": "base/execution_rules.jinja2",
             "agent_identity": "base/agent_identity.jinja2",
             "skills": "blocks/skills.jinja2",
             "memories": "blocks/memories.jinja2",
-            "tools": "blocks/tools.jinja2",
+            "tools_prompt": "blocks/tools_prompt.jinja2",
             "examples": "blocks/examples.jinja2",
             "constraints": "blocks/constraints.jinja2",
         },
         description="Template paths for different prompt sections",
     )
-    enable_jinja_autoescape: bool = Field(
+    enable_jinja_autoescape: bool = config_field(
         False,
         description="Whether to enable Jinja2 autoescaping (usually not needed for LLM prompts)",
     )
-    trim_blocks: bool = Field(
+    trim_blocks: bool = config_field(
         True, description="Whether to trim whitespace around template blocks"
     )
-    lstrip_blocks: bool = Field(
+    lstrip_blocks: bool = config_field(
         True, description="Whether to strip whitespace from the start of lines"
     )
 
 
-class SandboxLoggingConfig(BaseModel):
+class SandboxLoggingConfig(ConfigModel, section="sandbox_logging"):
     """Configuration for sandbox logging."""
 
-    level: str = Field(
+    level: str = config_field(
         default="INFO",
         description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
         pattern=r"^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$",
     )
-    console: bool = Field(default=True, description="Whether to enable console logging")
-    file: bool = Field(default=True, description="Whether to enable file logging")
-    directory: str = Field(
+    console: bool = config_field(
+        default=True, description="Whether to enable console logging"
+    )
+    file: bool = config_field(
+        default=True, description="Whether to enable file logging"
+    )
+    directory: str = config_field(
         default="/workspace/logs",
         description="Directory to store log files (inside container)",
     )
-    file_name: str = Field(
+    file_name: str = config_field(
         default="container_{session_id}.log",
         description="Log file name pattern. {session_id} will be replaced with the actual session ID.",
     )
-    max_size: int = Field(
+    max_size: int = config_field(
         default=10 * 1024 * 1024,  # 10MB
         description="Maximum log file size in bytes before rotation",
         gt=0,
     )
-    backup_count: int = Field(
+    backup_count: int = config_field(
         default=5, description="Number of backup log files to keep", ge=0
     )
 
 
-class SandboxConfig(BaseModel):
+class SandboxConfig(ConfigModel, section="sandbox"):
     """Configuration for the Docker sandbox environment."""
 
-    enabled: bool = Field(
-        default=False, description="Whether to enable sandbox execution"
+    enabled: bool = config_field(
+        default=False,
+        description="Whether to enable sandbox execution",
+        dependencies=SettingDependency(
+            value_requirements={
+                "True": ["sandbox_manager", "sandbox_available"],
+                "False": [],
+            },
+            fallback_order=["True", "False"],
+        ),
     )
-    image: str = Field(
+
+    image: str = config_field(
         default="locca-sandbox:latest",
         description="Docker image to use for the sandbox",
     )
-    timeout: int = Field(default=30, description="Execution timeout in seconds")
-    memory_limit: str = Field(
+    timeout: int = config_field(default=30, description="Execution timeout in seconds")
+    memory_limit: str = config_field(
         default="512m", description="Memory limit for the container (e.g., 512m, 1g)"
     )
-    cpu_limit: float = Field(default=0.5, description="CPU limit (fraction of one CPU)")
-    network_enabled: bool = Field(
+    cpu_limit: float = config_field(
+        default=0.5, description="CPU limit (fraction of one CPU)"
+    )
+    network_enabled: bool = config_field(
         default=False, description="Whether to allow network access in the sandbox"
     )
-    persistence: bool = Field(
+    persistence: bool = config_field(
         default=False, description="Whether to persist the sandbox container"
     )
-    session_id: str = Field(default="default", description="Session ID for the sandbox")
-    allowed_imports: list[str] = Field(
+    session_id: str = config_field(
+        default="default", description="Session ID for the sandbox"
+    )
+    allowed_imports: list[str] = config_field(
         default_factory=list, description="List of allowed Python top-level imports"
     )
-    blocked_patterns: list[str] = Field(
+    blocked_patterns: list[str] = config_field(
         default_factory=list, description="List of regex patterns to block in code"
     )
-    blocked_shell_commands: list[str] = Field(
+    blocked_shell_commands: list[str] = config_field(
         default_factory=list, description="List of blocked shell commands"
     )
-    max_code_length: int = Field(
+    max_code_length: int = config_field(
         default=10000, description="Maximum allowed code length in characters"
     )
-    max_file_size: int = Field(
+    max_file_size: int = config_field(
         default=1024 * 1024, description="Maximum allowed file size for created files"
     )
-    allowed_directories: list[str] = Field(
+    allowed_directories: list[str] = config_field(
         default_factory=list, description="List of allowed directories for file access"
     )
-    working_directory: str = Field(
+    working_directory: str = config_field(
         default="/workspace", description="Working directory inside the container"
     )
-    session_timeout: int = Field(
+    session_timeout: int = config_field(
         default=300, description="Session timeout in seconds (default: 5 minutes)"
     )
-    max_sessions: int = Field(
+    max_sessions: int = config_field(
         default=5, description="Maximum number of concurrent persistent sessions"
     )
-    logging: SandboxLoggingConfig = Field(
+    logging: SandboxLoggingConfig = config_field(
         default_factory=SandboxLoggingConfig,
         description="Logging configuration for the sandbox",
     )
 
 
-class AppConfig(BaseModel):
+class AppConfig(ConfigModel, section="app"):
     """Top-level application configuration."""
 
-    llm: LLMConfig = Field(default_factory=LLMConfig, description="LLM configuration")
-    runtime: RuntimeConfig = Field(
+    llm: LLMConfig = config_field(
+        default_factory=LLMConfig, description="LLM configuration"
+    )
+    runtime: RuntimeConfig = config_field(
         default_factory=RuntimeConfig, description="Runtime configuration"
     )
-    providers: dict[str, ProviderConfig] = Field(
+    providers: dict[str, ProviderConfig] = config_field(
         default_factory=dict, description="Available LLM providers"
     )
-    agent: AgentConfig = Field(
+    agent: AgentConfig = config_field(
         default_factory=AgentConfig,
         description="Agent configuration and model policies",
     )
-    tools: ToolConfigList = Field(
+    tools: ToolConfigList = config_field(
         default_factory=ToolConfigList,
         description="Tool configurations",
     )
-    prompt: PromptTemplateConfig = Field(
+    prompt: PromptTemplateConfig = config_field(
         default_factory=PromptTemplateConfig,
         description="Prompt template configuration",
     )
-    sandbox: SandboxConfig = Field(
+    sandbox: SandboxConfig = config_field(
         default_factory=SandboxConfig,
         description="Sandbox configuration",
     )
@@ -878,6 +921,7 @@ class AppConfig(BaseModel):
 
         agent_config = AgentConfig.from_dict(config_dict.get("agent", {}))
         tool_config = ToolConfigList.from_dict(config_dict.get("tools", {}))
+        prompt_config = PromptTemplateConfig(**config_dict.get("prompt", {}))
         sandbox_config = SandboxConfig(**config_dict.get("sandbox", {}))
 
         return cls(
@@ -886,6 +930,7 @@ class AppConfig(BaseModel):
             providers=providers,
             agent=agent_config,
             tools=tool_config,
+            prompt=prompt_config,
             sandbox=sandbox_config,
         )
 
@@ -900,5 +945,6 @@ class AppConfig(BaseModel):
             },
             "agent": self.agent.model_dump(exclude_unset=True),
             "tools": self.tools.to_dict(),
+            "prompt": self.prompt.model_dump(exclude_unset=True),
             "sandbox": self.sandbox.model_dump(exclude_unset=True),
         }

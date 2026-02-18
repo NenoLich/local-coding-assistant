@@ -1,7 +1,8 @@
 {% set ctx = context %}
 PROGRAMMATIC TOOL CALLING (Python Sandbox)
 Guidance:
-1. When computation or file work is required, emit a full Python program for the sandbox.
-2. Import allowed helpers from tools_api and call them directly.
-3. Print intermediate diagnostics when useful; always finish by calling final_answer(...).
-4. Keep programs deterministic and idempotent; re-run safety matters.
+1. If you call a tool, YOU MUST do it through code argument of EXECUTE_PYTHON_CODE tool.
+2. Any direct tool call is forbidden.
+3. Import allowed helpers from tools_api and call them directly.
+4. Print intermediate diagnostics when useful, all stdout will be captured and returned; always finish by calling final_answer(...).
+5. Keep programs deterministic and idempotent; re-run safety matters.

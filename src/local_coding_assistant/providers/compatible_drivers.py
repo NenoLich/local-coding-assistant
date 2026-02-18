@@ -6,6 +6,7 @@ ensuring consistent behavior across different providers.
 """
 
 import json
+import time
 from collections.abc import AsyncGenerator, Mapping
 from typing import Any, NoReturn
 
@@ -57,9 +58,12 @@ class OpenAIChatCompletionsDriver(BaseDriver):
             payload.update(params)
 
         try:
+            logger.debug("Request payload", payload=payload)
+            start_time = time.perf_counter()
             response = await self.client.chat.completions.create(**payload)
-            logger.debug("Response received", response=response)
-            return self._parse_response(response, request.model)
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            logger.debug(f"Response received in {latency_ms}", response=response)
+            return self._parse_response(response, request.model, latency_ms=latency_ms)
         except Exception as e:
             logger.error("Error in OpenAI API request", error=str(e), exc_info=True)
             self._handle_error(e)
@@ -85,9 +89,12 @@ class OpenAIChatCompletionsDriver(BaseDriver):
             }
             # Ensure stream is True for streaming
             params["stream"] = True
+            params.setdefault("stream_options", {"include_usage": True})
             payload.update(params)
+        logger.debug("Request payload", payload=payload)
 
         try:
+            start_time = time.perf_counter()
             stream = await self.client.chat.completions.create(**payload)
             async for chunk in stream:
                 if not chunk.choices:
@@ -96,16 +103,29 @@ class OpenAIChatCompletionsDriver(BaseDriver):
                 choice = chunk.choices[0]
                 delta = choice.delta
 
+                # Calculate latency only for the chunk with usage (typically the last one)
+                latency_ms = None
+                if hasattr(chunk, "usage") and chunk.usage:
+                    latency_ms = (time.perf_counter() - start_time) * 1000
+
+                metadata = {
+                    "response_id": getattr(chunk, "id", None),
+                    "created": getattr(chunk, "created", None),
+                    "model": getattr(chunk, "model", request.model),
+                    "usage": chunk.usage.model_dump()
+                    if hasattr(chunk, "usage") and hasattr(chunk.usage, "model_dump")
+                    else None,
+                    "reasoning_delta": getattr(delta, "reasoning", None),
+                }
+                if latency_ms is not None:
+                    metadata["latency_ms"] = latency_ms
+
                 yield ProviderLLMResponseDelta(
                     content=delta.content or "",
                     role=getattr(delta, "role", None),
                     tool_calls=getattr(delta, "tool_calls", None),
                     finish_reason=choice.finish_reason,
-                    metadata={
-                        "response_id": getattr(chunk, "id", None),
-                        "created": getattr(chunk, "created", None),
-                        "model": getattr(chunk, "model", request.model),
-                    },
+                    metadata=metadata,
                 )
         except Exception as e:
             logger.error(
@@ -113,7 +133,9 @@ class OpenAIChatCompletionsDriver(BaseDriver):
             )
             self._handle_error(e)
 
-    def _parse_response(self, response, model: str) -> ProviderLLMResponse:
+    def _parse_response(
+        self, response, model: str, latency_ms: float | None = None
+    ) -> ProviderLLMResponse:
         """Parse OpenAI API response, handling both standard and GitHub Models API formats."""
         try:
             choice = response.choices[0]
@@ -127,18 +149,30 @@ class OpenAIChatCompletionsDriver(BaseDriver):
                     if parsed_call:
                         tool_calls.append(parsed_call)
 
+            # Extract reasoning content if present
+            reasoning_text = None
+            if hasattr(message, "reasoning"):
+                reasoning_text = getattr(message, "reasoning", None)
+
+            metadata = {
+                "response_id": getattr(response, "id", None),
+                "created": getattr(response, "created", None),
+                "model": getattr(response, "model", model),
+                "reasoning": reasoning_text,
+            }
+            if latency_ms is not None:
+                metadata["latency_ms"] = latency_ms
+
             return ProviderLLMResponse(
                 content=message.content or "",
                 model=model,
                 tokens_used=self._calculate_tokens(response),
                 finish_reason=choice.finish_reason,
                 tool_calls=tool_calls or None,
-                usage=dict(response.usage) if hasattr(response, "usage") else None,
-                metadata={
-                    "response_id": getattr(response, "id", None),
-                    "created": getattr(response, "created", None),
-                    "model": getattr(response, "model", model),
-                },
+                usage=response.usage.model_dump()
+                if hasattr(response, "usage") and hasattr(response.usage, "model_dump")
+                else None,
+                metadata=metadata,
             )
         except Exception as e:
             logger.error("Error parsing response", error=str(e), exc_info=True)
@@ -421,9 +455,13 @@ class OpenAIResponsesDriver(BaseDriver):
             if "tool_choice" not in payload:
                 payload["tool_choice"] = "auto"
 
+        logger.debug("Request payload", payload=payload)
         try:
+            start_time = time.perf_counter()
             response = await self.client.responses.create(**payload)
-            return self._parse_response(response, request.model)
+            latency_ms = (time.perf_counter() - start_time) * 1000
+            logger.debug(f"Response received in {latency_ms}", response=response)
+            return self._parse_response(response, request.model, latency_ms=latency_ms)
         except Exception as e:
             self._handle_error(e)
 
@@ -457,24 +495,48 @@ class OpenAIResponsesDriver(BaseDriver):
             if "tool_choice" not in payload:
                 payload["tool_choice"] = "auto"
 
+        logger.debug("Request payload", payload=payload)
         try:
+            start_time = time.perf_counter()
             stream = await self.client.responses.create(**payload)
             async for chunk in stream:
+                content = ""
+                chunk_type = getattr(chunk, "type", None)
+                if chunk_type == "response.text.delta":
+                    content = getattr(chunk, "delta", "") or ""
+                elif chunk_type == "response.reasoning_text.delta":
+                    content = getattr(chunk, "delta", "") or ""
+
+                # Calculate latency only for the chunk with usage (typically the last one)
+                latency_ms = None
+                if hasattr(chunk, "usage") and chunk.usage is not None:
+                    latency_ms = (time.perf_counter() - start_time) * 1000
+
+                metadata = {
+                    "response_id": getattr(chunk, "response_id", None),
+                    "created": getattr(chunk, "created", None),
+                    "model": getattr(chunk, "model", None),
+                    "type": chunk_type,
+                    "reasoning_delta": getattr(chunk, "delta", "")
+                    if chunk_type == "response.reasoning_text.delta"
+                    else None,
+                    "usage": chunk.usage.model_dump()
+                    if hasattr(chunk, "usage") and chunk.usage is not None
+                    else None,
+                }
+                if latency_ms is not None:
+                    metadata["latency_ms"] = latency_ms
+
                 yield ProviderLLMResponseDelta(
-                    content=chunk.output_text or "",
-                    finish_reason=chunk.finish_reason,
-                    metadata={
-                        "response_id": getattr(chunk, "id", None),
-                        "created": getattr(chunk, "created", None),
-                        "model": getattr(chunk, "model", None),
-                    },
+                    content=content,
+                    finish_reason=getattr(chunk, "finish_reason", None),
+                    metadata=metadata,
                 )
         except Exception as e:
             self._handle_error(e)
 
-    def _parse_response(self, response, model: str) -> ProviderLLMResponse:
-        """Parse OpenAI responses API response"""
-        # Extract usage data from ResponseUsage object
+    def _extract_usage(self, response) -> dict[str, Any] | None:
+        """Extract usage data from ResponseUsage object"""
         usage = getattr(response, "usage", None)
         if usage is not None:
             # Convert ResponseUsage to dict if it's not already
@@ -486,11 +548,57 @@ class OpenAIResponsesDriver(BaseDriver):
                     "prompt_tokens": getattr(usage, "prompt_tokens", None),
                     "completion_tokens": getattr(usage, "completion_tokens", None),
                 }
+        return usage
 
-        # Parse tool calls if present in the response
+    def _extract_reasoning(self, response) -> str | None:
+        """Simplified extraction of reasoning text."""
+        # 1. Check for direct attribute (o1-style) - only for Chat Completions API
+        if hasattr(response, "choices"):
+            if content := getattr(
+                response.choices[0].message, "reasoning_content", None
+            ):
+                return content
+
+        # 2. Check for the 'output' list structure in Responses API
+        outputs = getattr(response, "output", []) or []
+        for item in (i for i in outputs if isinstance(i, dict)):
+            if item.get("type") in {"reasoning", "reasoning_text"}:
+                content = item.get("content")
+
+                if isinstance(content, list):
+                    return "".join(
+                        str(p["text"])
+                        for p in content
+                        if isinstance(p, dict) and "text" in p
+                    )
+                return content if isinstance(content, str) else None
+
+        return None
+
+    def _build_metadata(
+        self, response, reasoning_text: str | None, latency_ms: float | None
+    ) -> dict[str, Any]:
+        """Build metadata dictionary for the response"""
+        metadata = {
+            "response_id": getattr(response, "id", None),
+            "created": getattr(response, "created", None),
+            "model": getattr(response, "model", None),
+            "reasoning": reasoning_text,
+        }
+        if latency_ms is not None:
+            metadata["latency_ms"] = latency_ms
+        return metadata
+
+    def _parse_response(
+        self, response: Any, model: str, latency_ms: float | None = None
+    ) -> ProviderLLMResponse:
+        """Parse OpenAI responses API response"""
+        usage = self._extract_usage(response)
+        reasoning_text = self._extract_reasoning(response)
         tool_calls = (
             self._parse_tool_calls(response) if hasattr(response, "output") else None
         )
+        metadata = self._build_metadata(response, reasoning_text, latency_ms)
 
         parsed_response = ProviderLLMResponse(
             content=response.output_text,
@@ -499,11 +607,7 @@ class OpenAIResponsesDriver(BaseDriver):
             finish_reason=getattr(response, "finish_reason", None),
             tool_calls=tool_calls,
             usage=usage,
-            metadata={
-                "response_id": getattr(response, "id", None),
-                "created": getattr(response, "created", None),
-                "model": getattr(response, "model", None),
-            },
+            metadata=metadata,
         )
         logger.debug("Response parsed", parsed_response=parsed_response)
         return parsed_response

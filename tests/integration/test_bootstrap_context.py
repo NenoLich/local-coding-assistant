@@ -1,4 +1,4 @@
-from local_coding_assistant.agent.llm_manager import LLMManager
+from local_coding_assistant.agent.llm import LLMService
 from local_coding_assistant.core.app_context import AppContext
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.tools.tool_manager import ToolManager
@@ -21,7 +21,7 @@ def test_bootstrap_context_contains_expected_components(ctx: AppContext):
 
     # LLM and runtime may be None if OpenAI package isn't installed
     if llm is not None:
-        assert isinstance(llm, LLMManager)
+        assert isinstance(llm, LLMService)
     if runtime is not None:
         assert isinstance(runtime, RuntimeManager)
 
@@ -43,18 +43,18 @@ def test_bootstrap_runtime_manager_has_config(ctx: AppContext):
         assert hasattr(resolved_config.runtime, "max_session_history")
 
 
-def test_bootstrap_llm_manager_has_config(ctx: AppContext):
-    """Test that LLMManager has proper configuration access."""
+def test_bootstrap_llm_service_has_config(ctx: AppContext):
+    """Test that LLMService has proper configuration access."""
     llm = ctx.get("llm")
     # LLM may be None if dependencies aren't available
     if llm is not None:
-        assert isinstance(llm, LLMManager)
-        # LLMManager should have config_manager attribute
-        assert hasattr(llm, "config_manager")
-        assert llm.config_manager is not None
+        assert isinstance(llm, LLMService)
+        # LLMService should have config_manager attribute
+        assert hasattr(llm, "_config_manager")
+        assert llm._config_manager is not None
 
         # Test that config_manager has LLM configuration access
-        config_manager = llm.config_manager
+        config_manager = llm._config_manager
 
         # Check if global config is loaded (it should be loaded during bootstrap)
         global_config = config_manager.global_config

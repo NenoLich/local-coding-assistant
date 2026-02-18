@@ -196,6 +196,6 @@ class TestCLIIntegration:
 
         assert result.exit_code == 0
         # Check that both the query and response are in the output
-        assert "Running query: Test with provider setup" in result.stdout
+        assert "Running query: Test with provider setup" in result.stderr
         assert "Response:" in result.stdout
-        assert "[LLMManager] Echo: test query" in result.stdout
+        assert "[LLMService] Echo: Test with provider setup" in result.stdout

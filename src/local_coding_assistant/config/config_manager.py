@@ -2,125 +2,35 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-from collections.abc import Callable
 from copy import deepcopy
-from functools import wraps
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 import yaml
-from pydantic import ValidationError
 
+from local_coding_assistant.config.builder import ConfigBuilder
 from local_coding_assistant.config.env_manager import EnvManager
+from local_coding_assistant.config.field import ConfigFieldRegistry
 from local_coding_assistant.config.path_manager import PathManager
-from local_coding_assistant.config.schemas import AppConfig, ToolConfig, ToolConfigList
+from local_coding_assistant.config.schemas import AppConfig, ToolConfig
+from local_coding_assistant.config.validation_engine import ValidationEngine
 from local_coding_assistant.core.exceptions import ConfigError
 from local_coding_assistant.core.protocols import IConfigManager
+from local_coding_assistant.core.system_registry import (
+    SystemCapabilityRegistry,
+    system_capability_registry,
+)
 from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("config.config_manager")
 
-T = TypeVar("T")
-
-
-def dict_cache(maxsize: int = 32):
-    """Cache decorator that can handle dictionary arguments by converting them to a stable key.
-
-    Args:
-        maxsize: Maximum number of entries to keep in the cache
-    """
-
-    def decorator(func: Callable) -> Callable:
-        cache: dict[str, Any] = {}
-        hits = 0
-        misses = 0
-
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            nonlocal hits, misses
-
-            # Skip caching if the first argument is 'self'
-            instance = args[0] if args and hasattr(args[0], "__class__") else None
-            method_args = args[1:] if instance is not None else args
-
-            # Create a stable key from the arguments
-            cache_key = _generate_cache_key(method_args, kwargs)
-
-            # Check cache
-            if cache_key in cache:
-                hits += 1
-                return cache[cache_key]
-
-            # Cache miss - call the function
-            misses += 1
-            result = func(*args, **kwargs)
-
-            # Cache the result if we're under the limit
-            if len(cache) < maxsize:
-                cache[cache_key] = result
-
-            return result
-
-        def cache_clear() -> None:
-            """Clear the cache and reset statistics."""
-            nonlocal hits, misses
-            cache.clear()
-            hits = 0
-            misses = 0
-
-        def cache_info() -> dict:
-            """Get cache statistics.
-
-            Returns:
-                dict: Dictionary containing cache statistics including:
-                    - 'hits': Number of cache hits
-                    - 'misses': Number of cache misses
-                    - 'maxsize': Maximum cache size
-                    - 'currsize': Current cache size
-            """
-            return {
-                "hits": hits,
-                "misses": misses,
-                "maxsize": maxsize,
-                "currsize": len(cache),
-            }
-
-        # Attach cache management methods
-        wrapper.cache_clear = cache_clear  # type: ignore
-        wrapper.cache_info = cache_info  # type: ignore
-        wrapper.cache = cache  # type: ignore  # For debugging/inspection
-
-        return wrapper
-
-    return decorator
-
-
-def _generate_cache_key(args: tuple, kwargs: dict) -> str:
-    """Generate a stable cache key from function arguments."""
-
-    def _to_hashable(value: Any) -> Any:
-        if isinstance(value, (str, int, float, bool, type(None))):
-            return value
-        elif isinstance(value, (list, tuple)):
-            return tuple(_to_hashable(v) for v in value)
-        elif isinstance(value, dict):
-            return tuple(sorted((k, _to_hashable(v)) for k, v in value.items()))
-        elif hasattr(value, "__dict__"):
-            return _to_hashable(vars(value))
-        return str(value)  # Fallback for other types
-
-    # Convert all arguments to hashable types
-    key_parts = (_to_hashable(args), _to_hashable(kwargs))
-
-    # Create a stable string representation and hash it
-    key_str = json.dumps(key_parts, sort_keys=True)
-    return hashlib.sha256(key_str.encode("utf-8")).hexdigest()
-
 
 class ConfigManager(IConfigManager):
-    """Configuration manager with 3-layer hierarchy support."""
+    """Configuration manager with hybrid field-based architecture.
+
+    This manager uses a field-based approach instead of recursive dict processing,
+    providing better performance, type safety, and maintainability.
+    """
 
     def __init__(
         self,
@@ -137,6 +47,7 @@ class ConfigManager(IConfigManager):
         """
         self.env_manager: EnvManager = env_manager or EnvManager()
         self._path_manager = self.env_manager.path_manager
+        self._system_registry = system_capability_registry
 
         # Resolve config paths
         self.config_paths = [
@@ -150,10 +61,15 @@ class ConfigManager(IConfigManager):
                 self._path_manager.resolve_path(p) for p in tool_config_paths
             ]
 
-        # 3-layer configuration storage
+        # New architecture components
+        self._field_registry = ConfigFieldRegistry()
+        self._validation_engine = ValidationEngine(
+            self._field_registry, self._system_registry
+        )
+        self._builder: ConfigBuilder | None = None
+
+        # Configuration storage
         self._defaults_path = self._path_manager.resolve_path("@config/defaults.yaml")
-        self._global_config: AppConfig | None = None
-        self._session_overrides: dict[str, Any] = {}
         self._loaded_tools: dict[str, ToolConfig] = {}
 
     def _load_tools(self) -> dict[str, ToolConfig]:
@@ -174,22 +90,17 @@ class ConfigManager(IConfigManager):
             # Get the tools as a dictionary
             tools_dict = tool_loader.load_tool_configs()
 
-            # Convert the dictionary to a ToolConfigList
-            tool_config_list = ToolConfigList(tools=list(tools_dict.values()))
-
-            # Now assign it to the config (ensure _global_config is not None)
-            if self._global_config is not None:
-                self._global_config.tools = tool_config_list
+            # Now assign it to the config (ensure _builder is not None)
+            if self._builder:
+                self._builder.update_tools(tools_dict)
             else:
                 raise ConfigError("Global configuration is not initialized")
-
-            self._resolve_dicts.cache_clear()
 
             logger.debug("Successfully loaded %d tools", len(tools_dict))
             return tools_dict
 
         except Exception as e:
-            logger.error("Failed to load tools", str(e), exc_info=True)
+            logger.error("Failed to load tools", error=str(e), exc_info=True)
             raise ConfigError(f"Failed to load tools: {e}") from e
 
     def get_tools(self) -> dict[str, ToolConfig]:
@@ -227,18 +138,67 @@ class ConfigManager(IConfigManager):
             raise ConfigError(f"Failed to reload tools: {e}") from e
 
     def load_global_config(self) -> AppConfig:
-        """Load and merge configuration from all sources into global layer.
+        """Load and initialize global configuration using ConfigField system.
 
-        Environment variables (including those loaded from .env files) are
-        automatically available and have the highest priority in the global layer.
+        This method loads configuration from files and environment, creates the AppConfig
+        instance, registers all ConfigFields, and initializes the configuration system.
+        Validation is handled by the ConfigBuilder during the build process.
 
         Returns:
-            Merged AppConfig instance
+            Initialized AppConfig instance
 
         Raises:
-            ConfigError: If configuration is invalid or files don't exist
+            ConfigError: If configuration is invalid or validation fails
         """
-        logger.info("Loading global configuration from multiple sources")
+        logger.info("Loading global configuration with ConfigField system")
+
+        # 1. Load configuration data from files and environment
+        try:
+            config_data = self._load_config_data()
+            logger.info("Configuration data loaded from files and environment")
+        except Exception as e:
+            error_msg = f"Failed to load configuration data: {e}"
+            logger.error(error_msg)
+            raise ConfigError(error_msg) from e
+
+        # 2. Create AppConfig instance from loaded data - this auto-registers all ConfigFields
+        try:
+            config = AppConfig.from_dict(config_data)
+            logger.info("AppConfig created and ConfigFields registered")
+        except Exception as e:
+            error_msg = f"Failed to create AppConfig: {e}"
+            logger.error(error_msg)
+            raise ConfigError(error_msg) from e
+
+        # 3. Create builder for this configuration (builder handles validation internally)
+        try:
+            self._builder = ConfigBuilder(config, self._validation_engine)
+            logger.debug("ConfigBuilder created")
+        except Exception as e:
+            error_msg = f"Failed to create ConfigBuilder: {e}"
+            logger.error(error_msg)
+            raise ConfigError(error_msg) from e
+
+        # 4. Build final validated configuration (validation happens here)
+        try:
+            config = self._builder.build()
+            logger.info("Global configuration loaded and validated successfully")
+            return config
+        except Exception as e:
+            error_msg = f"Failed to build final configuration: {e}"
+            logger.error(error_msg)
+            raise ConfigError(error_msg) from e
+
+    def _load_config_data(self) -> dict[str, Any]:
+        """Load configuration data from all sources.
+
+        Returns:
+            Merged configuration dictionary
+
+        Raises:
+            ConfigError: If configuration loading fails
+        """
+        logger.info("Loading configuration from multiple sources")
 
         # Start with defaults
         config_data = self._load_defaults()
@@ -260,18 +220,49 @@ class ConfigManager(IConfigManager):
         if env_data:
             config_data = self._deep_merge(config_data, env_data)
 
-        # Create and validate final config
-        try:
-            config = AppConfig.from_dict(config_data)
-            logger.info("Global configuration loaded and validated successfully")
-            self._global_config = config
-            self._resolve_dicts.cache_clear()
+        return config_data
 
-            return config
-        except ValidationError as e:
-            error_msg = f"Invalid global configuration: {e}"
-            logger.error(error_msg)
-            raise ConfigError(error_msg) from e
+    def get_field_metadata(self, field_path: str) -> dict[str, Any]:
+        """Get metadata for a specific configuration field.
+
+        Args:
+            field_path: The dot-notation path to the field
+
+        Returns:
+            Dictionary containing field metadata
+        """
+        field = self._field_registry.get_field(field_path)
+        if not field:
+            return {}
+
+        return {
+            "path": field.full_path,
+            "parent_model": field.parent_model,
+            "has_dependencies": field.has_dependencies,
+            "dependencies": field.dependencies.model_dump()
+            if field.dependencies is not None
+            else None,
+            "fallback_values": field.get_fallback_values(),
+        }
+
+    def validate_field(self, field_path: str, value: Any) -> dict[str, Any]:
+        """Validate a single field value.
+
+        Args:
+            field_path: The dot-notation path to the field
+            value: The value to validate
+
+        Returns:
+            Dictionary containing validation result
+        """
+        result = self._validation_engine.validate_field(field_path, value)
+        return {
+            "valid": result.valid,
+            "error": result.error,
+            "can_defer": result.can_defer,
+            "missing_dependencies": result.missing_dependencies,
+            "fallback_used": result.available_fallback,
+        }
 
     def set_session_overrides(self, overrides: dict[str, Any]) -> None:
         """Set session-level configuration overrides.
@@ -282,126 +273,157 @@ class ConfigManager(IConfigManager):
         Args:
             overrides: Dictionary of configuration overrides using dot notation
                       (e.g., {"llm.model_name": "gpt-4", "llm.temperature": 0.5})
-
-        Raises:
-            LLMError: If the overrides contain invalid LLM configuration values
         """
-        if not overrides:
-            return
+        if self._builder:
+            self._builder.set_session_overrides(overrides)
+        else:
+            logger.error("Config builder not initialized")
+            raise ConfigError("Config builder not initialized")
 
-        logger.info("Setting session overrides", overrides=overrides)
+    @property
+    def system_registry(self) -> SystemCapabilityRegistry:
+        """Get the system capability registry.
 
-        # Create a copy of current overrides and update with new ones
-        new_overrides = deepcopy(self._session_overrides or {})
-        new_overrides.update(overrides)
+        Returns:
+            The SystemCapabilityRegistry instance
+        """
+        return self._system_registry
 
-        try:
-            # Apply overrides to global config (similar to resolve method)
-            if self._global_config is not None:
-                resolved_data = self._global_config.to_dict()
+    def register_module(
+        self, module_name: str, capabilities: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Register a module and update config with resolved pending validations.
 
-                # Apply session overrides
-                session_overrides = self._apply_overrides_to_dict(
-                    resolved_data, new_overrides
+        Args:
+            module_name: Name of the module being registered
+            capabilities: Dictionary of capabilities this module provides
+
+        Returns:
+            Dictionary of setting names to their new values (only actual changes)
+        """
+        # Get new resolutions from system registry
+        new_resolved = self._system_registry.register_module(module_name, capabilities)
+
+        # Compare with current values, only return actual changes
+        actual_changes = {}
+        if new_resolved:
+            for setting_name, new_value in new_resolved:
+                current_value = self._get_current_value(setting_name)
+                if str(current_value).lower() != str(new_value).lower():
+                    actual_changes[setting_name] = new_value
+
+        # Apply only actual changes
+        if actual_changes and self._builder:
+            self._builder.set_session_overrides(actual_changes, skip_validation=True)
+        # If no builder, the changes will be applied when config is loaded
+
+        return actual_changes
+
+    def register_capability(self, capabilities: list[str]) -> dict[str, Any]:
+        """Register a capability directly.
+
+        Args:
+            capabilities: List of the capability to add
+
+        Returns:
+            Dictionary of setting names to their new values (only actual changes)
+        """
+        # Get new resolutions from system registry
+        new_resolved = self._system_registry.register_capability(capabilities)
+
+        # Compare with current values, only return actual changes
+        actual_changes = {}
+        if new_resolved:
+            for setting_name, new_value in new_resolved:
+                current_value = self._get_current_value(setting_name)
+                if str(current_value).lower() != str(new_value).lower():
+                    actual_changes[setting_name] = new_value
+
+        # Apply only actual changes
+        if actual_changes and self._builder:
+            self._builder.set_session_overrides(actual_changes, skip_validation=True)
+        # If no builder, the changes will be applied when config is loaded
+
+        return actual_changes
+
+    def unregister_capability(self, capabilities: list[str]) -> dict[str, Any]:
+        """Unregister system capabilities and revalidate affected settings.
+
+        This method removes the specified capabilities from the system and
+        automatically revalidates any configuration settings that depend on
+        those capabilities. It uses the ConfigBuilder to handle validation
+        and fallback logic.
+
+        Args:
+            capabilities: List of capability names to unregister
+
+        Returns:
+            Dictionary of affected setting names to their current values
+        """
+        # Get affected setting names from system registry
+        affected_settings = self._system_registry.unregister_capability(capabilities)
+
+        # Get current values for affected settings before they change
+        current_values = {}
+        if affected_settings:
+            for setting_name in affected_settings:
+                current_value = self._get_current_value(setting_name)
+                if current_value is not None:
+                    current_values[setting_name] = current_value
+
+        if affected_settings and self._builder:
+            if current_values:
+                logger.info(
+                    "Revalidating settings after capability removal",
+                    settings=current_values.keys(),
+                    capabilities=capabilities,
                 )
-                resolved_data = self._deep_merge(resolved_data, session_overrides)
 
-                # Try to create AppConfig to validate the merged configuration
-                AppConfig.from_dict(resolved_data)
-            else:
-                # If no global config, just validate the overrides directly
-                AppConfig.from_dict(new_overrides)
+                # Use builder to handle validation and fallbacks
+                # Mark as fallback handling to avoid corrupting pending validations
+                self._builder.set_session_overrides(
+                    current_values, pending_override=False
+                )
 
-        except ValidationError as e:
-            error_msg = f"Invalid resolved configuration: {e}"
-            logger.error(error_msg)
+        return current_values
 
-            # Check if this is an LLM configuration validation error
-            error_details = str(e)
-            if any(
-                field in error_details.lower()
-                for field in ["temperature", "max_tokens", "llm"]
-            ):
-                from local_coding_assistant.core.exceptions import LLMError
+    def _get_current_value(self, setting_name: str) -> Any:
+        """Get the current value for a setting from the global config.
 
-                raise LLMError(f"Configuration update validation failed: {e}") from e
-            else:
-                raise ConfigError(error_msg) from e
+        Args:
+            setting_name: Dot-notation path to the setting
 
-        # Only set overrides if validation passed (or if no overrides provided)
-        self._session_overrides = new_overrides
-        self._resolve_dicts.cache_clear()
+        Returns:
+            Current value or None if not found
+        """
+        try:
+            # Navigate to the setting using dot notation
+            parts = setting_name.split(".")
+            current = self.global_config
+
+            for part in parts:
+                current = getattr(current, part)
+
+            return current
+        except (AttributeError, TypeError):
+            logger.warning(f"Could not get current value for setting '{setting_name}'")
+            return None
+
+    def get_system_status(self) -> dict[str, Any]:
+        """Get comprehensive system status for debugging.
+
+        Returns:
+            Dictionary containing all system status information
+        """
+        return self._system_registry.get_system_status()
 
     def clear_session_overrides(self) -> None:
         """Clear all session-level configuration overrides."""
-        if self._session_overrides:
+        if self._builder:
             logger.info("Clearing all session overrides")
-            self._session_overrides.clear()
-            self._resolve_dicts.cache_clear()
+            self._builder.clear_session_overrides()
 
-    @dict_cache(maxsize=32)
-    def _resolve_dicts(
-        self,
-        global_config: dict,
-        session_overrides: dict,
-        call_overrides: dict,
-    ) -> AppConfig:
-        """Internal method that resolves configuration dictionaries into an AppConfig.
-
-        This method is cached based on the input dictionaries.
-
-        Args:
-            global_config: Base configuration dictionary
-            session_overrides: Session-level overrides
-            call_overrides: Call-specific overrides (highest priority)
-
-        Returns:
-            AppConfig: The resolved and validated configuration
-
-        Raises:
-            ConfigError: If configuration resolution or validation fails
-            LLMError: If LLM-specific validation fails
-        """
-        # Start with global config
-        resolved_data = deepcopy(global_config)
-
-        # Apply session overrides
-        if session_overrides:
-            session_overrides = self._apply_overrides_to_dict(
-                resolved_data, session_overrides
-            )
-            resolved_data = self._deep_merge(resolved_data, session_overrides)
-
-        # Apply call overrides
-        if call_overrides:
-            call_overrides = self._apply_overrides_to_dict(
-                resolved_data, call_overrides
-            )
-            resolved_data = self._deep_merge(resolved_data, call_overrides)
-
-        # Convert to AppConfig and validate
-        try:
-            return AppConfig.from_dict(resolved_data)
-        except ValidationError as e:
-            error_msg = f"Invalid resolved configuration: {e}"
-            logger.error(error_msg)
-
-            # Handle LLM-specific validation errors
-            error_details = str(e).lower()
-            if any(
-                field in error_details for field in ["temperature", "max_tokens", "llm"]
-            ):
-                from local_coding_assistant.core.exceptions import LLMError
-
-                raise LLMError(f"Configuration validation failed: {e}") from e
-            raise ConfigError(error_msg) from e
-
-    def resolve(
-        self,
-        global_config: dict | None = None,
-        session_overrides: dict | None = None,
-        call_overrides: dict | None = None,
-    ) -> AppConfig:
+    def resolve(self) -> AppConfig:
         """Resolve configuration with all layers applied.
 
         Layer priority (highest to lowest):
@@ -409,52 +431,32 @@ class ConfigManager(IConfigManager):
         2. Session overrides
         3. Global config (lowest priority)
 
-        Args:
-            global_config: Base configuration dictionary. If None, uses instance's global config.
-            session_overrides: Session-level overrides. If None, uses instance's session overrides.
-            call_overrides: Call-specific overrides (highest priority). If None, uses empty dict.
-
         Returns:
             AppConfig: The resolved and validated configuration
 
         Raises:
-            ConfigError: If no global config is available or resolution fails
-            LLMError: If LLM-specific validation fails
+            ConfigError: If no builder is available
         """
-        # Use instance values if not provided
-        if global_config is None:
-            if self._global_config is None:
-                raise ConfigError("No global config available")
-            global_config = self._global_config.to_dict()
-
-        session_overrides = (
-            session_overrides
-            if session_overrides is not None
-            else self._session_overrides
-        )
-        call_overrides = call_overrides if call_overrides is not None else {}
-
-        return self._resolve_dicts(global_config, session_overrides, call_overrides)
+        if self._builder:
+            # Build and return the final configuration
+            return self._builder.build()
+        else:
+            logger.error("Config builder not initialized")
+            raise ConfigError("Config builder not initialized")
 
     def get_cache_info(self) -> dict:
-        """Get cache statistics for the _resolve_dicts method.
+        """Get cache statistics for the validation engine.
 
         Returns:
-            dict: Dictionary containing cache statistics including:
-                - 'hits': Number of cache hits
-                - 'misses': Number of cache misses
-                - 'maxsize': Maximum cache size
-                - 'currsize': Current cache size
+            dict: Dictionary containing cache statistics
         """
-        if not hasattr(self._resolve_dicts, "cache_info"):
-            return {
-                "hits": 0,
-                "misses": 0,
-                "maxsize": 0,
-                "currsize": 0,
-                "enabled": False,
-            }
-        return self._resolve_dicts.cache_info()
+        validation_engine_initialized = self._validation_engine is not None
+        return {
+            "validation_engine_initialized": validation_engine_initialized,
+            "cache_stats": self._validation_engine.get_cache_stats()
+            if validation_engine_initialized
+            else None,
+        }
 
     def get_config(
         self,
@@ -463,6 +465,7 @@ class ConfigManager(IConfigManager):
         overrides: dict[str, Any] | None = None,
     ) -> AppConfig:
         """Get configuration with all layers applied.
+        DEPRECATED: Use call_overrides and then global_config property
 
         This is the main public method that maintains backward compatibility.
 
@@ -477,28 +480,17 @@ class ConfigManager(IConfigManager):
         Raises:
             ConfigError: If configuration is not loaded or resolution fails
         """
-        if self._global_config is None:
-            raise ConfigError(
-                "Global configuration not loaded. Call load_global_config() first."
-            )
+        overrides = overrides or {}
+        if self._builder:
+            provider_override = {"llm.provider": provider} if provider else {}
+            model_name_override = {"llm.model_name": model_name} if model_name else {}
+            overrides.update(provider_override)
+            overrides.update(model_name_override)
 
-        # Prepare call overrides
-        call_overrides = {}
-        if provider is not None:
-            call_overrides["llm.provider"] = provider
-        if model_name is not None:
-            call_overrides["llm.model_name"] = model_name
-        if overrides:
-            call_overrides.update(overrides)
-
-        # Apply all layers
-        resolved_dict = self.resolve(
-            global_config=self._global_config.to_dict(),
-            session_overrides=self._session_overrides,
-            call_overrides=call_overrides,
-        )
-
-        return resolved_dict
+            return self._builder.set_call_overrides(overrides)
+        else:
+            logger.error("Config builder not initialized")
+            raise ConfigError("Config builder not initialized")
 
     def _load_config_file(self, path: Path | str) -> dict[str, Any]:
         """Load configuration from a YAML file.
@@ -561,44 +553,6 @@ class ConfigManager(IConfigManager):
                 return None
             raise  # Re-raise other ConfigError exceptions
 
-    def _apply_overrides_to_dict(
-        self, base_dict: dict[str, Any], overrides: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Apply dot-notation overrides to a nested dictionary.
-
-        Args:
-            base_dict: Base dictionary to apply overrides to
-            overrides: Dictionary of overrides using dot notation keys
-
-        Returns:
-            Dictionary with overrides applied
-        """
-        if not isinstance(base_dict, dict):
-            base_dict = {}
-
-        result = deepcopy(base_dict)
-
-        for key_path, value in overrides.items():
-            if not key_path:
-                continue
-
-            parts = key_path.split(".")
-            current = result
-
-            # Navigate to the parent of the target key
-            for part in parts[:-1]:
-                if not isinstance(current, dict):
-                    current = {}
-                if part not in current:
-                    current[part] = {}
-                current = current[part]
-
-            # Set the final value
-            if parts:
-                current[parts[-1]] = value
-
-        return result
-
     def _deep_merge(
         self, base: dict[str, Any], overlay: dict[str, Any]
     ) -> dict[str, Any]:
@@ -635,10 +589,6 @@ class ConfigManager(IConfigManager):
         Raises:
             ConfigError: If no configuration is loaded.
         """
-        if self._global_config is None:
-            raise ConfigError(
-                "No configuration loaded. Call load_global_config() first."
-            )
         return self.resolve()
 
     def save_config(self, path: Path | str | None = None) -> None:
@@ -656,18 +606,18 @@ class ConfigManager(IConfigManager):
                 raise ConfigError("No config paths configured to save to")
             path = self.config_paths[0]
 
+        # Ensure global config is loaded
+        if self._builder is None:
+            raise ConfigError(
+                "No configuration loaded. Call load_global_config() first."
+            )
+
         try:
             # Resolve path using PathManager and ensure parent directory exists
             resolved_path = self._path_manager.resolve_path(path, ensure_parent=True)
 
-            # Ensure global config is loaded
-            if self._global_config is None:
-                raise ConfigError(
-                    "No configuration loaded. Call load_global_config() first."
-                )
-
             # Get the current config
-            config_data = self._global_config.model_dump(
+            config_data = self.global_config.model_dump(
                 exclude_unset=True, exclude_defaults=True, exclude_none=True
             )
 
@@ -685,7 +635,12 @@ class ConfigManager(IConfigManager):
     @property
     def session_overrides(self) -> dict[str, Any]:
         """Get the current session overrides."""
-        return deepcopy(self._session_overrides)
+        if self._builder:
+            # Build and return the final configuration
+            return self._builder.get_session_overrides()
+        else:
+            logger.error("Config builder not initialized")
+            raise ConfigError("Config builder not initialized")
 
     @property
     def path_manager(self) -> PathManager:
