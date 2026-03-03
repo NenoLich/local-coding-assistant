@@ -185,6 +185,8 @@ class TestOpenAIChatCompletionsDriver:
                 class MockDelta:
                     def __init__(self):
                         self.content = "Hello"
+                        self.tool_calls = None
+                        self.reasoning = None
 
         # Create an async generator for the mock response
         async def mock_stream():
@@ -275,6 +277,73 @@ class TestOpenAIChatCompletionsDriver:
         # Verify the error message contains the original error
         error_str = str(exc_info.value)
         assert error_message in error_str
+
+    def test_format_messages_basic(self, driver):
+        """Test basic message formatting."""
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there"},
+        ]
+
+        formatted = driver._format_messages(messages)
+
+        assert len(formatted) == 2
+        assert formatted[0]["role"] == "user"
+        assert formatted[0]["content"] == "Hello"
+        assert formatted[1]["role"] == "assistant"
+        assert formatted[1]["content"] == "Hi there"
+
+    def test_format_messages_with_tool_calls(self, driver):
+        """Test message formatting with tool calls."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": "I'll help",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "test_tool",
+                            "arguments": {"arg": "value"},
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "Tool result",
+            },
+        ]
+
+        formatted = driver._format_messages(messages)
+
+        assert len(formatted) == 2
+        # Assistant message
+        assert formatted[0]["role"] == "assistant"
+        assert formatted[0]["content"] == "I'll help"
+        assert formatted[0]["tool_calls"][0]["function"]["arguments"] == '{"arg": "value"}'
+        # Tool message
+        assert formatted[1]["role"] == "tool"
+        assert formatted[1]["tool_call_id"] == "call_1"
+        assert formatted[1]["content"] == "Tool result"
+
+    def test_format_messages_tool_content_string(self, driver):
+        """Test that tool message content is converted to string."""
+        messages = [
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": [{"type": "text", "text": "Result"}],
+            },
+        ]
+
+        formatted = driver._format_messages(messages)
+
+        assert formatted[0]["content"] == "Result"
+        assert isinstance(formatted[0]["content"], str)
+
 
     def test_extract_error_details_edge_cases(self, driver):
         """Test _extract_error_details with various status_code scenarios (lines 289-295)"""
@@ -470,18 +539,36 @@ class TestOpenAIResponsesDriver:
     @pytest.mark.asyncio
     async def test_stream_success(self, driver, mock_client, test_request):
         """Test successful streaming"""
-        # Mock streaming response
-        mock_chunk = MagicMock()
-        mock_chunk.type = "response.text.delta"
-        mock_chunk.delta = "Hello"
-        mock_chunk.finish_reason = None
-        mock_chunk.id = "test-chunk-123"
-        mock_chunk.created = 1234567890
-        mock_chunk.model = "test-model"
+        # Mock streaming response - create proper Responses API events
+        event1 = MagicMock()
+        event1.type = "response.output_text.delta"
+        event1.delta = "Hello"
+        event1.sequence_number = 1
+        event1.item_id = "item1"
+        event1.output_index = 0
+        event1.content_index = 0
 
-        # Create an async generator for the mock response
+        event2 = MagicMock()
+        event2.type = "response.output_text.delta"
+        event2.delta = " world"
+        event2.sequence_number = 2
+        event2.item_id = "item1"
+        event2.output_index = 0
+        event2.content_index = 1
+
+        # Completion event
+        completion_event = MagicMock()
+        completion_event.type = "response.completed"
+        completion_event.sequence_number = 3
+        completion_event.response = MagicMock()
+        completion_event.response.output = []
+        completion_event.response.id = "test-response-id"
+        completion_event.response.usage = {"total_tokens": 10}
+
         async def mock_stream():
-            yield mock_chunk
+            yield event1
+            yield event2
+            yield completion_event
 
         mock_client.responses.create.return_value = mock_stream()
 
@@ -491,9 +578,10 @@ class TestOpenAIResponsesDriver:
             chunks.append(chunk)
 
         # Assertions
-        assert len(chunks) == 1
+        assert len(chunks) == 3
         assert chunks[0].content == "Hello"
-        assert chunks[0].metadata["model"] == "test-model"
+        assert chunks[1].content == " world"
+        assert chunks[2].finish_reason == "completed"
 
     @pytest.mark.asyncio
     async def test_health_check_success(self, driver, mock_client):
@@ -568,6 +656,86 @@ class TestOpenAIResponsesDriver:
         # Verify the error message contains the original error
         error_str = str(exc_info.value)
         assert error_message in error_str
+
+    def test_format_messages_basic(self, driver):
+        """Test basic message formatting for Responses API."""
+        messages = [
+            {"role": "user", "content": "Hello"},
+            {"role": "assistant", "content": "Hi there"},
+        ]
+
+        formatted = driver._format_messages(messages)
+
+        assert len(formatted) == 2
+        assert formatted[0]["type"] == "message"
+        assert formatted[0]["content"] == "Hello"
+        assert formatted[1]["type"] == "message"
+        assert formatted[1]["content"] == "Hi there"
+
+    def test_format_messages_with_tool_calls(self, driver):
+        """Test message formatting with tool calls for Responses API."""
+        messages = [
+            {
+                "role": "assistant",
+                "content": "I'll help",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "test_tool",
+                            "arguments": {"arg": "value"},
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": [{"type": "text", "text": "Tool result"}],
+            },
+        ]
+
+        formatted = driver._format_messages(messages)
+
+        assert len(formatted) == 2
+        # Assistant message
+        assert formatted[0]["type"] == "message"
+        assert formatted[0]["content"] == "I'll help"
+        assert formatted[0]["tool_calls"] == messages[0]["tool_calls"]
+        # Tool message
+        assert formatted[1]["type"] == "function_call_output"
+        assert formatted[1]["call_id"] == "call_1"
+        assert formatted[1]["output"] == "Tool result"
+
+    def test_format_messages_tool_content_string(self, driver):
+        """Test tool message content extraction from list."""
+        messages = [
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": [
+                    {"type": "text", "text": "Part 1"},
+                    {"type": "text", "text": "Part 2"},
+                ],
+            },
+        ]
+
+        formatted = driver._format_messages(messages)
+
+        assert formatted[0]["output"] == "Part 1Part 2"
+
+    def test_format_messages_skips_system(self, driver):
+        """Test that system messages are skipped in input formatting."""
+        messages = [
+            {"role": "system", "content": "System prompt"},
+            {"role": "user", "content": "Hello"},
+        ]
+
+        formatted = driver._format_messages(messages)
+
+        assert len(formatted) == 1
+        assert formatted[0]["content"] == "Hello"
 
     def test_format_tools_for_responses_api(self, driver):
         """Test tool formatting for Responses API"""

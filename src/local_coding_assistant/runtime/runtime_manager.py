@@ -6,8 +6,8 @@ end-to-end query handling across the LLM and tools using a per-run session.
 from __future__ import annotations
 
 import json
-import time
 import uuid
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from local_coding_assistant.agent.llm import (
@@ -20,6 +20,7 @@ from local_coding_assistant.agent.llm import (
 from local_coding_assistant.core.protocols import IConfigManager, IToolManager
 from local_coding_assistant.prompt import PromptComposer
 from local_coding_assistant.runtime.context_manager import ContextManager
+from local_coding_assistant.runtime.events import EventType, ExecutionEvent
 from local_coding_assistant.runtime.handlers.handler_types import (
     HandlerContext,
     HandlerErrorType,
@@ -99,7 +100,7 @@ class RuntimeManager:
         max_tokens: int | None = None,
         tool_call_mode: str | None = None,
         sandbox_session: str | None = None,
-    ) -> RunReport:
+    ) -> AsyncIterator[ExecutionEvent]:
         """Unified entrypoint: run a single query and return structured output.
 
         Args:
@@ -116,6 +117,9 @@ class RuntimeManager:
             tool_calls, and history.
             Uses agent_mode to determine which agent implementation to use.
         """
+        if model:
+            self.config_manager.set_session_overrides({"llm.model_name": model})
+
         # Update the config with the provided tool_call_mode if specified
         if tool_call_mode is not None:
             self.config_manager.set_session_overrides(
@@ -141,16 +145,19 @@ class RuntimeManager:
             )
 
         if self.config_manager.global_config.runtime.agent_mode != "no_agent":
-            return await self._run_agent_mode(
+            async for event in self._run_agent_mode(
                 text,
                 model,
                 temperature,
                 max_tokens,
                 agent_mode_type=self.config_manager.global_config.runtime.agent_mode,
-            )
+            ):
+                yield event
+            return
 
         # Regular mode execution
-        return await self._run_regular_mode(text, model, temperature, max_tokens)
+        async for event in self._run_regular_mode(text, model, temperature, max_tokens):
+            yield event
 
     def _setup_session(self) -> SessionState:
         """Setup and configure the session for the current request."""
@@ -354,12 +361,10 @@ class RuntimeManager:
         logger.warning("Tool calls received but tool manager is not available")
         for tool_call in tool_calls:
             func_name = tool_call.name
-            args = tool_call.arguments
 
             session.add_tool_message(
-                name=func_name,
-                args=args,
-                result={"error": "Tool functionality is not available"},
+                call_id=tool_call.id if tool_call.id else "unknown",
+                result="Tool functionality is not available",
             )
             logger.warning(
                 "Tool call '%s' ignored: Tool manager not available", func_name
@@ -369,9 +374,20 @@ class RuntimeManager:
         self, tool_call: LLMToolCall, session: SessionState
     ) -> None:
         """Process a single tool call from the LLM response."""
+        call_id: str = tool_call.id if tool_call.id else "unknown"
         func_name = tool_call.name
         args = tool_call.arguments
         session_id = args.get("session_id", "")
+
+        formatted_tool_call = {
+            "id": getattr(tool_call, "id", ""),
+            "type": "function",
+            "function": {
+                "name": getattr(tool_call, "name", ""),
+                "arguments": getattr(tool_call, "arguments", "{}"),
+            },
+        }
+        session.add_assistant_message(tool_call=formatted_tool_call)
 
         if tool_call.type == "code" and not session_id:
             args["session_id"] = self.config_manager.global_config.sandbox.session_id
@@ -381,10 +397,11 @@ class RuntimeManager:
 
             self._log_tool_success(func_name, tool_result)
         except Exception as e:
-            await self._handle_tool_error(e, func_name, args, session)
+            await self._handle_tool_error(e, func_name, call_id, session)
             return
 
-        session.add_tool_message(name=func_name, args=args, result=tool_result)
+        result = tool_result.get("result", "")
+        session.add_tool_message(call_id=call_id, result=str(result))
 
     async def _execute_tool(
         self, func_name: str, args: dict[str, Any]
@@ -426,16 +443,15 @@ class RuntimeManager:
         self,
         error: Exception,
         func_name: str,
-        args: dict[str, Any],
+        call_id: str,
         session: SessionState,
     ) -> None:
         """Handle general tool execution errors."""
         error_msg = str(error)
         logger.error("Tool call '%s' failed", func_name, error=error_msg)
         session.add_tool_message(
-            name=func_name,
-            args=args,
-            result={"error": error_msg},
+            call_id=call_id,
+            result=error_msg,
         )
 
     def _log_tool_success(self, func_name: str, tool_result: Any) -> None:
@@ -448,9 +464,11 @@ class RuntimeManager:
         model: str | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
-    ) -> RunReport:
+    ) -> AsyncIterator[ExecutionEvent]:
         """Run a single query in regular mode with handler integration."""
         session = self._setup_session()
+
+        yield ExecutionEvent(EventType.TURN_START, session.id, None)
 
         user_message, tool_outputs = await self._record_user_message(text, session)
 
@@ -559,7 +577,10 @@ class RuntimeManager:
         report = self._build_regular_report(session, response, status=status)
 
         logger.info("Runtime finished query; session_id=%s", session.id)
-        return report
+
+        yield ExecutionEvent(
+            EventType.TURN_COMPLETE, session.id, None, {"report": report}
+        )
 
     async def _run_agent_mode(
         self,
@@ -569,7 +590,7 @@ class RuntimeManager:
         max_tokens: int | None = None,
         streaming: bool | None = None,
         agent_mode_type: str | None = None,
-    ) -> RunReport:
+    ) -> AsyncIterator[ExecutionEvent]:
         """Run the runtime in agent mode, delegating to AgentLoop, LangGraphAgent or FrameAgent."""
         # Determine which agent implementation to use
         runtime_config = self.config_manager.global_config.runtime
@@ -577,31 +598,45 @@ class RuntimeManager:
         stream_mode = streaming if streaming is not None else runtime_config.stream
 
         if current_agent_mode == "frame":
-            return await self._run_frame_agent_mode(text)
+            async for event in self._run_frame_agent_mode(text):
+                yield event
         elif current_agent_mode == "graph":
-            return await self._run_langgraph_agent_mode(
+            session = self._setup_session()
+            report = await self._run_langgraph_agent_mode(
                 text, model, temperature, max_tokens, stream_mode
             )
+            yield ExecutionEvent(
+                EventType.TURN_COMPLETE, session.id, None, {"report": report}
+            )
         else:
-            return await self._run_legacy_agent_mode(
+            session = self._setup_session()
+            report = await self._run_legacy_agent_mode(
                 text, model, temperature, max_tokens, stream_mode
+            )
+            yield ExecutionEvent(
+                EventType.TURN_COMPLETE, session.id, None, {"report": report}
             )
 
     async def _run_frame_agent_mode(
         self,
         text: str,
-    ) -> RunReport:
+    ) -> AsyncIterator[ExecutionEvent]:
         """Run the runtime in agent mode using the new FrameAgent."""
         from local_coding_assistant.agent.frame_agent import FrameAgent
 
         if self._llm_service is None or self._tool_manager is None:
-            return RunReport(
+            session = self._setup_session()
+            report = RunReport(
                 mode="frame",
                 status="failed",
                 final_answer=None,
                 message=None,
                 errors=[],
             )
+            yield ExecutionEvent(
+                EventType.TURN_COMPLETE, session.id, None, {"report": report}
+            )
+            return
 
         # Setup session for the agent
         session = self._setup_session()
@@ -615,70 +650,9 @@ class RuntimeManager:
             name="orchestrated_agent",
         )
 
-        # Run the agent
-        start_time = time.perf_counter()
-        final_answer = await agent.run(text, session)
-        total_latency_ms = (time.perf_counter() - start_time) * 1000
-
-        if agent.history:
-            models_used = set()
-            for frame in agent.history:
-                metrics = frame.get_llm_metrics()
-                if metrics and metrics.model is not None:
-                    models_used.add(metrics.model)
-
-            frames = [f.model_dump() for f in agent.history]
-            last_frame = agent.history[-1] if agent.history else None
-            status = "success"
-            if last_frame and last_frame.result:
-                status = (
-                    last_frame.result.status.value
-                    if hasattr(last_frame.result.status, "value")
-                    else str(last_frame.result.status)
-                )
-            elif final_answer is None:
-                status = "failed"
-            total_tokens = sum(
-                [
-                    action.llm_metrics.total_tokens
-                    for frame in agent.history
-                    for action in frame.actions
-                    if action.llm_metrics
-                ]
-            )
-
-            return RunReport(
-                run_id=f"run_{uuid.uuid4()}",
-                session_id=session.id,
-                mode="frame",
-                status=status,
-                final_answer=final_answer,
-                message=final_answer,
-                finish_reason=(
-                    last_frame.result.finish_reason
-                    if last_frame and last_frame.result
-                    else None
-                ),
-                models_used=list(models_used),
-                iterations=len(agent.history),
-                frames=frames,
-                tokens_used=total_tokens,
-                metrics=RunMetrics(
-                    tokens_used=total_tokens, total_latency_ms=total_latency_ms
-                ),
-            )
-
-        else:
-            return RunReport(
-                run_id=f"run_{uuid.uuid4()}",
-                session_id=session.id,
-                mode="frame",
-                status="failed",
-                final_answer=final_answer,
-                message=final_answer,
-                iterations=len(agent.history),
-                frames=[],
-            )
+        # Run the agent and yield events
+        async for event in agent.run(text, session):
+            yield event
 
     async def _run_langgraph_agent_mode(
         self,
@@ -805,8 +779,8 @@ class RuntimeManager:
         tool_outputs, processed_text = await self._handle_direct_tool_call(text)
 
         if tool_outputs:
-            for tool_name, result in tool_outputs.items():
-                session.add_tool_message(name=tool_name, args={}, result=result)
+            for _, result in tool_outputs.items():
+                session.add_tool_message(call_id="id000", result=str(result))
 
         return processed_text, tool_outputs
 

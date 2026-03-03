@@ -162,10 +162,27 @@ class TestRuntimeExecutor:
         )
         mock_llm_service.generate.return_value = mock_response
 
+        # Setup mock stream
+        del mock_llm_service.stream
+        async def mock_stream(task, options=None):
+            from unittest.mock import MagicMock
+            chunk = MagicMock()
+            chunk.content = mock_response.content
+            chunk.tool_calls = mock_response.tool_calls
+            chunk.reasoning = mock_response.reasoning
+            chunk.usage = {"total_tokens": mock_response.total_tokens}
+            chunk.metadata = mock_response.metadata.get("provider_metadata", {})
+            chunk.model = mock_response.model
+            chunk.provider = mock_response.provider
+            chunk.finish_reason = mock_response.finish_reason
+            yield chunk
+        mock_llm_service.stream = mock_stream
+
         # Execute frame
-        result_frame = await runtime_executor.execute(
-            sample_execution_frame, use_streaming=False
-        )
+        events = []
+        async for event in runtime_executor.execute(sample_execution_frame):
+            events.append(event)
+        result_frame = events[-1].data['frame']
 
         # Verify frame structure
         assert result_frame.id == sample_execution_frame.id
@@ -216,6 +233,21 @@ class TestRuntimeExecutor:
         )
         mock_llm_service.generate.return_value = mock_response
 
+        # Setup mock stream
+        async def mock_stream(task, options=None):
+            from unittest.mock import MagicMock
+            chunk = MagicMock()
+            chunk.content = mock_response.content
+            chunk.tool_calls = mock_response.tool_calls
+            chunk.reasoning = mock_response.reasoning
+            chunk.usage = mock_response.metadata.get("usage", {})
+            chunk.metadata = mock_response.metadata.get("provider_metadata", {})
+            chunk.model = mock_response.model
+            chunk.provider = mock_response.provider
+            chunk.finish_reason = mock_response.finish_reason
+            yield chunk
+        mock_llm_service.stream = mock_stream
+
         # Setup mock tool response
         tool_response = ToolExecutionResponse(
             success=True,
@@ -227,9 +259,10 @@ class TestRuntimeExecutor:
         mock_tool_manager.execute_async.return_value = tool_response
 
         # Execute frame
-        result_frame = await runtime_executor.execute(
-            sample_execution_frame, use_streaming=False
-        )
+        events = []
+        async for event in runtime_executor.execute(sample_execution_frame):
+            events.append(event)
+        result_frame = events[-1].data['frame']
 
         # Verify frame structure
         assert result_frame.result.status == ExecutionStatus.SUCCESS
@@ -272,6 +305,21 @@ class TestRuntimeExecutor:
         )
         mock_llm_service.generate.return_value = mock_response
 
+        # Setup mock stream
+        async def mock_stream(task, options=None):
+            from unittest.mock import MagicMock
+            chunk = MagicMock()
+            chunk.content = mock_response.content
+            chunk.tool_calls = mock_response.tool_calls
+            chunk.reasoning = mock_response.reasoning
+            chunk.usage = mock_response.metadata.get("usage", {})
+            chunk.metadata = mock_response.metadata.get("provider_metadata", {})
+            chunk.model = mock_response.model
+            chunk.provider = mock_response.provider
+            chunk.finish_reason = mock_response.finish_reason
+            yield chunk
+        mock_llm_service.stream = mock_stream
+
         # Setup mock tool failure
         tool_response = ToolExecutionResponse(
             success=False,
@@ -283,9 +331,10 @@ class TestRuntimeExecutor:
         mock_tool_manager.execute_async.return_value = tool_response
 
         # Execute frame
-        result_frame = await runtime_executor.execute(
-            sample_execution_frame, use_streaming=False
-        )
+        events = []
+        async for event in runtime_executor.execute(sample_execution_frame):
+            events.append(event)
+        result_frame = events[-1].data['frame']
 
         # Verify status is PARTIAL (LLM succeeded but tool failed)
         assert result_frame.result.status == ExecutionStatus.PARTIAL
@@ -304,10 +353,17 @@ class TestRuntimeExecutor:
         # Setup mock LLM to raise rate limit error
         mock_llm_service.generate.side_effect = Exception("Rate limit exceeded")
 
+        # Setup mock stream
+        async def mock_stream(task, options=None):
+            raise Exception("Rate limit exceeded")
+            yield
+        mock_llm_service.stream = mock_stream
+
         # Execute frame
-        result_frame = await runtime_executor.execute(
-            sample_execution_frame, use_streaming=False
-        )
+        events = []
+        async for event in runtime_executor.execute(sample_execution_frame):
+            events.append(event)
+        result_frame = events[-1].data['frame']
 
         # Verify BLOCKED status
         assert result_frame.result.status == ExecutionStatus.BLOCKED
@@ -323,10 +379,18 @@ class TestRuntimeExecutor:
         # Setup mock LLM to raise general error
         mock_llm_service.generate.side_effect = Exception("General LLM error")
 
+        # Setup mock stream
+        del mock_llm_service.stream
+        async def mock_stream(task, options=None):
+            raise Exception("General LLM error")
+            yield
+        mock_llm_service.stream = mock_stream
+
         # Execute frame
-        result_frame = await runtime_executor.execute(
-            sample_execution_frame, use_streaming=False
-        )
+        events = []
+        async for event in runtime_executor.execute(sample_execution_frame):
+            events.append(event)
+        result_frame = events[-1].data['frame']
 
         # Verify FAILED status
         assert result_frame.result.status == ExecutionStatus.FAILED
@@ -357,10 +421,26 @@ class TestRuntimeExecutor:
         )
         mock_llm_service.generate.return_value = mock_response
 
+        # Setup mock stream
+        async def mock_stream(task, options=None):
+            from unittest.mock import MagicMock
+            chunk = MagicMock()
+            chunk.content = mock_response.content
+            chunk.tool_calls = mock_response.tool_calls
+            chunk.reasoning = mock_response.reasoning
+            chunk.usage = mock_response.metadata.get("usage", {})
+            chunk.metadata = mock_response.metadata.get("provider_metadata", {})
+            chunk.model = mock_response.model
+            chunk.provider = mock_response.provider
+            chunk.finish_reason = mock_response.finish_reason
+            yield chunk
+        mock_llm_service.stream = mock_stream
+
         # Execute frame
-        result_frame = await runtime_executor.execute(
-            sample_execution_frame, use_streaming=False
-        )
+        events = []
+        async for event in runtime_executor.execute(sample_execution_frame):
+            events.append(event)
+        result_frame = events[-1].data['frame']
 
         # Verify BLOCKED status due to unexposed tool
         assert result_frame.result.status == ExecutionStatus.PARTIAL
@@ -397,6 +477,21 @@ class TestRuntimeExecutor:
         )
         mock_llm_service.generate.return_value = mock_response
 
+        # Setup mock stream
+        async def mock_stream(task, options=None):
+            from unittest.mock import MagicMock
+            chunk = MagicMock()
+            chunk.content = mock_response.content
+            chunk.tool_calls = mock_response.tool_calls
+            chunk.reasoning = mock_response.reasoning
+            chunk.usage = mock_response.metadata.get("usage", {})
+            chunk.metadata = mock_response.metadata.get("provider_metadata", {})
+            chunk.model = mock_response.model
+            chunk.provider = mock_response.provider
+            chunk.finish_reason = mock_response.finish_reason
+            yield chunk
+        mock_llm_service.stream = mock_stream
+
         # Setup mock tool response with final answer
         tool_response = ToolExecutionResponse(
             success=True,
@@ -409,9 +504,10 @@ class TestRuntimeExecutor:
         mock_tool_manager.execute_async.return_value = tool_response
 
         # Execute frame
-        result_frame = await runtime_executor.execute(
-            sample_execution_frame, use_streaming=False
-        )
+        events = []
+        async for event in runtime_executor.execute(sample_execution_frame):
+            events.append(event)
+        result_frame = events[-1].data['frame']
 
         # Verify final answer from tool
         assert result_frame.result.final_answer == "Final answer from tool"
@@ -445,6 +541,21 @@ class TestRuntimeExecutor:
         )
         mock_llm_service.generate.return_value = mock_response
 
+        # Setup mock stream
+        async def mock_stream(task, options=None):
+            from unittest.mock import MagicMock
+            chunk = MagicMock()
+            chunk.content = mock_response.content
+            chunk.tool_calls = mock_response.tool_calls
+            chunk.reasoning = mock_response.reasoning
+            chunk.usage = mock_response.metadata.get("usage", {})
+            chunk.metadata = mock_response.metadata.get("provider_metadata", {})
+            chunk.model = mock_response.model
+            chunk.provider = mock_response.provider
+            chunk.finish_reason = mock_response.finish_reason
+            yield chunk
+        mock_llm_service.stream = mock_stream
+
         # Setup mock tool responses - one success, one failure
         tool_responses = [
             ToolExecutionResponse(
@@ -465,9 +576,10 @@ class TestRuntimeExecutor:
         mock_tool_manager.execute_async.side_effect = tool_responses
 
         # Execute frame
-        result_frame = await runtime_executor.execute(
-            sample_execution_frame, use_streaming=False
-        )
+        events = []
+        async for event in runtime_executor.execute(sample_execution_frame):
+            events.append(event)
+        result_frame = events[-1].data['frame']
 
         # Verify PARTIAL status (mixed success)
         assert result_frame.result.status == ExecutionStatus.PARTIAL
@@ -519,6 +631,22 @@ class TestRuntimeExecutor:
             tool_calls=[tool_call],
         )
 
+        # Setup mock stream
+        async def mock_stream(task, options=None):
+            from unittest.mock import MagicMock
+            mock_response = mock_llm_service.generate.return_value
+            chunk = MagicMock()
+            chunk.content = mock_response.content
+            chunk.tool_calls = mock_response.tool_calls
+            chunk.reasoning = mock_response.reasoning
+            chunk.usage = mock_response.metadata.get("usage", {})
+            chunk.metadata = mock_response.metadata.get("provider_metadata", {})
+            chunk.model = mock_response.model
+            chunk.provider = mock_response.provider
+            chunk.finish_reason = mock_response.finish_reason
+            yield chunk
+        mock_llm_service.stream = mock_stream
+
         tool_calls = [
             ToolCallTrace(
                 call_id="call-1",
@@ -568,7 +696,10 @@ class TestRuntimeExecutor:
         )
         mock_tool_manager.execute_async.return_value = tool_response
 
-        result_frame = await runtime_executor.execute(frame, use_streaming=False)
+        events = []
+        async for event in runtime_executor.execute(frame):
+            events.append(event)
+        result_frame = events[-1].data['frame']
 
         assert result_frame.result.status == ExecutionStatus.SUCCESS
         assert len(result_frame.actions) == 2  # LLM + tool call

@@ -71,15 +71,17 @@ class LLMTask:
         # Add history
         if self.context:
             for message in self.context:
-                if isinstance(message, dict) and {"role", "content"} <= message.keys():
-                    messages.append(
-                        {"role": message["role"], "content": message["content"]}
-                    )
+                if isinstance(message, dict):
+                    # Filter out None values to handle optional fields
+                    filtered_message = {
+                        k: v for k, v in message.items() if v is not None
+                    }
+                    messages.append(filtered_message)
 
         if self.prompt:
             messages.append({"role": "user", "content": self.prompt})
 
-        optional_params = OptionalParameters(stream=stream)
+        optional_params = OptionalParameters(stream=stream, include_usage=True)
         if self.tools:
             optional_params.tools = self.tools
             optional_params.tool_choice = "auto"

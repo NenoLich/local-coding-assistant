@@ -1,8 +1,6 @@
 """Tests for the new execution data structures."""
 
 import pytest
-from datetime import datetime, UTC
-from unittest.mock import MagicMock
 
 from local_coding_assistant.runtime.execution_types import (
     ActionRecord,
@@ -17,6 +15,7 @@ from local_coding_assistant.core.telemetry_types import (
     ResourceMetric,
     ResourceType,
 )
+from local_coding_assistant.runtime.runtime_types import ExecutionMode
 
 
 class TestActionRecord:
@@ -106,7 +105,7 @@ class TestExecutionResult:
 
         assert result.status == ExecutionStatus.SUCCESS
         assert result.final_answer == "Test answer"
-        assert result.total_latency_ms == 0.0
+        assert result.total_latency_ms is None
         assert result.files_created == []
         assert result.files_modified == []
 
@@ -134,7 +133,7 @@ class TestExecutionFrame:
 
         return PromptContext(
             session_id="test-session",
-            execution_mode="sandbox_python",
+            execution_mode=ExecutionMode.SANDBOX_PYTHON,
             tool_call_mode="ptc",
             user_input="Test input",
             tools=[],

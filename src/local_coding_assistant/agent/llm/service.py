@@ -261,7 +261,7 @@ class LLMService:
                 "Invoking provider", provider=provider_name, model=cloned_request.model
             )
             self._telemetry.attempt_start(
-                mode="generate",
+                mode="stream",
                 attempt=attempts,
                 provider=provider_name,
                 model=cloned_request.model,
@@ -284,11 +284,11 @@ class LLMService:
                         provider_name=provider_name,
                         model_name=cloned_request.model,
                     )
-                    self._telemetry.stream_chunk(
-                        provider=provider_name,
-                        model=cloned_request.model,
-                        is_final=delta.finish_reason is not None,
-                    )
+                    # self._telemetry.stream_chunk(
+                    #     provider=provider_name,
+                    #     model=cloned_request.model,
+                    #     is_final=delta.finish_reason is not None,
+                    # )
                 self._router.mark_provider_success(provider_name)
                 _, _, total_tokens = _extract_usage_metrics(last_usage, None)
                 self._telemetry.attempt_success(

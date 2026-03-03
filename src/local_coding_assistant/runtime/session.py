@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -11,9 +10,13 @@ from pydantic import BaseModel, Field
 class Message(BaseModel):
     """A single conversational message."""
 
-    role: str  # "user" | "assistant" | "system"
-    content: str
+    role: str  # "user" | "assistant" | "system" | "tool"
+    content: str | list[dict[str, Any]] | None = None
     id: str | None = None  # Optional message identifier for continuation prompts
+    tool_call_id: str | None = None  # For tool messages, the tool call ID
+    tool_calls: list[dict[str, Any]] | None = (
+        None  # For assistant messages, the tool calls
+    )
 
 
 class ToolCall(BaseModel):
@@ -63,16 +66,24 @@ class SessionState(BaseModel):
         self.history.append(Message(role="user", content=text))
         self.last_query = text
 
-    def add_assistant_message(self, text: str) -> None:
-        self.history.append(Message(role="assistant", content=text))
-
-    def add_tool_message(
-        self, name: str, args: dict[str, Any], result: dict[str, Any] | None = None
+    def add_assistant_message(
+        self, content: str | None = None, tool_call: dict[str, Any] | None = None
     ) -> None:
-        tool_call = ToolCall(name=name, args=args, result=result)
-        self.tool_calls.append(tool_call)
+        if tool_call:
+            self.history.append(
+                Message(role="assistant", content=content, tool_calls=[tool_call])
+            )
+        else:
+            self.history.append(Message(role="assistant", content=content))
+
+    def add_tool_message(self, call_id: str, result: str) -> None:
+        """Add a tool execution result message."""
         self.history.append(
-            Message(role="tool", content=json.dumps(tool_call.model_dump()))
+            Message(
+                role="tool",
+                tool_call_id=call_id,
+                content=result,
+            )
         )
 
     # ── accessors ───────────────────────────────────────────────────────────
@@ -81,7 +92,8 @@ class SessionState(BaseModel):
         """Return the latest user message text if present."""
         for m in reversed(self.history):
             if m.role == "user":
-                return m.content
+                if isinstance(m.content, str):
+                    return m.content
         return None
 
     # ── lifecycle ───────────────────────────────────────────────────────────

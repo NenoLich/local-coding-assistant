@@ -10,6 +10,7 @@ from local_coding_assistant.agent import LLMService
 from local_coding_assistant.agent.llm.models import LLMToolCall
 
 from local_coding_assistant.core.exceptions import LLMError
+from local_coding_assistant.runtime.events import EventType
 from local_coding_assistant.tools.tool_manager import ToolExecutionResponse
 from local_coding_assistant.providers.base import (
     BaseProvider,
@@ -25,7 +26,6 @@ from .conftest import (
     MockConfigManager,
     ToolManagerHelper,
 )
-
 
 # Using test_tool fixture from conftest instead of a class
 
@@ -316,12 +316,17 @@ async def test_orchestrate_with_model_override(runtime_manager: RuntimeManager):
     runtime_manager._llm_service = mock_llm_service
 
     try:
+        result = None
         # Call with model override and tool_call_mode
-        result = await runtime_manager.orchestrate(
+        async for event in runtime_manager.orchestrate(
             "test query", model="gpt-4", tool_call_mode="classic"
-        )
+        ):
+            if event.type == EventType.TURN_COMPLETE:
+                result = event.data["report"]
+                break
 
         # Verify the response contains the expected fields
+        assert result is not None
         assert "message" in result
         assert "models_used" in result
         assert "tokens_used" in result
@@ -365,16 +370,21 @@ async def test_orchestrate_with_multiple_overrides(runtime_manager: RuntimeManag
     runtime_manager._llm_service = mock_llm_service
 
     try:
+        result = None
         # Call with multiple overrides including tool_call_mode
-        result = await runtime_manager.orchestrate(
+        async for event in runtime_manager.orchestrate(
             "test query",
             model="gpt-4",
             temperature=0.8,
             max_tokens=2000,
             tool_call_mode="classic",
-        )
+        ):
+            if event.type == EventType.TURN_COMPLETE:
+                result = event.data["report"]
+                break
 
         # Verify the response contains the expected fields
+        assert result is not None
         assert "message" in result
         assert "models_used" in result
         assert "tokens_used" in result
@@ -424,11 +434,15 @@ async def test_persistent_many_iterations_history_grows_linearly(
         # Run multiple iterations
         num_iterations = 5
         session_id = None
+        result = None
 
         for i in range(num_iterations):
-            result = await persistent_runtime_manager.orchestrate(
+            async for event in persistent_runtime_manager.orchestrate(
                 f"Query {i}", tool_call_mode="classic"
-            )
+            ):
+                if event.type == EventType.TURN_COMPLETE:
+                    result = event.data["report"]
+                    break
 
             # Store the session ID from the first iteration
             if session_id is None:
@@ -498,16 +512,21 @@ async def test_directive_success_invokes_tool_and_passes_outputs_to_llm(
     )
 
     try:
+        result = None
         # Test direct tool invocation
-        result = await runtime_manager.orchestrate('tool:test_tool {"arg1": "value1"}')
+        async for event in runtime_manager.orchestrate('tool:test_tool {"arg1": "value1"}'):
+            if event.type == EventType.TURN_COMPLETE:
+                result = event.data["report"]
+                break
 
         # Verify the response contains the expected fields
+        assert result is not None
         assert "message" in result
         assert "Tool result processed" in result["message"]
         assert "models_used" in result
         assert "tokens_used" in result
         assert "history" in result
-        assert len(result["history"]) == 4  # User + Assistant + Tool + Tool
+        assert len(result["history"]) == 3  # Tool + User (processed) + Assistant
 
         # Verify the LLM was called once with the tool output
         assert mock_llm_service.generate.await_count == 1
@@ -535,8 +554,14 @@ async def test_directive_unknown_tool_raises(runtime_manager: RuntimeManager):
     runtime_manager._llm_service = mock_llm_service
 
     try:
+        result = None
         # Test with unknown tool
-        result = await runtime_manager.orchestrate("tool:unknown {}")
+        async for event in runtime_manager.orchestrate("tool:unknown {}"):
+            if event.type == EventType.TURN_COMPLETE:
+                result = event.data["report"]
+                break
+
+        assert result is not None
         assert "Tool 'unknown' not found" in result["message"]
     finally:
         # Restore the original LLM manager
@@ -565,10 +590,15 @@ async def test_directive_invalid_json_raises(runtime_manager: RuntimeManager):
     runtime_manager._llm_service = mock_llm_service
 
     try:
+        result = None
         # Test with invalid JSON
-        result = await runtime_manager.orchestrate("tool:sum not-json")
+        async for event in runtime_manager.orchestrate("tool:sum not-json"):
+            if event.type == EventType.TURN_COMPLETE:
+                result = event.data["report"]
+                break
 
         # Verify the error message indicates invalid JSON
+        assert result is not None
         assert (
             result["message"]
             == "Invalid JSON in tool payload: Expecting value: line 1 column 1 (char 0)"
@@ -612,10 +642,15 @@ async def test_directive_invalid_payload_validation_raises(
     runtime_manager._llm_service = mock_llm_service
 
     try:
+        result = None
         # Test with invalid payload (None instead of a dictionary)
-        result = await runtime_manager.orchestrate("tool:sum null")
+        async for event in runtime_manager.orchestrate("tool:sum null"):
+            if event.type == EventType.TURN_COMPLETE:
+                result = event.data["report"]
+                break
 
         # Verify the error message indicates invalid payload
+        assert result is not None
         assert (
             "validation error" in result["message"]
             or "Input should be a valid dictionary" in result["message"]
@@ -657,10 +692,15 @@ async def test_empty_text_is_accepted_and_yields_echo(runtime_manager: RuntimeMa
     runtime_manager._llm_service = mock_llm_service
 
     try:
+        result = None
         # Test with empty text and tool_call_mode
-        result = await runtime_manager.orchestrate("", tool_call_mode="classic")
+        async for event in runtime_manager.orchestrate("", tool_call_mode="classic"):
+            if event.type == EventType.TURN_COMPLETE:
+                result = event.data["report"]
+                break
 
         # Verify the response is the echo response
+        assert result is not None
         assert result["message"] == "echo:"
         assert result["models_used"] == ["gpt-4"]
         assert len(result["history"]) == 2  # User + Assistant
@@ -692,10 +732,15 @@ async def test_structured_output_shape_and_fields(runtime_manager: RuntimeManage
     runtime_manager._llm_service = mock_llm_service
 
     try:
+        result = None
         # Test with a simple query
-        result = await runtime_manager.orchestrate("test query")
+        async for event in runtime_manager.orchestrate("test query"):
+            if event.type == EventType.TURN_COMPLETE:
+                result = event.data["report"]
+                break
 
         # Verify the response has the expected structure
+        assert result is not None
         assert "message" in result
         assert "models_used" in result
         assert "tokens_used" in result
@@ -742,10 +787,15 @@ async def test_provider_system_integration(
     runtime_manager._llm_service = mock_llm_service
 
     try:
+        result = None
         # Test with a simple query
-        result = await runtime_manager.orchestrate("test query")
+        async for event in runtime_manager.orchestrate("test query"):
+            if event.type == EventType.TURN_COMPLETE:
+                result = event.data["report"]
+                break
 
         # Verify the response
+        assert result is not None
         assert result["message"] == "echo:test query"
         assert result["models_used"] == ["test-model"]
         assert result["tokens_used"] == 10
@@ -769,7 +819,8 @@ async def test_llm_provider_failure_handling(runtime_manager: RuntimeManager):
     try:
         # Test that the exception is propagated
         with pytest.raises(LLMError) as exc_info:
-            await runtime_manager.orchestrate("test query", tool_call_mode="classic")
+            async for event in runtime_manager.orchestrate("test query", tool_call_mode="classic"):
+                pass
 
         # Verify the exception was propagated correctly
         assert "Provider error" in str(exc_info.value)
@@ -796,9 +847,8 @@ class TestToolHandling:
 
         # Verify
         session.add_tool_message.assert_called_once_with(
-            name="test_tool",
-            args={"param1": "value1"},
-            result={"error": "Tool functionality is not available"},
+            call_id="unknown",
+            result="Tool functionality is not available",
         )
 
     @pytest.mark.asyncio
@@ -814,8 +864,7 @@ class TestToolHandling:
 
         # Verify it still adds a tool message with empty args
         session.add_tool_message.assert_called_once()
-        assert session.add_tool_message.call_args[1]["name"] == "test_tool"
-        assert session.add_tool_message.call_args[1]["args"] == {}
+        assert session.add_tool_message.call_args[1]["call_id"] == "unknown"
 
     @pytest.mark.asyncio
     async def test_process_single_tool_call_success(
@@ -841,7 +890,7 @@ class TestToolHandling:
             "test_tool", {"param1": "value1"}
         )
         session.add_tool_message.assert_called_once_with(
-            name="test_tool", args={"param1": "value1"}, result={"result": "success"}
+            call_id="test_id", result="success"
         )
 
     # test_process_single_tool_call_json_error removed as RuntimeManager no longer parses JSON

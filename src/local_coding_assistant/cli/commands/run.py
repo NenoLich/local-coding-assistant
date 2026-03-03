@@ -13,6 +13,10 @@ from local_coding_assistant.cli.rendering import (
     dump_report,
     render_report,
 )
+from local_coding_assistant.cli.streaming_output import (
+    collect_report_from_events,
+    handle_streaming_event,
+)
 from local_coding_assistant.core.bootstrap import bootstrap
 from local_coding_assistant.core.error_handler import safe_entrypoint
 from local_coding_assistant.utils.logging import get_logger
@@ -98,15 +102,12 @@ def query(
 
     typer.echo(f"Using agent mode: {agent_mode}", err=True)
 
-    effective_log_level = log_level
-    if format_lower != "plain" and not verbose and log_level.upper() == "INFO":
-        effective_log_level = "WARNING"
-
     # Map provided level string to logging.* constant (default INFO)
-    level = getattr(logging, effective_log_level.upper(), logging.INFO)
+    level = getattr(logging, log_level.upper(), logging.INFO)
 
     ctx = bootstrap(log_level=level)
     runtime = ctx["runtime"]
+    console = Console()
 
     if format_lower == "plain" or verbose:
         log.info(
@@ -120,15 +121,26 @@ def query(
         typer.echo("Error: Runtime manager not available (LLM initialization failed)")
         raise typer.Exit(code=1)
 
-    result = asyncio.run(
-        runtime.orchestrate(
+    # Consume streaming events
+    events = []
+
+    async def consume_events():
+        async for event in runtime.orchestrate(
             text,
             agent_mode=agent_mode,
             model=model,
             tool_call_mode=tool_call_mode,
             sandbox_session=sandbox_session,
-        )
-    )
+        ):
+            handle_streaming_event(event, console)
+            events.append(event)
+
+    asyncio.run(consume_events())
+
+    result = collect_report_from_events(events)
+    if result is None:
+        typer.echo("Error: No report received from streaming events")
+        raise typer.Exit(code=1)
 
     if trace is not None:
         trace_payload = dump_report(result)

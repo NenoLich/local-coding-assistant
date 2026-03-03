@@ -327,3 +327,43 @@ class TestBaseProvider:
             "Model 'unknown-model' is not supported by provider 'test-provider'"
             in str(exc_info.value)
         )
+
+
+class TestProviderLLMRequest:
+    """Tests for the ProviderLLMRequest class."""
+
+    def test_validate_against_model_truncates_include_reasoning(self):
+        """Test that validate_against_model truncates include_reasoning if not supported."""
+        # Create a request with include_reasoning set
+        request = ProviderLLMRequest(
+            messages=[{"role": "user", "content": "Hello"}],
+            model="test-model",
+            parameters=OptionalParameters(include_reasoning=True),
+        )
+
+        # Supported parameters do not include "include_reasoning"
+        supported_parameters = ["temperature", "max_tokens"]
+
+        # Validate against model with TRUNCATE mode (default)
+        request.validate_against_model(supported_parameters)
+
+        # include_reasoning should be set to None
+        assert request.parameters.include_reasoning is None
+
+    def test_validate_against_model_keeps_include_reasoning_if_supported(self):
+        """Test that validate_against_model keeps include_reasoning if supported."""
+        # Create a request with include_reasoning set
+        request = ProviderLLMRequest(
+            messages=[{"role": "user", "content": "Hello"}],
+            model="test-model",
+            parameters=OptionalParameters(include_reasoning=True),
+        )
+
+        # Supported parameters include "include_reasoning"
+        supported_parameters = ["temperature", "max_tokens", "include_reasoning"]
+
+        # Validate against model with TRUNCATE mode (default)
+        request.validate_against_model(supported_parameters)
+
+        # include_reasoning should remain True
+        assert request.parameters.include_reasoning is True

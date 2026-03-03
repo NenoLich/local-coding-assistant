@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +13,7 @@ from local_coding_assistant.agent.llm import (
     LLMToolCall,
 )
 from local_coding_assistant.core.telemetry_types import ToolCallTrace
+from local_coding_assistant.runtime.events import EventType, ExecutionEvent
 from local_coding_assistant.runtime.execution_types import (
     ActionKind,
     ActionRecord,
@@ -29,7 +31,7 @@ from local_coding_assistant.tools.types import (
 from local_coding_assistant.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    from local_coding_assistant.core.protocols import IToolManager
+    from local_coding_assistant.core.protocols import IConfigManager, IToolManager
     from local_coding_assistant.runtime.context_manager import ContextManager
 
 logger = get_logger("runtime.executor")
@@ -45,7 +47,7 @@ class RuntimeExecutor:
         llm_service: LLMService,
         tool_manager: IToolManager,
         context_manager: ContextManager | None = None,
-        config_manager: Any | None = None,
+        config_manager: IConfigManager | None = None,
     ):
         self._llm_service = llm_service
         self._tool_manager = tool_manager
@@ -68,7 +70,9 @@ class RuntimeExecutor:
 
         options = LLMOptions(
             policy=frame.agent_profile.model_policy if frame.agent_profile else None,
-            stream=False,  # Streaming handled separately
+            model=self._config_manager.global_config.llm.model_name
+            if self._config_manager
+            else None,
         )
 
         return llm_task, options
@@ -76,24 +80,23 @@ class RuntimeExecutor:
     def _handle_llm_error(
         self,
         frame: ExecutionFrame,
-        llm_action: ActionRecord,
+        llm_action: ActionRecord | None,
         llm_error: Exception,
-        start_time: float,
     ):
         """Handle LLM generation errors."""
-        latency_ms = (time.perf_counter() - start_time) * 1000
         logger.error("LLM generation failed for frame %s: %s", frame.id, str(llm_error))
 
-        frame.complete_action(
-            llm_action.id,
-            output=str(llm_error),
-            metadata={
-                "model": "unknown",
-                "total_tokens": 0,
-                "prompt_tokens": 0,
-                "completion_tokens": 0,
-            },
-        )
+        if llm_action:
+            frame.complete_action(
+                llm_action.id,
+                output=str(llm_error),
+                metadata={
+                    "model": "unknown",
+                    "total_tokens": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                },
+            )
 
         error_msg = str(llm_error).lower()
         if any(
@@ -108,9 +111,7 @@ class RuntimeExecutor:
             status=status,
             finish_reason=None,
             error_message=str(llm_error),
-            total_latency_ms=latency_ms,
         )
-        frame.finished_at = datetime.now(UTC)
 
     def _handle_llm_response(
         self,
@@ -188,12 +189,20 @@ class RuntimeExecutor:
         return initial_status, handler_context
 
     async def _handle_tool_calls(
-        self, frame: ExecutionFrame, response: LLMResult, result: ExecutionResult
-    ):
+        self,
+        frame: ExecutionFrame,
+        response: LLMResult,
+        result: ExecutionResult,
+        session_id: str,
+        frame_id: str,
+    ) -> AsyncIterator[ExecutionEvent]:
         """Handle tool calls if present."""
         if response.tool_calls:
             for tool_call in response.tool_calls:
-                await self._execute_tool_call(frame, tool_call, result)
+                async for event in self._execute_tool_call(
+                    frame, tool_call, result, session_id, frame_id
+                ):
+                    yield event
 
     def _finalize_result(
         self, frame: ExecutionFrame, result: ExecutionResult, response: LLMResult
@@ -216,16 +225,39 @@ class RuntimeExecutor:
                 f"Execution paused for handler intervention: {error_type}"
             )
 
-    async def execute(
-        self, frame: ExecutionFrame, use_streaming: bool = False
-    ) -> ExecutionFrame:
+    async def _finalize_execution(self, frame) -> ExecutionEvent:
+        """Finalize execution by outputting FRAME_COMPLETE event"""
+        frame.finished_at = datetime.now(UTC)
+        if frame.result:
+            if hasattr(frame.result, "total_latency_ms"):
+                frame.result.total_latency_ms = (
+                    frame.finished_at - frame.started_at
+                ).total_seconds() * 1000
+            if hasattr(frame.result, "total_tokens"):
+                total_tokens = 0
+                for action in frame.actions:
+                    if (
+                        action.kind == ActionKind.LLM_MESSAGE
+                        and action.llm_metrics
+                        and action.llm_metrics.total_tokens is not None
+                    ):
+                        total_tokens += action.llm_metrics.total_tokens
+                frame.result.total_tokens = total_tokens if total_tokens > 0 else None
+
+        return ExecutionEvent(
+            EventType.FRAME_COMPLETE, frame.session_id, frame.id, {"frame": frame}
+        )
+
+    async def execute(self, frame: ExecutionFrame) -> AsyncIterator[ExecutionEvent]:
         """
-        Executes the frame: sends prompt to LLM, handles tool calls, and returns updated frame.
+        Executes the frame: sends prompt to LLM, handles tool calls, and yields execution events.
         """
         # Only set started_at if it's not already set (for fresh frames)
         if not frame.started_at:
             frame.started_at = datetime.now(UTC)
         logger.info("Executing frame %s", frame.id)
+
+        yield ExecutionEvent(EventType.FRAME_START, frame.session_id, frame.id)
 
         try:
             # 1. Prepare LLM Request and LLM Options
@@ -234,20 +266,30 @@ class RuntimeExecutor:
             # 2. Record LLM Action
             llm_action = frame.add_action(ActionKind.LLM_MESSAGE, name="generate")
 
-            # 3. Call LLM
-            start_time = time.perf_counter()
-            try:
-                response = await self._generate_llm_result(
-                    llm_task, options=options, streaming=use_streaming
-                )
-            except Exception as llm_error:
-                self._handle_llm_error(frame, llm_action, llm_error, start_time)
-                return frame
+            # 3. Emit LLM Start Event
+            yield ExecutionEvent(EventType.LLM_START, frame.session_id, frame.id)
 
-            # 4. Handle LLM Response
+            # 4. Call LLM and yield events
+            start_time = time.perf_counter()
+            response = None
+            async for event in self._generate_llm_events(
+                llm_task,
+                options=options,
+                session_id=frame.session_id,
+                frame_id=frame.id,
+            ):
+                yield event
+                if event.type == EventType.LLM_COMPLETE:
+                    response = event.data["result"]
+                    break
+
+            if response is None:
+                raise RuntimeError("No LLM response received")
+
+            # 5. Handle LLM Response
             self._handle_llm_response(frame, llm_action, response, start_time)
 
-            # 5. Determine initial status
+            # 6. Determine initial status
             initial_status, handler_context = self._determine_initial_status(response)
 
             result = ExecutionResult(
@@ -256,39 +298,44 @@ class RuntimeExecutor:
                 handler_context=handler_context,
             )
 
-            # 6. Handle Tool Calls if any
-            await self._handle_tool_calls(frame, response, result)
+            # 7. Handle Tool Calls if any
+            async for event in self._handle_tool_calls(
+                frame, response, result, frame.session_id, frame.id
+            ):
+                yield event
 
-            # 7. Finalize result
+            # 8. Finalize result
             self._finalize_result(frame, result, response)
 
             frame.result = result
 
         except Exception as e:
-            logger.exception("Error executing frame %s", frame.id)
-            frame.result = ExecutionResult(
-                status=ExecutionStatus.FAILED,
-                finish_reason=None,
-                error_message=str(e),
+            self._handle_llm_error(frame, None, e)
+            yield ExecutionEvent(
+                EventType.ERROR, frame.session_id, frame.id, {"error": str(e)}
             )
         finally:
-            frame.finished_at = datetime.now(UTC)
-            if frame.result and hasattr(frame.result, "total_latency_ms"):
-                frame.result.total_latency_ms = (
-                    frame.finished_at - frame.started_at
-                ).total_seconds() * 1000
-
-        return frame
+            yield await self._finalize_execution(frame)
 
     async def _execute_tool_call(
-        self, frame: ExecutionFrame, tool_call: LLMToolCall, result: ExecutionResult
-    ):
+        self,
+        frame: ExecutionFrame,
+        tool_call: LLMToolCall,
+        result: ExecutionResult,
+        session_id: str,
+        frame_id: str,
+    ) -> AsyncIterator[ExecutionEvent]:
         """Executes a single tool call and updates the frame and result."""
+        yield ExecutionEvent(
+            EventType.TOOL_START, session_id, frame_id, {"tool_call": tool_call}
+        )
+
         tool_action = frame.add_action(
             ActionKind.TOOL_CALL, name=tool_call.name, _input=tool_call.arguments
         )
         execution_mode = frame.prompt_context.execution_mode
         tool_start_time = time.perf_counter()
+        tool_response = None
 
         try:
             self._validate_tool_call(frame, tool_call, result)
@@ -331,6 +378,13 @@ class RuntimeExecutor:
             self._handle_tool_execution_error(
                 frame, tool_call, tool_action, execution_mode, tool_start_time, e
             )
+
+        yield ExecutionEvent(
+            EventType.TOOL_RESULT,
+            session_id,
+            frame_id,
+            {"tool_call": tool_call, "response": tool_response},
+        )
 
     def _validate_tool_call(
         self, frame: ExecutionFrame, tool_call: LLMToolCall, result: ExecutionResult
@@ -441,7 +495,7 @@ class RuntimeExecutor:
         result.files_modified.extend(tool_response.envelope.files_modified or [])
 
         tool_trace = ToolCallTrace(
-            call_id=tool_action.id,
+            call_id=tool_call.id if tool_call.id else "unknown",
             tool_name=tool_call.name,
             start_time=tool_response.envelope.start_time,
             end_time=tool_response.envelope.end_time,
@@ -476,7 +530,7 @@ class RuntimeExecutor:
         """Handles tool call execution in classic mode."""
         # Create ToolCallTrace for classic tool call
         tool_trace = ToolCallTrace(
-            call_id=tool_action.id,
+            call_id=tool_call.id if tool_call.id else "unknown",
             tool_name=tool_call.name,
             start_time=datetime.fromtimestamp(tool_start_time, UTC),
             end_time=datetime.fromtimestamp(tool_end_time, UTC),
@@ -584,29 +638,31 @@ class RuntimeExecutor:
     def _extract_reasoning_tokens(usage: dict[str, Any] | None) -> int | None:
         if not usage:
             return None
-        completion_details = usage.get("completion_tokens_details")
-        if isinstance(completion_details, dict):
-            tokens = completion_details.get("reasoning_tokens")
-            if tokens is not None:
-                try:
-                    return int(tokens)
-                except (TypeError, ValueError):
-                    return None
+
+        # Check both possible keys for token details
+        details_keys = ["completion_tokens_details", "output_tokens_details"]
+        for details_key in details_keys:
+            details = usage.get(details_key)
+            if isinstance(details, dict):
+                tokens = details.get("reasoning_tokens")
+                if tokens is not None:
+                    try:
+                        return int(tokens)
+                    except (TypeError, ValueError):
+                        continue
         return None
 
-    async def _generate_llm_result(  # noqa: C901
+    async def _generate_llm_events(
         self,
         task: LLMTask,
         *,
         options: LLMOptions,
-        streaming: bool,
-    ) -> LLMResult:
-        if not streaming:
-            return await self._llm_service.generate(task, options=options)
-
+        session_id: str,
+        frame_id: str,
+    ) -> AsyncIterator[ExecutionEvent]:
         content_chunks: list[str] = []
         reasoning_chunks: list[str] = []
-        tool_calls: list[LLMToolCall] = []
+        tool_calls_accumulator: list[LLMToolCall] = []
         usage: dict[str, Any] | None = None
         metadata: dict[str, Any] = {}
         model = "unknown"
@@ -616,10 +672,22 @@ class RuntimeExecutor:
         async for chunk in self._llm_service.stream(task, options=options):
             if chunk.content:
                 content_chunks.append(chunk.content)
+                yield ExecutionEvent(
+                    EventType.LLM_CHUNK,
+                    session_id,
+                    frame_id,
+                    {"content": chunk.content},
+                )
             if chunk.tool_calls:
-                tool_calls.extend(chunk.tool_calls)
+                self._merge_tool_calls(tool_calls_accumulator, chunk.tool_calls)
             if chunk.reasoning:
                 reasoning_chunks.append(chunk.reasoning)
+                yield ExecutionEvent(
+                    EventType.LLM_CHUNK,
+                    session_id,
+                    frame_id,
+                    {"reasoning": chunk.reasoning},
+                )
             if chunk.usage:
                 usage = chunk.usage
             if chunk.metadata:
@@ -631,6 +699,89 @@ class RuntimeExecutor:
             if chunk.finish_reason:
                 finish_reason = chunk.finish_reason
 
+        result = self._build_llm_result(
+            content_chunks,
+            reasoning_chunks,
+            tool_calls_accumulator,
+            usage,
+            metadata,
+            model,
+            provider,
+            finish_reason,
+            session_id,
+            frame_id,
+        )
+        logger.debug("LLMResult in executor", result=result)
+        yield ExecutionEvent(
+            EventType.LLM_COMPLETE,
+            session_id,
+            frame_id,
+            {"result": result},
+        )
+
+    @staticmethod
+    def _extract_usage_metrics(
+        usage: dict[str, Any] | None,
+    ) -> tuple[int | None, int | None, int | None]:
+        if not usage:
+            return None, None, None
+
+        prompt_tokens = usage.get("prompt_tokens") or usage.get("input_tokens")
+        completion_tokens = usage.get("completion_tokens") or usage.get("output_tokens")
+        total_tokens = usage.get("total_tokens")
+        if (
+            total_tokens is None
+            and prompt_tokens is not None
+            and completion_tokens is not None
+        ):
+            total_tokens = prompt_tokens + completion_tokens
+        return prompt_tokens, completion_tokens, total_tokens
+
+    def _merge_tool_calls(
+        self,
+        tool_calls_accumulator: list[LLMToolCall],
+        tool_calls: list[LLMToolCall],
+    ) -> None:
+        for i, tc in enumerate(tool_calls):
+            if i >= len(tool_calls_accumulator):
+                tool_calls_accumulator.append(tc)
+            else:
+                existing = tool_calls_accumulator[i]
+                # Merge incremental data
+                if tc.name and not existing.name:
+                    existing.name = tc.name
+                if tc.id and not existing.id:
+                    existing.id = tc.id
+                if tc.type and not existing.type:
+                    existing.type = tc.type
+                if tc.arguments is not None:
+                    if existing.arguments is None:
+                        existing.arguments = tc.arguments
+                    elif isinstance(existing.arguments, dict) and isinstance(
+                        tc.arguments, dict
+                    ):
+                        existing.arguments.update(tc.arguments)
+                    elif isinstance(existing.arguments, str) and isinstance(
+                        tc.arguments, str
+                    ):
+                        existing.arguments += tc.arguments
+                    # If types don't match, replace
+                    else:
+                        existing.arguments = tc.arguments
+
+    def _build_llm_result(
+        self,
+        content_chunks: list[str],
+        reasoning_chunks: list[str],
+        tool_calls_accumulator: list[LLMToolCall],
+        usage: dict[str, Any] | None,
+        metadata: dict[str, Any],
+        model: str,
+        provider: str,
+        finish_reason: str | None,
+        session_id: str,
+        frame_id: str,
+    ) -> LLMResult:
         prompt_tokens, completion_tokens, total_tokens = self._extract_usage_metrics(
             usage
         )
@@ -652,27 +803,11 @@ class RuntimeExecutor:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
-            tool_calls=tool_calls,
+            tool_calls=tool_calls_accumulator,
             metadata={
+                "session_id": session_id,
+                "frame_id": frame_id,
                 "usage": usage,
                 "provider_metadata": metadata,
             },
         )
-
-    @staticmethod
-    def _extract_usage_metrics(
-        usage: dict[str, Any] | None,
-    ) -> tuple[int | None, int | None, int | None]:
-        if not usage:
-            return None, None, None
-
-        prompt_tokens = usage.get("prompt_tokens") or usage.get("input_tokens")
-        completion_tokens = usage.get("completion_tokens") or usage.get("output_tokens")
-        total_tokens = usage.get("total_tokens")
-        if (
-            total_tokens is None
-            and prompt_tokens is not None
-            and completion_tokens is not None
-        ):
-            total_tokens = prompt_tokens + completion_tokens
-        return prompt_tokens, completion_tokens, total_tokens

@@ -100,7 +100,8 @@ class ExecutionResult(BaseModel):
     status: ExecutionStatus
     final_answer: str | None = None
     finish_reason: str | None = None
-    total_latency_ms: float = 0.0
+    total_latency_ms: float | None = None
+    total_tokens: float | None = None
     error_message: str | None = None
     handler_context: dict[str, Any] | None = Field(default=None)
     # File operation fields - populated from execution envelope

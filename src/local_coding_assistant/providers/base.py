@@ -31,6 +31,19 @@ class OptionalParameters(BaseModel):
     top_p: float | None = Field(None, gt=0, le=1)
     presence_penalty: float | None = Field(None, ge=-2, le=2)
     frequency_penalty: float | None = Field(None, ge=-2, le=2)
+    top_k: int | None = Field(None, gt=0)
+    seed: int | None = Field(None, ge=0)
+    stop: str | list[str] | None = None
+    include_reasoning: bool | None = Field(
+        default=None, description="Whether to include reasoning in the response"
+    )
+    reasoning_effort: str | None = Field(
+        default=None,
+        description="Reasoning effort level (e.g., 'low', 'medium', 'high')",
+    )
+    include_usage: bool | None = Field(
+        default=None, description="Whether to include usage data in streaming responses"
+    )
 
     # Set of parameter names that are required when tools are used
     REQUIRED_WITH_TOOLS: ClassVar[frozenset[str]] = frozenset({"tools", "tool_choice"})
@@ -63,8 +76,24 @@ class ProviderLLMRequest(BaseModel):
         if not v:
             raise ValueError("messages cannot be empty")
         for msg in v:
-            if not isinstance(msg, dict) or "role" not in msg or "content" not in msg:
-                raise ValueError("Each message must have 'role' and 'content' fields")
+            if not isinstance(msg, dict) or "role" not in msg:
+                raise ValueError("Each message must be a dict with a 'role' field")
+
+            role = msg.get("role")
+            if role == "assistant":
+                # Assistant can have tool_calls without content
+                if "tool_calls" not in msg and "content" not in msg:
+                    raise ValueError(
+                        "Assistant message must have 'content' or 'tool_calls'"
+                    )
+            elif role == "tool":
+                # Tool messages need call_id and content
+                if "tool_call_id" not in msg or "content" not in msg:
+                    raise ValueError("Tool message must have 'call_id' and 'content'")
+            else:
+                # Other roles (user, system) need content
+                if "content" not in msg:
+                    raise ValueError(f"{role} message must have 'content'")
         return v
 
     def model_dump(self, **kwargs) -> dict[str, Any]:
@@ -286,6 +315,9 @@ class ProviderLLMResponse(BaseModel):
     usage: dict[str, Any] | None = Field(
         default=None, description="Detailed usage statistics"
     )
+    reasoning: str | None = Field(
+        default=None, description="Reasoning content from the model"
+    )
     metadata: dict[str, Any] | None = Field(
         default=None, description="Additional metadata about the response"
     )
@@ -313,6 +345,9 @@ class ProviderLLMResponseDelta(BaseModel):
     )
     finish_reason: str | None = Field(
         default=None, description="Finish reason for this chunk"
+    )
+    reasoning: str | None = Field(
+        default=None, description="Reasoning chunk from streaming response"
     )
     metadata: dict[str, Any] | None = Field(
         default={}, description="Additional metadata for this chunk"
@@ -393,6 +428,10 @@ class BaseDriver(abc.ABC):
                     )  # Exponential backoff
 
         raise last_error or RuntimeError(f"Failed after {max_retries} attempts")
+
+    def _format_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Format messages for the provider's API. Subclasses can override."""
+        return messages
 
 
 class BaseProvider(abc.ABC):

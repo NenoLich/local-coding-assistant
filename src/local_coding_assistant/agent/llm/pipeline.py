@@ -45,14 +45,18 @@ def _extract_usage_metrics(
 def _extract_reasoning_tokens(usage: dict[str, Any] | None) -> int | None:
     if not usage:
         return None
-    completion_details = usage.get("completion_tokens_details")
-    if isinstance(completion_details, dict):
-        tokens = completion_details.get("reasoning_tokens")
-        if tokens is not None:
-            try:
-                return int(tokens)
-            except (TypeError, ValueError):
-                return None
+
+    # Check both possible keys for token details
+    details_keys = ["completion_tokens_details", "output_tokens_details"]
+    for details_key in details_keys:
+        details = usage.get(details_key)
+        if isinstance(details, dict):
+            tokens = details.get("reasoning_tokens")
+            if tokens is not None:
+                try:
+                    return int(tokens)
+                except (TypeError, ValueError):
+                    continue
     return None
 
 
@@ -191,15 +195,12 @@ class StreamingNormalizer:
         provider_name: str,
         model_name: str,
     ) -> LLMStreamChunk:
-        reasoning = None
-        if delta.metadata:
-            reasoning = delta.metadata.get("reasoning_delta")
         stream_chunk = LLMStreamChunk(
             content=delta.content or "",
             provider=provider_name,
             model=model_name,
             finish_reason=delta.finish_reason,
-            reasoning=reasoning,
+            reasoning=delta.reasoning,
             is_final=delta.finish_reason is not None,
             usage=(delta.metadata or {}).get("usage"),
             metadata=delta.metadata or {},

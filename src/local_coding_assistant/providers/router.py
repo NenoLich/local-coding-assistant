@@ -70,7 +70,7 @@ class ProviderRouter:
 
         logger.warning(f"Marked provider {provider_name} as unhealthy")
 
-    async def get_provider_for_request(
+    async def get_provider_for_request(  # noqa C901
         self,
         request: ProviderLLMRequest,
         role: str | None = None,
@@ -122,14 +122,34 @@ class ProviderRouter:
                     error=str(e),
                     exc_info=True,
                 )
-                # Fall through to policy-based routing
+
             except Exception as e:
                 logger.debug(
                     f"Error resolving model {request.model}",
                     error=str(e),
                     exc_info=True,
                 )
-                # Fall through to policy-based routing
+
+        if request.model == "auto" and not provider:
+            try:
+                fallback_provider = await self._handle_fallback_any(
+                    exclude_providers=set(), exclude_models=set(), request=request
+                )
+                if fallback_provider is None:
+                    raise ProviderNotFoundError
+            except ProviderNotFoundError as e:
+                logger.debug(
+                    f"No provider found for model {request.model}",
+                    error=str(e),
+                    exc_info=True,
+                )
+
+            except Exception as e:
+                logger.debug(
+                    f"Error resolving model {request.model}",
+                    error=str(e),
+                    exc_info=True,
+                )
 
         # If we get here, either no provider/model was specified or the specified ones failed
         # Fall back to policy-based routing

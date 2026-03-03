@@ -82,6 +82,7 @@ def sample_run_report() -> RunReport:
             "final_answer": "All done",
             "finish_reason": None,
             "total_latency_ms": 15.0,
+            "total_tokens": 20,
             "error_message": None,
             "handler_context": None,
             "files_created": [],

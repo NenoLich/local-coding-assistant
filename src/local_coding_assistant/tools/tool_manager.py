@@ -536,7 +536,7 @@ class ToolManager(IToolManager, Iterable[Any]):
                     success=True,
                     tool_name=tool_name,
                     tool_args=payload,
-                    result=result,
+                    result=result.get("result", result),
                     execution_time_ms=execution_time_ms,
                 )
 

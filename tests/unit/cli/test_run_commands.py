@@ -4,13 +4,14 @@ Unit tests for CLI run commands.
 
 import asyncio
 import logging
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, Mock
 
 import pytest
 import typer
 from typer.testing import CliRunner
 
 from local_coding_assistant.cli.commands.run import query
+from local_coding_assistant.runtime.events import EventType, ExecutionEvent
 
 # Initialize test runner
 runner = CliRunner()
@@ -29,7 +30,7 @@ class TestRunCommands:
         """Setup mocks for each test."""
         # Create a mock runtime
         self.mock_runtime = AsyncMock()
-        self.mock_runtime.orchestrate.return_value = TEST_RESPONSE
+        self.mock_runtime.orchestrate = Mock(return_value=self._mock_orchestrate())
 
         # Create a mock context
         self.mock_ctx = {"runtime": self.mock_runtime}
@@ -58,6 +59,16 @@ class TestRunCommands:
         self.bootstrap_patcher.stop()
         self.asyncio_patcher.stop()
         self.echo_patcher.stop()
+
+    def _mock_orchestrate(self):
+        """Mock async generator for orchestrate method."""
+        async def gen():
+            yield ExecutionEvent(
+                type=EventType.TURN_COMPLETE,
+                session_id="test_session",
+                data={"report": TEST_RESPONSE}
+            )
+        return gen()
 
     def test_query_basic(self):
         """Test basic query execution."""
@@ -88,7 +99,7 @@ class TestRunCommands:
 
         from unittest.mock import ANY
 
-        self.mock_runtime.orchestrate.assert_awaited_once_with(
+        self.mock_runtime.orchestrate.assert_called_once_with(
             TEST_QUERY,
             agent_mode="no_agent",
             model=None,
@@ -125,7 +136,7 @@ class TestRunCommands:
         # Verify the runtime was called with the correct model and default parameters
         from unittest.mock import ANY
 
-        self.mock_runtime.orchestrate.assert_awaited_once_with(
+        self.mock_runtime.orchestrate.assert_called_once_with(
             TEST_QUERY,
             agent_mode="no_agent",
             model=TEST_MODEL,
@@ -162,7 +173,7 @@ class TestRunCommands:
         # Verify the runtime was called with the correct parameters
         from unittest.mock import ANY
 
-        self.mock_runtime.orchestrate.assert_awaited_once_with(
+        self.mock_runtime.orchestrate.assert_called_once_with(
             TEST_QUERY,
             agent_mode="no_agent",
             model=None,
@@ -223,7 +234,7 @@ class TestRunCommands:
                 )
 
         # Verify orchestrate was not called
-        self.mock_runtime.orchestrate.assert_not_awaited()
+        self.mock_runtime.orchestrate.assert_not_called()
 
     def test_query_output_format(self):
         """Test the format of the query output."""
@@ -271,7 +282,7 @@ class TestRunCommands:
         assert self.mock_asyncio_run.call_count == 1
 
         # Verify the runtime's orchestrate method was called within asyncio.run
-        self.mock_runtime.orchestrate.assert_awaited_once()
+        self.mock_runtime.orchestrate.assert_called_once()
 
     @patch("local_coding_assistant.core.error_handler.logger")
     def test_error_handling(self, mock_log):

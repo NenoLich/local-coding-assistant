@@ -1,5 +1,5 @@
 Frames (1) - status: success
-└── Frame 1  15.0ms tokens=20
+└── Frame 1 [success] 15.0ms tokens=20
     ├── Actions (2)
     │   ├── llm_message: generate
     │   │   ├── input: {"prompt": "Hello"}

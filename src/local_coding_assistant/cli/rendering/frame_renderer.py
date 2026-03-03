@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from rich.console import Console
+from rich.markup import escape
 from rich.tree import Tree
 
 from local_coding_assistant.runtime.reporting import RunReport
@@ -45,18 +46,18 @@ def render_frame(report: RunReport, console: Console, verbose: bool) -> None:  #
         status = result.get("status", "unknown")
         if hasattr(status, "value"):
             status = status.value
-        if report.metrics is not None:
-            llm_tokens = report.metrics.tokens_used
-            duration = report.metrics.total_latency_ms
+        if result:
+            llm_tokens = result.get("total_tokens", None)
+            duration = result.get("total_latency_ms", None)
 
-            label = f"Frame {iteration} [{status}]"
+            label = escape(f"Frame {iteration} [{status}]")
             if duration is not None:
                 label += f" {duration:.1f}ms"
             if llm_tokens is not None:
                 label += f" tokens={llm_tokens}"
 
         else:
-            label = f"Frame {iteration} [{status}]"
+            label = escape(f"Frame {iteration} [{status}]")
 
         frame_node = root.add(label)
 
