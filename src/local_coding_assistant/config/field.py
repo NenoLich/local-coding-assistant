@@ -374,7 +374,7 @@ class ConfigModel(BaseModel, metaclass=ConfigModelMeta):
 
     _section: ClassVar[str | None] = None
 
-    def __init_subclass__(cls, section: str | None = None, **kwargs):
+    def __init_subclass__(cls, section: str | None = None, **kwargs: Any):
         """Allow section to be specified in class definition.
 
         Args:

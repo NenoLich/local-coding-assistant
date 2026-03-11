@@ -124,7 +124,7 @@ def _initialize_config(
 
     # Use provided config manager or create a new one
     if config_manager is None:
-        config_paths = [Path(config_path)] if config_path else []
+        config_paths: list[Path | str] = [Path(config_path)] if config_path else []
         config_manager = ConfigManager(
             config_paths=config_paths, env_manager=env_manager
         )

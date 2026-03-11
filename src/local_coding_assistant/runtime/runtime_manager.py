@@ -19,6 +19,7 @@ from local_coding_assistant.agent.llm import (
 )
 from local_coding_assistant.core.protocols import IConfigManager, IToolManager
 from local_coding_assistant.prompt import PromptComposer
+from local_coding_assistant.runtime.agent_types import AgentRequest
 from local_coding_assistant.runtime.context_manager import ContextManager
 from local_coding_assistant.runtime.events import EventType, ExecutionEvent
 from local_coding_assistant.runtime.handlers.handler_types import (
@@ -117,46 +118,57 @@ class RuntimeManager:
             tool_calls, and history.
             Uses agent_mode to determine which agent implementation to use.
         """
-        if model:
-            self.config_manager.set_session_overrides({"llm.model_name": model})
+        session = self._setup_session()
 
-        # Update the config with the provided tool_call_mode if specified
-        if tool_call_mode is not None:
+        request = AgentRequest(
+            user_input=text,
+            session=session,
+            agent_mode=agent_mode,
+            model_override=model,
+            temperature_override=temperature,
+            max_tokens_override=max_tokens,
+            tool_call_mode_override=tool_call_mode,
+            sandbox_session_override=sandbox_session,
+        )
+
+        # Set session overrides based on request
+        if (
+            request.agent_mode is not None
+            and request.agent_mode
+            != self.config_manager.global_config.runtime.agent_mode
+        ):
             self.config_manager.set_session_overrides(
-                {"runtime.tool_call_mode": tool_call_mode}
+                {"runtime.agent_mode": request.agent_mode}
             )
 
-            if tool_call_mode == "ptc":
+        if request.tool_call_mode_override is not None:
+            self.config_manager.set_session_overrides(
+                {"runtime.tool_call_mode": request.tool_call_mode_override}
+            )
+
+            if request.tool_call_mode_override == "ptc":
                 self.config_manager.set_session_overrides({"sandbox.enabled": True})
-                if sandbox_session:
+                if request.sandbox_session_override:
                     self.config_manager.set_session_overrides(
                         {
-                            "sandbox.session_id": sandbox_session,
+                            "sandbox.session_id": request.sandbox_session_override,
                             "sandbox.persistence": True,
                         }
                     )
 
-        if (
-            agent_mode is not None
-            and agent_mode != self.config_manager.global_config.runtime.agent_mode
-        ):
+        # Only set model override if provided
+        if request.model_override:
             self.config_manager.set_session_overrides(
-                {"runtime.agent_mode": agent_mode}
+                {"llm.model_name": request.model_override}
             )
 
         if self.config_manager.global_config.runtime.agent_mode != "no_agent":
-            async for event in self._run_agent_mode(
-                text,
-                model,
-                temperature,
-                max_tokens,
-                agent_mode_type=self.config_manager.global_config.runtime.agent_mode,
-            ):
+            async for event in self._run_agent_mode(request):
                 yield event
             return
 
         # Regular mode execution
-        async for event in self._run_regular_mode(text, model, temperature, max_tokens):
+        async for event in self._run_regular_mode(request):
             yield event
 
     def _setup_session(self) -> SessionState:
@@ -460,45 +472,46 @@ class RuntimeManager:
 
     async def _run_regular_mode(
         self,
-        text: str,
-        model: str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
+        request: AgentRequest,
     ) -> AsyncIterator[ExecutionEvent]:
         """Run a single query in regular mode with handler integration."""
-        session = self._setup_session()
+        session = request.session
 
         yield ExecutionEvent(EventType.TURN_START, session.id, None)
 
-        user_message, tool_outputs = await self._record_user_message(text, session)
+        user_message, tool_outputs = await self._record_user_message(
+            request.user_input, session
+        )
 
         session.add_user_message(user_message)
 
         attempts = 0
         max_attempts = 2
-        request = None
+        llm_request = None
         response = None
         status = "success"
         base_options = {
-            "model": model,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
+            "model": request.model_override,
+            "temperature": request.temperature_override,
+            "max_tokens": request.max_tokens_override,
         }
 
         while attempts < max_attempts:
             attempts += 1
-            request, policy = await self._prepare_llm_request(
+            llm_request, policy = await self._prepare_llm_request(
                 user_message, session, tool_outputs
             )
             llm_service = self._require_llm_service()
             options = LLMOptions(
-                model=base_options.get("model", model),  # type: ignore
-                temperature=base_options.get("temperature", temperature),  # type: ignore
-                max_tokens=base_options.get("max_tokens", max_tokens),  # type: ignore
+                model=base_options.get("model", request.model_override),  # type: ignore
+                temperature=base_options.get(
+                    "temperature", request.temperature_override
+                ),  # type: ignore
+                max_tokens=base_options.get("max_tokens", request.max_tokens_override),  # type: ignore
                 policy=policy,
             )
             logger.debug("Calling llm service with options", options=options)
-            response = await llm_service.generate(request, options=options)
+            response = await llm_service.generate(llm_request, options=options)
             logger.debug("LLM returned response; len=%d", len(response.content))
 
             error_type = None
@@ -572,8 +585,8 @@ class RuntimeManager:
         session.add_assistant_message(response.content)
 
         # Handle LLM-initiated tool calls and build report
-        assert request is not None, "Request should be set before LLM call"
-        await self._handle_llm_tool_calls(session, response, request.tools)
+        assert llm_request is not None, "Request should be set before LLM call"
+        await self._handle_llm_tool_calls(session, response, llm_request.tools)
         report = self._build_regular_report(session, response, status=status)
 
         logger.info("Runtime finished query; session_id=%s", session.id)
@@ -584,34 +597,41 @@ class RuntimeManager:
 
     async def _run_agent_mode(
         self,
-        text: str,
-        model: str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        streaming: bool | None = None,
-        agent_mode_type: str | None = None,
+        request: AgentRequest,
     ) -> AsyncIterator[ExecutionEvent]:
         """Run the runtime in agent mode, delegating to AgentLoop, LangGraphAgent or FrameAgent."""
         # Determine which agent implementation to use
         runtime_config = self.config_manager.global_config.runtime
-        current_agent_mode = agent_mode_type or runtime_config.agent_mode
-        stream_mode = streaming if streaming is not None else runtime_config.stream
+        current_agent_mode = request.agent_mode or runtime_config.agent_mode
+        stream_mode = (
+            request.streaming
+            if request.streaming is not None
+            else runtime_config.stream
+        )
 
         if current_agent_mode == "frame":
-            async for event in self._run_frame_agent_mode(text):
+            async for event in self._run_frame_agent_mode(request):
                 yield event
         elif current_agent_mode == "graph":
-            session = self._setup_session()
+            session = request.session
             report = await self._run_langgraph_agent_mode(
-                text, model, temperature, max_tokens, stream_mode
+                request.user_input,
+                request.model_override,
+                request.temperature_override,
+                request.max_tokens_override,
+                stream_mode,
             )
             yield ExecutionEvent(
                 EventType.TURN_COMPLETE, session.id, None, {"report": report}
             )
         else:
-            session = self._setup_session()
+            session = request.session
             report = await self._run_legacy_agent_mode(
-                text, model, temperature, max_tokens, stream_mode
+                request.user_input,
+                request.model_override,
+                request.temperature_override,
+                request.max_tokens_override,
+                stream_mode,
             )
             yield ExecutionEvent(
                 EventType.TURN_COMPLETE, session.id, None, {"report": report}
@@ -619,13 +639,13 @@ class RuntimeManager:
 
     async def _run_frame_agent_mode(
         self,
-        text: str,
+        request: AgentRequest,
     ) -> AsyncIterator[ExecutionEvent]:
         """Run the runtime in agent mode using the new FrameAgent."""
         from local_coding_assistant.agent.frame_agent import FrameAgent
 
         if self._llm_service is None or self._tool_manager is None:
-            session = self._setup_session()
+            session = request.session
             report = RunReport(
                 mode="frame",
                 status="failed",
@@ -639,7 +659,7 @@ class RuntimeManager:
             return
 
         # Setup session for the agent
-        session = self._setup_session()
+        session = request.session
 
         # Create frame agent
         agent = FrameAgent(
@@ -648,10 +668,11 @@ class RuntimeManager:
             context_manager=self._context_manager,
             config_manager=self.config_manager,
             name="orchestrated_agent",
+            max_iterations=request.max_iterations or 5,
         )
 
         # Run the agent and yield events
-        async for event in agent.run(text, session):
+        async for event in agent.run(request.user_input, session):
             yield event
 
     async def _run_langgraph_agent_mode(

@@ -1,6 +1,7 @@
 """Agent loop implementation for observe-plan-act-reflect lifecycle."""
 
 import time
+import warnings
 from dataclasses import asdict, is_dataclass
 from typing import Any
 
@@ -16,9 +17,9 @@ logger = get_logger("agent.loop")
 class AgentLoop:
     """Observe-Plan-Act-Reflect agent loop implementation.
 
-    This class manages the lifecycle of an autonomous agent that follows
-    the observe-plan-act-reflect pattern. It creates default handlers that
-    use LLM and tool managers for autonomous operation.
+    .. deprecated::
+        AgentLoop is deprecated. Use FrameAgent instead for new implementations.
+        AgentLoop will be removed in a future version.
     """
 
     def __init__(
@@ -39,6 +40,13 @@ class AgentLoop:
             max_iterations: Maximum number of iterations to run.
             streaming: Whether to use streaming LLM responses.
         """
+        warnings.warn(
+            "AgentLoop is deprecated. Use FrameAgent instead for new implementations. "
+            "AgentLoop will be removed in a future version.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         if max_iterations < 1:
             from local_coding_assistant.core.exceptions import AgentError
 

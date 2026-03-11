@@ -561,7 +561,9 @@ def setup_logging(
             if not isinstance(file_handler, logging.NullHandler):
                 root_logger.addHandler(file_handler)
 
-        third_party_levels = third_party_levels or THIRD_PARTY_LOGGERS
+        third_party_levels: dict[str, int | str] = dict(
+            third_party_levels or THIRD_PARTY_LOGGERS
+        )
         for logger_name, logger_level in third_party_levels.items():
             if isinstance(logger_level, str):
                 logger_level = getattr(logging, logger_level.upper(), logging.INFO)

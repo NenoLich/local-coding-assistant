@@ -50,7 +50,7 @@ def setup_logging(level=logging.INFO, log_file=None):
 
     # Set up handlers
     log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    handlers = [logging.StreamHandler(sys.stderr)]
+    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stderr)]
 
     # Add file handler if log_file is specified
     if log_file:

@@ -139,7 +139,7 @@ class OpenAIChatCompletionsDriver(BaseDriver):
         self, request: ProviderLLMRequest, stream: bool = False
     ) -> dict[str, Any]:
         """Build payload for chat completions API."""
-        payload = {
+        payload: dict[str, Any] = {
             "model": request.model,
             "messages": self._format_messages(request.messages),
             "temperature": request.temperature,

@@ -68,7 +68,7 @@ class LLMConfig(ConfigModel, section="llm"):
         description="List of available providers with their status",
     )
 
-    def with_overrides(self, **overrides) -> LLMConfig:
+    def with_overrides(self, **overrides: Any) -> LLMConfig:
         """Create a new LLMConfig with specified overrides.
 
         Args:

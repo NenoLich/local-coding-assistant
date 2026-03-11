@@ -1,0 +1,91 @@
+site_name: Local Coding Assistant (LOCCA) Documentation
+site_description: Comprehensive documentation for LOCCA - an AI-powered local coding assistant
+site_author: NenoLich
+copyright: MIT License
+
+site_dir: local_docs
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
+
+plugins:
+  - search
+  - mermaid2
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_root_heading: true
+            show_source: true
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            inherited_members: true
+            merge_init_into_class: true
+            separate_signature: true
+            show_labels: true
+            show_category_heading: true
+            show_if_no_docstring: true
+            show_bases: true
+            show_inheritance_diagram: true
+            signature_crossrefs: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quick-start.md
+      - Configuration: getting-started/configuration.md
+  - User Guide:
+      - CLI Usage: user-guide/cli-usage.md
+      - Agent Patterns: user-guide/agent-patterns.md
+      - Tool System: user-guide/tool-system.md
+      - Provider Management: user-guide/provider-management.md
+  - Architecture:
+      - Overview: architecture/overview.md
+      - Data Flow: architecture/data-flow.md
+      - Components: architecture/components.md
+      - Contracts: architecture/contracts.md
+  - API Reference:
+      - Agent: api/agent.md
+      - CLI: api/cli.md
+      - Config: api/config.md
+      - Core: api/core.md
+      - Providers: api/providers.md
+      - Runtime: api/runtime.md
+      - Sandbox: api/sandbox.md
+      - Tools: api/tools.md
+      - Utils: api/utils.md
+  - Development:
+      - Contributing: development/contributing.md
+      - Coding Conventions: development/coding-conventions.md
+      - Testing: development/testing.md
+  - Glossary: glossary.md

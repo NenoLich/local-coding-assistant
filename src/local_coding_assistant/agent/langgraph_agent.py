@@ -2,6 +2,7 @@
 
 import json
 import time
+import warnings
 from typing import Any
 
 from langgraph.graph import END, StateGraph
@@ -104,8 +105,9 @@ class AgentState(BaseModel):
 class LangGraphAgent:
     """LangGraph-based agent that replaces AgentLoop functionality.
 
-    This agent implements the observe-plan-act-reflect cycle using LangGraph
-    for better state management and execution control.
+    .. deprecated::
+        LangGraphAgent is deprecated. Use FrameAgent instead for new implementations.
+        LangGraphAgent will be removed in a future version.
     """
 
     def __init__(
@@ -126,6 +128,13 @@ class LangGraphAgent:
             max_iterations: Maximum number of iterations to run.
             streaming: Whether to use streaming LLM responses.
         """
+        warnings.warn(
+            "LangGraphAgent is deprecated. Use FrameAgent instead for new implementations. "
+            "LangGraphAgent will be removed in a future version.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         if max_iterations < 1:
             raise AgentError("max_iterations must be at least 1")
 

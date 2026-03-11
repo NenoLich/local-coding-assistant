@@ -306,32 +306,26 @@ uv run locca serve start --host 0.0.0.0 --port 8080 --reload
 
 ## Advanced Features
 
-### Agent Loop Patterns
+### Agent Patterns
 
-LOCCA implements sophisticated agent patterns:
+LOCCA implements sophisticated agent patterns with Frame Agent as the main implementation:
 
-- **Observe-Plan-Act-Reflect** - Multi-step reasoning with tool integration
+- **Frame-based Execution** - Flexible execution patterns using configurable frames
+- **Tool Integration** - Seamless integration with the tool system for extended capabilities
 - **Session Persistence** - Maintains context across multiple queries
-- **Tool Calling** - Automatic tool discovery and execution
 - **Error Recovery** - Graceful handling of failures with retry logic
 
-### LangGraph Opar-Agent
+**Note**: Legacy agent implementations (AgentLoop and LangGraph Agent) are deprecated. Use Frame Agent for all new development.
 
-LOCCA now includes a sophisticated LangGraph-based opar-agent implementation:
+### LangGraph Integration (Deprecated)
 
-- **Graph-based Reasoning** - Advanced multistep reasoning using LangGraph orchestration
-- **Sophisticated State Management** - Complex state handling across multiple nodes
-- **Streaming Support** - Real-time streaming for all agent phases
-- **Error Recovery** - Robust error handling with fallback mechanisms
-- **Node Specialization** - Dedicated nodes for observe, plan, act, and reflect phases
+!!! warning "Deprecated"
+    LangGraph integration is deprecated. The LangGraph-based agent implementations will be removed in a future version.
 
-### LangGraph Integration
-
-The system is designed for LangGraph compatibility:
-
-- **Graph Orchestration** - AgentLoop can serve as execution nodes in graphs
-- **State Management** - Proper state passing between graph nodes
-- **Node Isolation** - Clean separation of concerns in graph execution
+Previous LangGraph features:
+- Graph-based orchestration (deprecated)
+- Node-based execution (deprecated)
+- Complex state management (superseded by Frame Agent)
 
 ### Provider System
 
@@ -366,8 +360,7 @@ uv run pytest tests/integration/ -v
 uv run pytest tests/e2e/ -v
 ```
 
-- **LangGraph Opar-Agent** - Sophisticated graph-based agent implementation with advanced reasoning
-- **Frame Agent** - New frame-based agent implementation for flexible execution patterns
+- **Frame Agent** - Main agent implementation using flexible execution frames
 - **LLM Service** - Refactored LLM management with modular components (service, routing, fallback, telemetry)
 - **Provider Module** - Declarative provider configs, layered reloads, and CLI management
 - **Config Manager v2** - Three-layer hierarchy with validation and runtime overrides
@@ -376,12 +369,13 @@ uv run pytest tests/e2e/ -v
 - **CLI Rendering** - Enhanced CLI output with dedicated rendering components
 - **Integration Tests** - Expanded coverage for config merging and provider routing
 - **Streaming LLM Responses** - Real-time streaming for better user experience
-- **Advanced Agent Loop** - Observe-Plan-Act-Reflect pattern implementation
 - **Enhanced Runtime** - New execution engine with handlers and execution types
 - **Session & Context Awareness** - Persistent sessions with context management
 - **Enhanced Tool System** - JSON schema validation and better error handling
 - **Sandbox Tool Processing** - Advanced tool call processing in sandbox environment
 - **Centralized Logging** - Structured logging throughout the application
 - **Error Handling** - Robust error handling with safe entry points
+
+**Note**: Legacy agent implementations (AgentLoop, LangGraph Agent) are deprecated in favor of Frame Agent.
 
 This project continues to evolve with a focus on reliability, extensibility, and advanced AI patterns.

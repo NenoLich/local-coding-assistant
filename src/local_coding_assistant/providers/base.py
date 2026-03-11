@@ -161,7 +161,7 @@ class ProviderLLMRequest(BaseModel):
         return required
 
     def _validate_required_parameters(
-        self, required: set[str], param_types: dict[str, type | tuple[type, ...]]
+        self, required: set[str], param_types: dict[str, Any]
     ) -> None:
         """Validate that all required parameters are present and supported."""
         # Check for missing required parameters in model support
@@ -204,7 +204,7 @@ class ProviderLLMRequest(BaseModel):
 
     def _handle_unsupported_parameters(
         self,
-        param_types: dict[str, type | tuple[type, ...]],
+        param_types: dict[str, Any],
         required: set[str],
         mode: ValidationMode,
     ) -> set[str]:

@@ -21,7 +21,7 @@ logs/
 tests/logs/
 tests/cache/
 htmlcov/
-docs/
+local_docs/
 
 
 # IDE specific
