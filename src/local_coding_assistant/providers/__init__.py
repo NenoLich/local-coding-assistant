@@ -27,13 +27,14 @@ from .exceptions import (
     ProviderTimeoutError,
     ProviderValidationError,
 )
+from .health import ProviderHealthManager
 from .provider_manager import (
     ProviderManager,
     ProviderSource,
     list_providers,
     register_provider,
 )
-from .router import ProviderRouter
+from .resolver import ProviderResolver
 
 __all__ = [
     "BaseProvider",
@@ -41,13 +42,14 @@ __all__ = [
     "ProviderAuthError",
     "ProviderConnectionError",
     "ProviderError",
+    "ProviderHealthManager",
     "ProviderLLMRequest",
     "ProviderLLMResponse",
     "ProviderLLMResponseDelta",
     "ProviderManager",
     "ProviderNotFoundError",
     "ProviderRateLimitError",
-    "ProviderRouter",
+    "ProviderResolver",
     "ProviderSource",
     "ProviderTimeoutError",
     "ProviderValidationError",

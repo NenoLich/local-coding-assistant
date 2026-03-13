@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import typer
 import yaml
@@ -1121,7 +1121,8 @@ def validate_configuration_file(config_path: Path) -> tuple[bool, list[str]]:
             all_valid = False
             continue
 
-        tool_id = tool_config.get("id", f"at index {i}")
+        tool_config = cast(dict[str, Any], tool_config)
+        tool_id = str(tool_config.get("id", f"at index {i}"))
         is_valid, errors = validate_tool_config(tool_config)
 
         if not is_valid:

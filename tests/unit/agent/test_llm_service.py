@@ -267,7 +267,7 @@ class TestLLMService:
 
         assert service._config_manager == mock_config_manager
         assert service._provider_manager == mock_provider_manager
-        assert service._router is not None
+        assert service._provider_selector is not None
 
     @pytest.mark.asyncio
     async def test_provider_status_methods(self, service_with_mocks):

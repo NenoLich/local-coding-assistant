@@ -1,73 +1,24 @@
-"""Integration tests for ProviderRouter coordinating with config and provider manager stubs."""
+"""Integration tests for ProviderResolver and ProviderHealthManager."""
 
 from __future__ import annotations
-
-import types
 
 import pytest
 
 from local_coding_assistant.providers.base import OptionalParameters, ProviderLLMRequest
-from local_coding_assistant.providers.exceptions import (
-    ProviderTimeoutError,
-    ProviderValidationError,
-)
-from local_coding_assistant.providers.router import ProviderRouter
-
-
-class DummyLLMState:
-    """Track healthy/unhealthy markings applied by the router."""
-
-    def __init__(self) -> None:
-        self.marked_healthy: list[str] = []
-        self.marked_unhealthy: list[str] = []
-
-    def mark_provider_healthy(self, name: str) -> None:
-        self.marked_healthy.append(name)
-
-    def mark_provider_unhealthy(self, name: str) -> None:
-        self.marked_unhealthy.append(name)
-
-
-class DummyAgentConfig:
-    """Expose routing policies similar to the real AgentConfig object."""
-
-    def __init__(self, policies: dict[str, list[str]]) -> None:
-        self._policies = policies
-
-    def get_policy_for_role(self, role: str) -> list[str]:
-        if role in self._policies:
-            return self._policies[role]
-        if "general" in self._policies:
-            return self._policies["general"]
-        return []
-
-
-class DummyGlobalConfig:
-    """Container mimicking the structure accessed by ProviderRouter."""
-
-    def __init__(self, policies: dict[str, list[str]]) -> None:
-        self.llm = DummyLLMState()
-        self.agent = DummyAgentConfig(policies)
+from local_coding_assistant.providers.exceptions import ProviderValidationError
+from local_coding_assistant.providers.health import ProviderHealthManager
+from local_coding_assistant.providers.resolver import ProviderResolver
 
 
 class DummyConfigManager:
-    """Minimal config manager implementation for integration scenarios."""
+    """Minimal config manager for health manager testing."""
 
-    def __init__(self, policies: dict[str, list[str]]) -> None:
-        self._policies = policies
-        self.global_config = DummyGlobalConfig(policies)
-
-    def resolve(self, call_overrides: dict | None = None) -> DummyGlobalConfig:
-        # In these tests overrides are not relevant; simply return the global config.
-        return self.global_config
-
-    def get_agent_config(self, role: str):
-        models = self._policies.get(role, self._policies.get("general", []))
-        return types.SimpleNamespace(llm_policy={"models": models})
+    def __init__(self):
+        self.global_config = None
 
 
 class FakeProvider:
-    """Simple provider implementation exposing the surface used by ProviderRouter."""
+    """Simple provider implementation for resolver testing."""
 
     def __init__(self, name: str, supported_models: set[str]) -> None:
         self.name = name
@@ -91,7 +42,7 @@ class FakeProvider:
 
 
 class StubProviderManager:
-    """Provider manager facade used to back ProviderRouter in integration tests."""
+    """Provider manager facade for resolver testing."""
 
     def __init__(self, providers: dict[str, FakeProvider]) -> None:
         self._providers = providers
@@ -104,96 +55,190 @@ class StubProviderManager:
 
 
 @pytest.mark.asyncio
-async def test_policy_routing_selects_first_available_provider() -> None:
-    policies = {"general": ["primary:model-x", "backup:model-y", "fallback:any"]}
-    config_manager = DummyConfigManager(policies)
-
+async def test_provider_resolver_find_any_available_provider() -> None:
+    """Test that resolver finds any available healthy provider and model."""
     providers = {
-        "primary": FakeProvider("primary", {"model-x"}),
+        "primary": FakeProvider("primary", {"model-x", "model-z"}),
         "backup": FakeProvider("backup", {"model-y"}),
     }
     provider_manager = StubProviderManager(providers)
+    health_manager = ProviderHealthManager(DummyConfigManager())
 
-    router = ProviderRouter(config_manager, provider_manager)
+    resolver = ProviderResolver(provider_manager, health_manager)
 
     request = ProviderLLMRequest(
-        messages=[{"role": "user", "content": "route"}],
-        model="unknown",
+        messages=[{"role": "user", "content": "test"}],
+        model="any",  # Will be overridden during resolution
         parameters=OptionalParameters(),
     )
 
-    selected_provider, selected_model = await router.get_provider_for_request(
-        request, role="general"
-    )
+    selected_provider, selected_model = await resolver.find_any_available_provider(request)
 
-    assert selected_provider is providers["primary"]
-    assert selected_model == "model-x"
-    assert providers["primary"].validate_calls[-1] == "model-x"
+    # Should find the first available provider and model
+    assert selected_provider.name == "primary"
+    assert selected_model in ["model-x", "model-z"]
+    assert selected_provider.validate_calls[-1] == selected_model
 
 
 @pytest.mark.asyncio
-async def test_resolve_provider_and_model_falls_back_when_unhealthy() -> None:
-    policies = {"general": ["primary:model-x", "backup:model-x"]}
-    config_manager = DummyConfigManager(policies)
-
+async def test_provider_resolver_resolve_model_only() -> None:
+    """Test resolving a specific model across available providers."""
     providers = {
-        "primary": FakeProvider("primary", {"model-x"}),
-        "backup": FakeProvider("backup", {"model-x"}),
+        "provider_a": FakeProvider("provider_a", {"gpt-4"}),
+        "provider_b": FakeProvider("provider_b", {"gpt-4", "claude-3"}),
     }
     provider_manager = StubProviderManager(providers)
+    health_manager = ProviderHealthManager(DummyConfigManager())
 
-    router = ProviderRouter(config_manager, provider_manager)
-
-    # Mark the primary provider as unhealthy via the public failure API.
-    router.mark_provider_failure("primary", ProviderTimeoutError("timeout"))
-    assert "primary" in router.get_unhealthy_providers()
-    assert config_manager.global_config.llm.marked_unhealthy == ["primary"]
+    resolver = ProviderResolver(provider_manager, health_manager)
 
     request = ProviderLLMRequest(
-        messages=[{"role": "user", "content": "needs fallback"}],
+        messages=[{"role": "user", "content": "test"}],
+        model="gpt-4",
+        parameters=OptionalParameters(),
+    )
+
+    selected_provider, selected_model = await resolver.resolve_model_only("gpt-4", request)
+
+    # Should find the first provider that supports the model
+    assert selected_provider.name in ["provider_a", "provider_b"]
+    assert selected_model == "gpt-4"
+    assert selected_provider.validate_calls[-1] == "gpt-4"
+
+
+@pytest.mark.asyncio
+async def test_provider_resolver_resolve_provider_only() -> None:
+    """Test resolving from a specific provider by finding suitable model."""
+    providers = {
+        "my_provider": FakeProvider("my_provider", {"model-a", "model-b"}),
+    }
+    provider_manager = StubProviderManager(providers)
+    health_manager = ProviderHealthManager(DummyConfigManager())
+
+    resolver = ProviderResolver(provider_manager, health_manager)
+
+    request = ProviderLLMRequest(
+        messages=[{"role": "user", "content": "test"}],
+        model="dummy-model",  # Must have at least 1 character
+        parameters=OptionalParameters(),
+    )
+
+    selected_provider, selected_model = await resolver.resolve_provider_only("my_provider", request)
+
+    assert selected_provider.name == "my_provider"
+    assert selected_model in ["model-a", "model-b"]
+    assert selected_provider.validate_calls[-1] == selected_model
+
+
+@pytest.mark.asyncio
+async def test_provider_resolver_resolve_provider_and_model() -> None:
+    """Test resolving specific provider and model combination."""
+    providers = {
+        "target_provider": FakeProvider("target_provider", {"target-model"}),
+    }
+    provider_manager = StubProviderManager(providers)
+    health_manager = ProviderHealthManager(DummyConfigManager())
+
+    resolver = ProviderResolver(provider_manager, health_manager)
+
+    request = ProviderLLMRequest(
+        messages=[{"role": "user", "content": "test"}],
+        model="target-model",
+        parameters=OptionalParameters(),
+    )
+
+    selected_provider, selected_model = await resolver.resolve_provider_and_model(
+        "target_provider", "target-model", request
+    )
+
+    assert selected_provider.name == "target_provider"
+    assert selected_model == "target-model"
+    assert selected_provider.validate_calls[-1] == "target-model"
+
+
+@pytest.mark.asyncio
+async def test_provider_resolver_skips_unhealthy_providers() -> None:
+    """Test that resolver skips unhealthy providers."""
+    providers = {
+        "healthy": FakeProvider("healthy", {"model-x"}),
+        "unhealthy": FakeProvider("unhealthy", {"model-x"}),
+    }
+    provider_manager = StubProviderManager(providers)
+    health_manager = ProviderHealthManager(DummyConfigManager())
+
+    # Mark one provider as unhealthy
+    health_manager.mark_provider_failure("unhealthy", Exception("test error"))
+
+    resolver = ProviderResolver(provider_manager, health_manager)
+
+    request = ProviderLLMRequest(
+        messages=[{"role": "user", "content": "test"}],
         model="model-x",
         parameters=OptionalParameters(),
     )
 
-    fallback_provider, model = await router._resolve_provider_and_model(
-        "primary", "model-x", "general", request
-    )
+    selected_provider, selected_model = await resolver.resolve_model_only("model-x", request)
 
-    assert fallback_provider is providers["backup"]
-    assert model == "model-x"
-    assert providers["backup"].validate_calls[-1] == "model-x"
+    # Should only find the healthy provider
+    assert selected_provider.name == "healthy"
+    assert selected_model == "model-x"
+    assert selected_provider.validate_calls[-1] == "model-x"
+
+    # Unhealthy provider should not have been called
+    assert len(providers["unhealthy"].validate_calls) == 0
+
+
+def test_provider_health_manager_marking() -> None:
+    """Test health manager provider status tracking."""
+    config_manager = DummyConfigManager()
+    health_manager = ProviderHealthManager(config_manager)
+
+    # Initially no unhealthy providers
+    assert len(health_manager.get_unhealthy_providers()) == 0
+
+    # Mark provider as failed
+    from local_coding_assistant.providers.exceptions import ProviderTimeoutError
+    health_manager.mark_provider_failure("test_provider", ProviderTimeoutError("test error"))
+    assert "test_provider" in health_manager.get_unhealthy_providers()
+
+    # Mark provider as successful
+    health_manager.mark_provider_success("test_provider")
+    assert "test_provider" not in health_manager.get_unhealthy_providers()
+
+
+def test_provider_health_manager_critical_errors() -> None:
+    """Test health manager recognizes critical errors."""
+    from local_coding_assistant.providers.exceptions import ProviderTimeoutError
+
+    config_manager = DummyConfigManager()
+    health_manager = ProviderHealthManager(config_manager)
+
+    # Critical error should trigger unhealthy marking
+    critical_error = ProviderTimeoutError("timeout")
+    assert health_manager.is_critical_error(critical_error)
+
+    # Non-critical error should not trigger unhealthy marking
+    non_critical_error = ValueError("validation error")
+    assert not health_manager.is_critical_error(non_critical_error)
 
 
 @pytest.mark.asyncio
-async def test_policy_fallback_any_uses_available_healthy_provider() -> None:
-    policies = {"general": ["primary:model-x", "fallback:any"]}
-    config_manager = DummyConfigManager(policies)
-
+async def test_provider_resolver_validation_error_handling() -> None:
+    """Test resolver handles validation errors gracefully."""
     providers = {
-        "primary": FakeProvider("primary", {"model-x"}),
-        "backup": FakeProvider("backup", {"model-y"}),
+        "provider": FakeProvider("provider", {"valid-model"}),  # Only supports one model
     }
     provider_manager = StubProviderManager(providers)
+    health_manager = ProviderHealthManager(DummyConfigManager())
 
-    router = ProviderRouter(config_manager, provider_manager)
-
-    # Primary provider is unhealthy, so fallback:any should consider other providers.
-    router.mark_provider_failure("primary", ProviderTimeoutError("timeout"))
-    assert "primary" in router.get_unhealthy_providers()
+    resolver = ProviderResolver(provider_manager, health_manager)
 
     request = ProviderLLMRequest(
-        messages=[{"role": "user", "content": "fallback"}],
-        model="unknown",
+        messages=[{"role": "user", "content": "test"}],
+        model="invalid-model",  # Model not supported by provider
         parameters=OptionalParameters(),
     )
 
-    selected_provider, selected_model = await router.get_provider_for_request(
-        request, role="general"
-    )
-
-    assert selected_provider is providers["backup"]
-    assert selected_model == "model-y"
-    assert providers["backup"].validate_calls[-1] == "model-y"
-
-    # Ensure the unhealthy provider was not marked healthy during the process.
-    assert config_manager.global_config.llm.marked_healthy == []
+    # Should raise ProviderNotFoundError when no valid combination found
+    with pytest.raises(Exception):  # ProviderNotFoundError
+        await resolver.resolve_provider_and_model("provider", "invalid-model", request)

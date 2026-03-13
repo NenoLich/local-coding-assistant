@@ -13,7 +13,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from types import UnionType
-from typing import TYPE_CHECKING, Any, Union, get_args, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, Union, cast, get_args, get_origin, get_type_hints
 
 import yaml
 from docstring_parser import parse
@@ -195,6 +195,7 @@ class ToolConfigLoader:
                     config_path,
                 )
                 continue
+            entry = cast(dict[str, Any], entry)
             entries.append((entry.copy(), index + 1))
         return entries
 

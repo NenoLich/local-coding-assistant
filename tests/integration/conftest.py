@@ -30,7 +30,6 @@ from local_coding_assistant.providers import (
     ProviderError,
     ProviderLLMResponse,
     ProviderLLMResponseDelta,
-    ProviderRouter,
 )
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.tools.types import (
@@ -1353,50 +1352,6 @@ async def failing_provider():
     provider.health_check = AsyncMock(return_value=False)
 
     return provider
-
-
-@pytest.fixture
-def mock_router_with_fallback():
-    """Create a mock router with fallback provider logic."""
-    router = AsyncMock(spec=ProviderRouter)
-
-    # Track call count for fallback testing
-    call_count = 0
-
-    async def get_provider_for_request(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-
-        if call_count == 1:
-            # Return failing provider on first call
-            failing_provider = AsyncMock(spec=BaseProvider)
-            failing_provider.name = "primary_provider"
-            failing_provider.generate_with_retry = AsyncMock(
-                side_effect=ProviderError("Primary provider failed")
-            )
-            return failing_provider, "gpt-4"
-        else:
-            # Return fallback provider on second call
-            fallback_provider = AsyncMock(spec=BaseProvider)
-            fallback_provider.name = "fallback_provider"
-            fallback_provider.generate_with_retry = AsyncMock(
-                return_value=ProviderLLMResponse(
-                    content="Fallback response",
-                    model="gpt-3.5-turbo",
-                    tokens_used=75,
-                    tool_calls=None,
-                    finish_reason="stop",
-                )
-            )
-            return fallback_provider, "gpt-3.5-turbo"
-
-    router.get_provider_for_request = AsyncMock(side_effect=get_provider_for_request)
-    router._is_critical_error = MagicMock(return_value=True)
-    router.mark_provider_failure = MagicMock()
-    router.mark_provider_success = MagicMock()
-
-    return router
-
 
 @pytest.fixture
 def mock_streaming_provider():

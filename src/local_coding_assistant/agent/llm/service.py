@@ -12,7 +12,8 @@ from local_coding_assistant.core.exceptions import (
     LLMError,
 )
 from local_coding_assistant.core.protocols import IConfigManager
-from local_coding_assistant.providers import ProviderManager, ProviderRouter
+from local_coding_assistant.providers import ProviderManager
+from local_coding_assistant.providers.health import ProviderHealthManager
 from local_coding_assistant.utils.logging import get_logger
 
 from .fallback import FallbackStrategy, get_strategy
@@ -36,16 +37,18 @@ class LLMService:
         config_manager: IConfigManager,
         provider_manager: ProviderManager | None = None,
         *,
-        router: ProviderRouter | None = None,
+        health_manager: ProviderHealthManager | None = None,
     ) -> None:
         self._logger = get_logger("agent.llm.service")
         self._config_manager = config_manager
         self._provider_manager = provider_manager or ProviderManager()
         self._provider_manager.reload(config_manager)
 
-        self._router = router or ProviderRouter(config_manager, self._provider_manager)
+        self._health_manager = health_manager or ProviderHealthManager(config_manager)
         self._policy_resolver = PolicyResolver(config_manager)
-        self._provider_selector = ProviderSelector(self._router)
+        self._provider_selector = ProviderSelector(
+            self._provider_manager, self._health_manager
+        )
 
         self._request_builder = ProviderRequestBuilder()
         self._response_normalizer = ResponseNormalizer()
@@ -168,7 +171,7 @@ class LLMService:
                     max_retries=max(0, context.resolved_options.retry_attempts - 1),
                     retry_delay=context.resolved_options.retry_delay,
                 )
-                self._router.mark_provider_success(provider_name)
+                self._health_manager.mark_provider_success(provider_name)
                 _, _, total_tokens = _extract_usage_metrics(
                     response.usage, response.tokens_used
                 )
@@ -196,7 +199,7 @@ class LLMService:
                     error=exc,
                 )
                 # Infrastructure errors SHOULD penalize provider health
-                self._router.mark_provider_failure(provider_name, exc)
+                self._health_manager.mark_provider_failure(provider_name, exc)
 
                 delay = (
                     strategy.next_delay(
@@ -289,7 +292,7 @@ class LLMService:
                     #     model=cloned_request.model,
                     #     is_final=delta.finish_reason is not None,
                     # )
-                self._router.mark_provider_success(provider_name)
+                self._health_manager.mark_provider_success(provider_name)
                 _, _, total_tokens = _extract_usage_metrics(last_usage, None)
                 self._telemetry.attempt_success(
                     mode="stream",
@@ -310,7 +313,7 @@ class LLMService:
                     error=exc,
                 )
                 # Infrastructure errors SHOULD penalize provider health
-                self._router.mark_provider_failure(provider_name, exc)
+                self._health_manager.mark_provider_failure(provider_name, exc)
 
                 delay = (
                     strategy.next_delay(
@@ -448,7 +451,7 @@ class LLMService:
                             "healthy": is_healthy,
                             "models": provider.get_available_models(),
                             "in_unhealthy_set": p_name
-                            in self._router.get_unhealthy_providers(),
+                            in self._health_manager.get_unhealthy_providers(),
                             "status": "healthy" if is_healthy else "unhealthy",
                         }
                 except Exception as e:
@@ -463,7 +466,7 @@ class LLMService:
                         "models": provider.get_available_models() if provider else [],
                         "error": str(e),
                         "in_unhealthy_set": p_name
-                        in self._router.get_unhealthy_providers(),
+                        in self._health_manager.get_unhealthy_providers(),
                         "status": "error",
                     }
             else:

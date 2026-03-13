@@ -16,9 +16,10 @@ from local_coding_assistant.providers.base import (
 )
 from local_coding_assistant.providers.exceptions import ProviderError
 from local_coding_assistant.providers.google_provider import GoogleGeminiProvider
+from local_coding_assistant.providers.health import ProviderHealthManager
 from local_coding_assistant.providers.openrouter_provider import OpenRouterProvider
 from local_coding_assistant.providers.provider_manager import ProviderManager
-from local_coding_assistant.providers.router import ProviderRouter
+from local_coding_assistant.providers.resolver import ProviderResolver
 
 
 class TestProviderLLMRequest:
@@ -928,46 +929,53 @@ class TestOpenRouterProvider:
         assert "request" in sig.parameters
 
 
-class TestProviderRouter:
-    """Test ProviderRouter functionality."""
+class TestProviderResolver:
+    """Test ProviderResolver functionality."""
 
     def test_initialization(self):
-        """Test ProviderRouter initialization."""
+        """Test ProviderResolver and ProviderHealthManager initialization."""
         mock_config_manager = MagicMock()
         mock_provider_manager = MagicMock()
 
-        router = ProviderRouter(mock_config_manager, mock_provider_manager)
+        # Test ProviderHealthManager initialization
+        health_manager = ProviderHealthManager(mock_config_manager)
+        assert health_manager.config_manager == mock_config_manager
+        assert len(health_manager._unhealthy_providers) == 0
 
-        assert router.config_manager == mock_config_manager
-        assert router.provider_manager == mock_provider_manager
-        assert len(router._unhealthy_providers) == 0
+        # Test ProviderResolver initialization
+        resolver = ProviderResolver(mock_provider_manager, health_manager)
+        assert resolver.provider_manager == mock_provider_manager
+        assert resolver.health_manager == health_manager
 
     def test_mark_provider_healthy(self):
         """Test marking provider as healthy."""
-        router = ProviderRouter(MagicMock(), MagicMock())
+        mock_config_manager = MagicMock()
+        health_manager = ProviderHealthManager(mock_config_manager)
 
         # Add provider to unhealthy set
-        router._unhealthy_providers.add("test_provider")
+        health_manager._unhealthy_providers.add("test_provider")
 
         # Mark as healthy
-        router._mark_provider_healthy("test_provider")
+        health_manager._mark_provider_healthy("test_provider")
 
         # Should be removed from unhealthy set
-        assert "test_provider" not in router._unhealthy_providers
+        assert "test_provider" not in health_manager._unhealthy_providers
 
     def test_mark_provider_unhealthy(self):
         """Test marking provider as unhealthy."""
-        router = ProviderRouter(MagicMock(), MagicMock())
+        mock_config_manager = MagicMock()
+        health_manager = ProviderHealthManager(mock_config_manager)
 
         # Mark as unhealthy
-        router._mark_provider_unhealthy("test_provider")
+        health_manager._mark_provider_unhealthy("test_provider")
 
         # Should be added to unhealthy set
-        assert "test_provider" in router._unhealthy_providers
+        assert "test_provider" in health_manager._unhealthy_providers
 
     def test_is_critical_error(self):
         """Test critical error detection."""
-        router = ProviderRouter(MagicMock(), MagicMock())
+        mock_config_manager = MagicMock()
+        health_manager = ProviderHealthManager(mock_config_manager)
 
         # Test different error types
         from local_coding_assistant.providers.exceptions import (
@@ -979,15 +987,15 @@ class TestProviderRouter:
 
         # These should be considered critical
         assert (
-            router._is_critical_error(ProviderConnectionError("Connection failed"))
+            health_manager._is_critical_error(ProviderConnectionError("Connection failed"))
             is True
         )
-        assert router._is_critical_error(ProviderAuthError("Invalid API key")) is True
-        assert router._is_critical_error(ProviderRateLimitError("Rate limited")) is True
+        assert health_manager._is_critical_error(ProviderAuthError("Invalid API key")) is True
+        assert health_manager._is_critical_error(ProviderRateLimitError("Rate limited")) is True
 
         # This might not be critical (implementation dependent)
         assert isinstance(
-            router._is_critical_error(ProviderTimeoutError("Timeout")), bool
+            health_manager._is_critical_error(ProviderTimeoutError("Timeout")), bool
         )
 
 

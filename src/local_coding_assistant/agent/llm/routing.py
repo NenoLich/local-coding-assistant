@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from local_coding_assistant.agent.llm.models import LLMPolicy, ResolvedLLMOptions
-from local_coding_assistant.providers import ProviderRouter
+from local_coding_assistant.providers import ProviderResolver
 from local_coding_assistant.providers.base import BaseProvider, ProviderLLMRequest
+from local_coding_assistant.providers.health import ProviderHealthManager
 
 
 @dataclass(slots=True)
@@ -102,10 +103,10 @@ class PolicyResolver:
 
 
 class ProviderSelector:
-    """Encapsulates ProviderRouter interactions with policies."""
+    """Encapsulates provider selection with policies."""
 
-    def __init__(self, router: ProviderRouter):
-        self._router = router
+    def __init__(self, provider_manager, health_manager: ProviderHealthManager):
+        self._resolver = ProviderResolver(provider_manager, health_manager)
 
     async def select(
         self,
@@ -132,22 +133,28 @@ class ProviderSelector:
             for route in routes:
                 # Parse the route to extract provider and model
                 if route == "fallback:any":
-                    # Use router's fallback logic
-                    provider, model = await self._router.get_provider_for_request(
-                        request,
-                        role=None,
-                        provider=options.provider_hint,
+                    # Use resolver's fallback logic
+                    provider, model = await self._resolver.find_any_available_provider(
+                        request
                     )
                 else:
                     # Route is just a model name, use provider hint if available
                     request_with_model = request.model_copy(update={"model": route})
 
                     try:
-                        provider, model = await self._router.get_provider_for_request(
-                            request_with_model,
-                            role=None,
-                            provider=options.provider_hint,
-                        )
+                        if options.provider_hint:
+                            (
+                                provider,
+                                model,
+                            ) = await self._resolver.resolve_provider_and_model(
+                                options.provider_hint,
+                                request_with_model.model,
+                                request_with_model,
+                            )
+                        else:
+                            provider, model = await self._resolver.resolve_model_only(
+                                request_with_model.model, request_with_model
+                            )
 
                     except ProviderNotFoundError:
                         continue
@@ -159,10 +166,19 @@ class ProviderSelector:
                 ]
                 return RoutingDecision(provider=provider, model=model), unchecked_routes
 
-        # No policy or routes - use router's default logic
-        provider, model = await self._router.get_provider_for_request(
-            request,
-            role=None,
-            provider=options.provider_hint,
-        )
+        # No policy or routes - use resolver's default logic based on options
+        if options.model and options.provider_hint:
+            provider, model = await self._resolver.resolve_provider_and_model(
+                options.provider_hint, options.model, request
+            )
+        elif options.provider_hint:
+            provider, model = await self._resolver.resolve_provider_only(
+                options.provider_hint, request
+            )
+        elif options.model:
+            provider, model = await self._resolver.resolve_model_only(
+                options.model, request
+            )
+        else:
+            provider, model = await self._resolver.find_any_available_provider(request)
         return RoutingDecision(provider=provider, model=model), []
