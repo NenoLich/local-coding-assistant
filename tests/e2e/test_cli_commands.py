@@ -115,7 +115,9 @@ class TestCLIErrorHandling:
 class TestCLIIntegration:
     """Test cases for CLI integration scenarios."""
 
-    def test_cli_environment_variable_precedence(self, cli_runner, mock_env_vars):
+    def test_cli_environment_variable_precedence(
+        self, cli_runner, mock_env_vars, mock_bootstrap_success
+    ):
         """Test that CLI options override environment variables."""
         import os
 

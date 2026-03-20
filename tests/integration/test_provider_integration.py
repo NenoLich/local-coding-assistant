@@ -59,9 +59,7 @@ class TestProviderCLIIntegration:
             patch(
                 "local_coding_assistant.cli.commands.provider.bootstrap"
             ) as mock_bootstrap,
-            patch(
-                "local_coding_assistant.agent.llm.LLMService"
-            ) as mock_llm_class,
+            patch("local_coding_assistant.agent.llm.LLMService") as mock_llm_class,
             patch("typer.echo") as mock_echo,
         ):
             # Make _get_config_path return our test config file path

@@ -86,13 +86,29 @@ def mock_bootstrap_success():
         # Set return value first to establish the type
         mock_bootstrap.return_value = mock_ctx
 
-        # Create an async function for the orchestrate mock
+        # Create an async generator function for the orchestrate mock
         async def mock_orchestrate_async(text, *args, **kwargs):
-            return {"message": f"[LLMService] Echo: {text}"}
+            from local_coding_assistant.runtime.events import EventType, ExecutionEvent
+
+            # Yield some mock events
+            yield ExecutionEvent(
+                type=EventType.TURN_START, session_id="test_session", data={}
+            )
+            yield ExecutionEvent(
+                type=EventType.LLM_COMPLETE,
+                session_id="test_session",
+                data={"content": f"[LLMService] Echo: {text}"},
+            )
+            # The final TURN_COMPLETE event with the report
+            yield ExecutionEvent(
+                type=EventType.TURN_COMPLETE,
+                session_id="test_session",
+                data={"report": {"message": f"[LLMService] Echo: {text}"}},
+            )
 
         # Use cast to help the type checker understand the type of mock_runtime
         runtime = cast(MagicMock, mock_ctx["runtime"])
-        runtime.orchestrate = AsyncMock(side_effect=mock_orchestrate_async)
+        runtime.orchestrate = mock_orchestrate_async
 
         yield mock_bootstrap, mock_ctx
 

@@ -23,7 +23,7 @@ def sample_run_report() -> RunReport:
         "prompt_context": [],
         "rendered_prompt": [
             {"role": "system", "content": "You are a helpful assistant"},
-            {"role": "user", "content": "Hello"}
+            {"role": "user", "content": "Hello"},
         ],
         "model_response_raw": "LLM response",
         "actions": [
@@ -39,14 +39,14 @@ def sample_run_report() -> RunReport:
                     "total_tokens": 20,
                     "reasoning_tokens": 0,
                     "latency_ms": 500.0,
-                    "model": "mock-model"
+                    "model": "mock-model",
                 },
                 "tool_calls": [],
                 "tool_trace": None,
                 "metadata": {
                     "input": {"prompt": "Hello"},
                     "output": "Hello world",
-                    "reasoning": "Thinking step by step"
+                    "reasoning": "Thinking step by step",
                 },
             },
             {
@@ -72,7 +72,7 @@ def sample_run_report() -> RunReport:
                     "execution_mode": "sync",
                     "source": "test",
                     "resource_metrics": [],
-                    "metadata": {"success": True}
+                    "metadata": {"success": True},
                 },
                 "metadata": {},
             },

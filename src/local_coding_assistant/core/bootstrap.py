@@ -79,7 +79,10 @@ def bootstrap(
             tool_manager=deps.tool_manager,
         )
 
-        # 7. Register components in context
+        # 7. Initialize dashboard if enabled
+        _initialize_dashboard_integration(config_manager)
+
+        # 8. Register components in context
         if deps.llm_service:
             ctx.register("llm", deps.llm_service)
         if deps.tool_manager:
@@ -374,3 +377,32 @@ def _initialize_runtime_manager(
     except Exception as e:
         logger.error("Failed to initialize runtime manager", str(e), exc_info=True)
         return None
+
+
+def _initialize_dashboard_integration(config_manager: IConfigManager) -> None:
+    """Initialize dashboard integration if enabled.
+
+    Args:
+        config_manager: The config manager instance
+    """
+    try:
+        # Check if dashboard is enabled
+        dashboard_config = config_manager.global_config.dashboard
+        if not dashboard_config.enabled:
+            logger.debug("Dashboard integration disabled in configuration")
+            return
+
+        # Import and enable dashboard integration with URL from config
+        from local_coding_assistant.runtime.dashboard_integration import (
+            enable_dashboard_integration,
+        )
+
+        dashboard_url = f"http://{dashboard_config.host}:{dashboard_config.port}"
+        enable_dashboard_integration(dashboard_url=dashboard_url)
+
+        logger.info(f"Dashboard integration enabled, URL: {dashboard_url}")
+
+    except ImportError:
+        logger.debug("Dashboard module not available, skipping integration")
+    except Exception as e:
+        logger.warning(f"Failed to initialize dashboard integration: {e}")

@@ -8,6 +8,7 @@ from local_coding_assistant.config.schemas import AppConfig
 from local_coding_assistant.prompt.composer import PromptComposer
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.runtime.runtime_types import ExecutionMode, RenderedPrompt
+from local_coding_assistant.runtime.events import EventType
 from local_coding_assistant.tools.types import ToolExecutionMode, ToolInfo
 
 
@@ -172,10 +173,15 @@ async def test_orchestrate_resolves_reasoning_mode(prompt_capture: dict[str, Any
         tool_manager=FakeToolManager(),
     )
 
-    result = await runtime.orchestrate(
+    result = None
+    async for event in runtime.orchestrate(
         "Explain recursion", tool_call_mode="reasoning_only"
-    )
+    ):
+        if event.type == EventType.TURN_COMPLETE:
+            result = event.data["report"]
+            break
 
+    assert result is not None
     assert "message" in result
     ctx = prompt_capture["context"]
     assert ctx.execution_mode == ExecutionMode.REASONING_ONLY
@@ -193,7 +199,9 @@ async def test_orchestrate_enables_sandbox_python_when_capabilities_exist(
         tool_manager=FakeToolManager(ptc_tools=ptc_tools, has_runtime=True),
     )
 
-    await runtime.orchestrate("Run code", tool_call_mode="ptc")
+    async for event in runtime.orchestrate("Run code", tool_call_mode="ptc"):
+        if event.type == EventType.TURN_COMPLETE:
+            break
 
     ctx = prompt_capture["context"]
     assert ctx.execution_mode == ExecutionMode.SANDBOX_PYTHON
@@ -213,7 +221,9 @@ async def test_orchestrate_falls_back_to_classic_when_sandbox_disabled(prompt_ca
     # Simulate user requesting PTC mode through config while sandbox remains disabled.
     config_manager.global_config.runtime.tool_call_mode = "ptc"
 
-    await runtime.orchestrate("Need sandbox")
+    async for event in runtime.orchestrate("Need sandbox"):
+        if event.type == EventType.TURN_COMPLETE:
+            break
 
     ctx = prompt_capture["context"]
     assert ctx.execution_mode == ExecutionMode.SANDBOX_PYTHON
@@ -229,7 +239,11 @@ async def test_orchestrate_falls_back_to_reasoning_when_tool_manager_missing(
         tool_manager=None,
     )
 
-    await runtime.orchestrate("Need sandbox but unavailable", tool_call_mode="ptc")
+    async for event in runtime.orchestrate(
+        "Need sandbox but unavailable", tool_call_mode="ptc"
+    ):
+        if event.type == EventType.TURN_COMPLETE:
+            break
 
     ctx = prompt_capture["context"]
     assert ctx.execution_mode == ExecutionMode.SANDBOX_PYTHON
@@ -244,7 +258,9 @@ async def test_orchestrate_falls_back_to_classic_when_runtime_missing(prompt_cap
         tool_manager=FakeToolManager(ptc_tools=ptc_tools, has_runtime=False),
     )
 
-    await runtime.orchestrate("Need python runtime", tool_call_mode="ptc")
+    async for event in runtime.orchestrate("Need python runtime", tool_call_mode="ptc"):
+        if event.type == EventType.TURN_COMPLETE:
+            break
 
     ctx = prompt_capture["context"]
     assert ctx.execution_mode == ExecutionMode.SANDBOX_PYTHON
@@ -265,7 +281,8 @@ async def test_orchestrate_surfaces_prompt_composer_errors(
     monkeypatch.setattr(PromptComposer, "render", failing_render)
 
     with pytest.raises(TemplateError):
-        await runtime.orchestrate("Cause template failure")
+        async for event in runtime.orchestrate("Cause template failure"):
+            pass
 
 
 @pytest.mark.asyncio
@@ -275,7 +292,11 @@ async def test_orchestrate_accepts_tool_call_mode(prompt_capture):
         tool_manager=FakeToolManager(),
     )
 
-    await runtime.orchestrate("Any mode", tool_call_mode="unsupported-mode")
+    async for event in runtime.orchestrate(
+        "Any mode", tool_call_mode="unsupported-mode"
+    ):
+        if event.type == EventType.TURN_COMPLETE:
+            break
 
     ctx = prompt_capture["context"]
     assert ctx.tool_call_mode == "unsupported-mode"

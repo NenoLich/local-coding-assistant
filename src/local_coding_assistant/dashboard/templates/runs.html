@@ -1,0 +1,422 @@
+{% extends "base.html" %}
+
+{% block title %}Runs - LOCCA Dashboard{% endblock %}
+
+{% block content %}
+<div class="col-12">
+    <div class="row mt-4">
+        <div class="col-12">
+            <h1>Execution Runs</h1>
+            <p class="text-muted">View and filter execution runs history</p>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Filters</h5>
+                </div>
+                <div class="card-body">
+                    <form id="filter-form" class="row g-3">
+                        <div class="col-md-2">
+                            <label for="status-filter" class="form-label">Status</label>
+                            <select class="form-select" id="status-filter" name="status">
+                                <option value="">All Statuses</option>
+                                <option value="completed">Completed</option>
+                                <option value="running">Running</option>
+                                <option value="error">Error</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label for="date-from" class="form-label">From Date</label>
+                            <input type="datetime-local" class="form-control" id="date-from" name="date_from">
+                        </div>
+                        <div class="col-md-2">
+                            <label for="date-to" class="form-label">To Date</label>
+                            <input type="datetime-local" class="form-control" id="date-to" name="date_to">
+                        </div>
+                        <div class="col-md-2">
+                            <label for="model-filter" class="form-label">Model</label>
+                            <select class="form-select" id="model-filter" name="model">
+                                <option value="">All Models</option>
+                                <!-- Models will be populated dynamically -->
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label for="provider-filter" class="form-label">Provider</label>
+                            <select class="form-select" id="provider-filter" name="provider">
+                                <option value="">All Providers</option>
+                                <!-- Providers will be populated dynamically -->
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label for="limit" class="form-label">Per Page</label>
+                            <select class="form-select" id="limit" name="limit">
+                                <option value="25">25</option>
+                                <option value="50" selected>50</option>
+                                <option value="100">100</option>
+                                <option value="200">200</option>
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-primary">Apply Filters</button>
+                            <button type="button" class="btn btn-outline-secondary" id="clear-filters">Clear</button>
+                            <button type="button" class="btn btn-outline-success" id="export-btn">
+                                <i class="bi bi-download"></i> Export
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Runs Table -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Runs (<span id="total-runs">-</span>)</h5>
+                    <button class="btn btn-sm btn-outline-primary" id="refresh-btn">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div id="runs-container">
+                        <div class="text-center text-muted">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading runs...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pagination -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <nav id="pagination-container">
+                <!-- Pagination will be inserted here -->
+            </nav>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let currentPage = 0;
+let currentLimit = 50;
+
+// Load runs on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadModelsAndProviders().then(() => {
+        loadRuns();
+    });
+    
+    // Set up form submission
+    document.getElementById('filter-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        currentPage = 0;
+        currentLimit = parseInt(document.getElementById('limit').value);
+        loadRuns();
+    });
+    
+    // Clear filters
+    document.getElementById('clear-filters').addEventListener('click', function() {
+        document.getElementById('filter-form').reset();
+        currentPage = 0;
+        currentLimit = 50;
+        loadRuns();
+    });
+    
+    // Refresh button
+    document.getElementById('refresh-btn').addEventListener('click', function() {
+        loadModelsAndProviders().then(() => {
+            loadRuns();
+        });
+    });
+    
+    // Export button
+    document.getElementById('export-btn').addEventListener('click', function() {
+        exportRuns();
+    });
+});
+
+function loadModelsAndProviders() {
+    return fetch('/api/runs/models-providers')
+        .then(response => response.json())
+        .then(data => {
+            populateSelect('model-filter', data.models);
+            populateSelect('provider-filter', data.providers);
+        })
+        .catch(error => {
+            console.error('Error loading models and providers:', error);
+        });
+}
+
+function populateSelect(selectId, options) {
+    const select = document.getElementById(selectId);
+    const currentValue = select.value;
+    
+    // Clear existing options except the first one (All Models/Providers)
+    while (select.children.length > 1) {
+        select.removeChild(select.lastChild);
+    }
+    
+    // Add new options
+    options.forEach(option => {
+        const optionElement = document.createElement('option');
+        optionElement.value = option;
+        optionElement.textContent = option;
+        select.appendChild(optionElement);
+    });
+    
+    // Restore previous selection if it still exists
+    if (currentValue && options.includes(currentValue)) {
+        select.value = currentValue;
+    }
+}
+
+function loadRuns() {
+    const status = document.getElementById('status-filter').value;
+    const dateFrom = document.getElementById('date-from').value;
+    const dateTo = document.getElementById('date-to').value;
+    const model = document.getElementById('model-filter').value;
+    const provider = document.getElementById('provider-filter').value;
+    
+    const params = new URLSearchParams({
+        limit: currentLimit,
+        offset: currentPage * currentLimit
+    });
+    
+    if (status) params.append('status', status);
+    if (dateFrom) params.append('date_from', dateFrom);
+    if (dateTo) params.append('date_to', dateTo);
+    if (model) params.append('model', model);
+    if (provider) params.append('provider', provider);
+    
+    const container = document.getElementById('runs-container');
+    container.innerHTML = `
+        <div class="text-center text-muted">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading runs...</p>
+        </div>
+    `;
+    
+    fetch(`/api/runs?${params}`)
+        .then(response => response.json())
+        .then(data => {
+            displayRuns(data);
+            updatePagination(data);
+        })
+        .catch(error => {
+            console.error('Error loading runs:', error);
+            container.innerHTML = `
+                <div class="alert alert-danger">
+                    Error loading runs: ${error.message}
+                </div>
+            `;
+        });
+}
+
+function displayRuns(data) {
+    const container = document.getElementById('runs-container');
+    document.getElementById('total-runs').textContent = data.total;
+    
+    if (!data.items || data.items.length === 0) {
+        container.innerHTML = `
+            <div class="text-center text-muted">
+                <i class="bi bi-inbox" style="font-size: 3rem;"></i>
+                <p class="mt-2">No runs found matching the current filters</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const table = `
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Run ID</th>
+                        <th>Status</th>
+                        <th>Start Time</th>
+                        <th>Duration</th>
+                        <th>Events</th>
+                        <th>Tokens Used</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.items.map(run => `
+                        <tr>
+                            <td>
+                                <code>${run.run_id.substring(0, 12)}...</code>
+                            </td>
+                            <td>
+                                <span class="badge bg-${getStatusColor(run.status)}">${run.status}</span>
+                            </td>
+                            <td>${formatDateTime(run.start_time)}</td>
+                            <td>${formatDuration(run.duration)}</td>
+                            <td>${run.events_count}</td>
+                            <td>${run.tokens_used.toLocaleString()}</td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <a href="/runs/${run.run_id}" class="btn btn-outline-primary">View</a>
+                                    <a href="/frames/${run.run_id}" class="btn btn-outline-secondary">Frame</a>
+                                </div>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    
+    container.innerHTML = table;
+}
+
+function updatePagination(data) {
+    const container = document.getElementById('pagination-container');
+    
+    if (data.total <= currentLimit) {
+        container.innerHTML = '';
+        return;
+    }
+    
+    const totalPages = Math.ceil(data.total / currentLimit);
+    const currentPageNum = currentPage + 1;
+    
+    let pagination = '<nav><ul class="pagination justify-content-center">';
+    
+    // Previous button
+    if (data.has_prev) {
+        pagination += `
+            <li class="page-item">
+                <a class="page-link" href="#" onclick="changePage(${currentPage - 1}); return false;">Previous</a>
+            </li>
+        `;
+    } else {
+        pagination += `
+            <li class="page-item disabled">
+                <span class="page-link">Previous</span>
+            </li>
+        `;
+    }
+    
+    // Page numbers
+    const startPage = Math.max(1, currentPageNum - 2);
+    const endPage = Math.min(totalPages, currentPageNum + 2);
+    
+    if (startPage > 1) {
+        pagination += `
+            <li class="page-item">
+                <a class="page-link" href="#" onclick="changePage(0); return false;">1</a>
+            </li>
+        `;
+        if (startPage > 2) {
+            pagination += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+        }
+    }
+    
+    for (let i = startPage; i <= endPage; i++) {
+        const isActive = i === currentPageNum;
+        pagination += `
+            <li class="page-item ${isActive ? 'active' : ''}">
+                <a class="page-link" href="#" onclick="changePage(${i - 1}); return false;">${i}</a>
+            </li>
+        `;
+    }
+    
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            pagination += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+        }
+        pagination += `
+            <li class="page-item">
+                <a class="page-link" href="#" onclick="changePage(${totalPages - 1}); return false;">${totalPages}</a>
+            </li>
+        `;
+    }
+    
+    // Next button
+    if (data.has_next) {
+        pagination += `
+            <li class="page-item">
+                <a class="page-link" href="#" onclick="changePage(${currentPage + 1}); return false;">Next</a>
+            </li>
+        `;
+    } else {
+        pagination += `
+            <li class="page-item disabled">
+                <span class="page-link">Next</span>
+            </li>
+        `;
+    }
+    
+    pagination += '</ul></nav>';
+    container.innerHTML = pagination;
+}
+
+function changePage(page) {
+    currentPage = page;
+    loadRuns();
+}
+
+function getStatusColor(status) {
+    switch (status) {
+        case 'completed': return 'success';
+        case 'running': return 'primary';
+        case 'error': return 'danger';
+        default: return 'secondary';
+    }
+}
+
+function formatDateTime(dateString) {
+    if (!dateString) return '-';
+    const date = new Date(dateString);
+    return date.toLocaleString();
+}
+
+function formatDuration(seconds) {
+    if (!seconds || seconds === 0) return '-';
+    if (seconds < 60) return `${seconds.toFixed(1)}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
+    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
+function exportRuns() {
+    const status = document.getElementById('status-filter').value;
+    const dateFrom = document.getElementById('date-from').value;
+    const dateTo = document.getElementById('date-to').value;
+    const model = document.getElementById('model-filter').value;
+    const provider = document.getElementById('provider-filter').value;
+    
+    const params = new URLSearchParams({
+        format: 'csv'
+    });
+    
+    if (status) params.append('status', status);
+    if (dateFrom) params.append('date_from', dateFrom);
+    if (dateTo) params.append('date_to', dateTo);
+    if (model) params.append('model', model);
+    if (provider) params.append('provider', provider);
+    
+    // Create a temporary link to trigger download
+    const link = document.createElement('a');
+    link.href = `/api/export/runs?${params}`;
+    link.download = `locca_runs_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+</script>
+{% endblock %}

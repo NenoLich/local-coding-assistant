@@ -323,7 +323,9 @@ class TestOpenAIChatCompletionsDriver:
         # Assistant message
         assert formatted[0]["role"] == "assistant"
         assert formatted[0]["content"] == "I'll help"
-        assert formatted[0]["tool_calls"][0]["function"]["arguments"] == '{"arg": "value"}'
+        assert (
+            formatted[0]["tool_calls"][0]["function"]["arguments"] == '{"arg": "value"}'
+        )
         # Tool message
         assert formatted[1]["role"] == "tool"
         assert formatted[1]["tool_call_id"] == "call_1"
@@ -344,9 +346,9 @@ class TestOpenAIChatCompletionsDriver:
         assert formatted[0]["content"] == "Result"
         assert isinstance(formatted[0]["content"], str)
 
-
     def test_extract_error_details_edge_cases(self, driver):
         """Test _extract_error_details with various status_code scenarios (lines 289-295)"""
+
         # Test case 1: status_code is None
         class MockException1(Exception):
             def __init__(self):
@@ -757,6 +759,7 @@ class TestOpenAIResponsesDriver:
 
     def test_extract_reasoning_output_list(self, driver):
         """Test _extract_reasoning with output list containing reasoning (lines 564-572)"""
+
         # Test case 1: reasoning_text with string content
         class MockResponse1:
             def __init__(self):
@@ -772,11 +775,14 @@ class TestOpenAIResponsesDriver:
         class MockResponse2:
             def __init__(self):
                 self.output = [
-                    {"type": "reasoning", "content": [
-                        {"text": "First part"},
-                        {"text": "Second part"},
-                        {"other": "ignored"}
-                    ]}
+                    {
+                        "type": "reasoning",
+                        "content": [
+                            {"text": "First part"},
+                            {"text": "Second part"},
+                            {"other": "ignored"},
+                        ],
+                    }
                 ]
 
         response2 = MockResponse2()
@@ -786,9 +792,7 @@ class TestOpenAIResponsesDriver:
         # Test case 3: reasoning with non-list content
         class MockResponse3:
             def __init__(self):
-                self.output = [
-                    {"type": "reasoning", "content": "Simple reasoning"}
-                ]
+                self.output = [{"type": "reasoning", "content": "Simple reasoning"}]
 
         response3 = MockResponse3()
         reasoning = driver._extract_reasoning(response3)
@@ -797,9 +801,7 @@ class TestOpenAIResponsesDriver:
         # Test case 4: no reasoning in output
         class MockResponse4:
             def __init__(self):
-                self.output = [
-                    {"type": "text", "content": "Some text"}
-                ]
+                self.output = [{"type": "text", "content": "Some text"}]
 
         response4 = MockResponse4()
         reasoning = driver._extract_reasoning(response4)

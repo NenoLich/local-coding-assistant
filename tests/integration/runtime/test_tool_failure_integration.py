@@ -489,12 +489,18 @@ class TestToolFailureIntegration:
         }
 
         # Verify session state
-        assert "handler_context" in session.metadata, "Should have added handler context to metadata"
+        assert "handler_context" in session.metadata, (
+            "Should have added handler context to metadata"
+        )
         handler_context_meta = session.metadata["handler_context"]
         assert handler_context_meta["error_type"] == "tool_failures"
         assert handler_context_meta["template_path"] == handler_output.template_path
-        assert "tool_retry.jinja2" in handler_context_meta["template_path"], "Should have retry template"
-        assert "retry" in handler_context_meta["template_path"].lower(), "Should indicate retry"
+        assert "tool_retry.jinja2" in handler_context_meta["template_path"], (
+            "Should have retry template"
+        )
+        assert "retry" in handler_context_meta["template_path"].lower(), (
+            "Should indicate retry"
+        )
 
 
 if __name__ == "__main__":

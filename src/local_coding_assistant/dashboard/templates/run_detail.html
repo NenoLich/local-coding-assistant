@@ -1,0 +1,524 @@
+{% extends "base.html" %}
+
+{% block title %}Run {{ run_id }} - LOCCA Dashboard{% endblock %}
+
+{% block content %}
+<div class="col-12">
+    <div class="row mt-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="/">Dashboard</a></li>
+                    <li class="breadcrumb-item"><a href="/runs">Runs</a></li>
+                    <li class="breadcrumb-item active">{{ run_id }}</li>
+                </ol>
+            </nav>
+            <h1>Run Details</h1>
+            <p class="text-muted">Detailed view of execution run: <code>{{ run_id }}</code></p>
+        </div>
+    </div>
+
+    <!-- Run Status Card -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Run Information</h5>
+                    <button class="btn btn-sm btn-outline-primary" id="refresh-btn">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+                <div class="card-body" id="run-info">
+                    <div class="text-center text-muted">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Loading run information...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Final Answer (if available) -->
+    <div class="row mt-4" id="final-answer-section" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Final Answer</h5>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-success">
+                        <pre id="final-answer-content" class="mb-0"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Error Message (if available) -->
+    <div class="row mt-4" id="error-section" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Error Details</h5>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-danger">
+                        <pre id="error-content" class="mb-0"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Events Timeline -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Events Timeline</h5>
+                        <div class="d-flex align-items-center">
+                            <div class="me-3">
+                                <label for="event-type-filter" class="form-label mb-0 me-2">Filter by type:</label>
+                                <select class="form-select form-select-sm d-inline-block w-auto" id="event-type-filter">
+                                    <option value="">All Events</option>
+                                </select>
+                            </div>
+                            <button class="btn btn-sm btn-outline-secondary" id="clear-filter-btn">
+                                <i class="bi bi-x-circle"></i> Clear
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div id="events-timeline">
+                        <div class="text-center text-muted">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading events...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Frame Detail Link -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body text-center">
+                    <a href="/frames/{{ run_id }}" class="btn btn-primary">
+                        <i class="bi bi-zoom-in"></i> View Frame Details
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const runId = '{{ run_id }}';
+let allEvents = []; // Store all events for filtering
+
+// Load run details on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadRunDetails();
+    
+    // Refresh button
+    document.getElementById('refresh-btn').addEventListener('click', function() {
+        loadRunDetails();
+    });
+    
+    // Event type filter
+    document.getElementById('event-type-filter').addEventListener('change', function() {
+        filterEvents();
+    });
+    
+    // Clear filter button
+    document.getElementById('clear-filter-btn').addEventListener('click', function() {
+        document.getElementById('event-type-filter').value = '';
+        filterEvents();
+    });
+});
+
+function loadRunDetails(eventTypeFilter = null) {
+    // Build URL with event type filter if provided
+    let url = `/api/runs/${runId}`;
+    if (eventTypeFilter) {
+        url += `?event_type=${encodeURIComponent(eventTypeFilter)}`;
+    }
+    
+    // Load run information
+    fetch(url)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            displayRunInfo(data);
+            allEvents = data.events || []; // Store filtered events
+            
+            // Only populate filter if we're loading all events (no filter)
+            if (!eventTypeFilter) {
+                populateEventTypeFilter(allEvents);
+            }
+            
+            displayEventsTimeline(allEvents);
+        })
+        .catch(error => {
+            console.error('Error loading run details:', error);
+            document.getElementById('run-info').innerHTML = `
+                <div class="alert alert-danger">
+                    Error loading run details: ${error.message}
+                </div>
+            `;
+        });
+}
+
+function displayRunInfo(data) {
+    const container = document.getElementById('run-info');
+    
+    // Show/hide final answer and error sections
+    const finalAnswerSection = document.getElementById('final-answer-section');
+    const errorSection = document.getElementById('error-section');
+    
+    if (data.final_answer) {
+        finalAnswerSection.style.display = 'block';
+        document.getElementById('final-answer-content').textContent = data.final_answer;
+    } else {
+        finalAnswerSection.style.display = 'none';
+    }
+    
+    if (data.error_message) {
+        errorSection.style.display = 'block';
+        document.getElementById('error-content').textContent = data.error_message;
+    } else {
+        errorSection.style.display = 'none';
+    }
+    
+    container.innerHTML = `
+        <div class="row">
+            <div class="col-md-6">
+                <table class="table table-borderless">
+                    <tr>
+                        <td><strong>Run ID:</strong></td>
+                        <td><code>${data.run_id}</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Session ID:</strong></td>
+                        <td><code>${data.session_id}</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Status:</strong></td>
+                        <td>
+                            <span class="badge bg-${getStatusColor(data.status)}">${data.status}</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>Start Time:</strong></td>
+                        <td>${formatDateTime(data.start_time)}</td>
+                    </tr>
+                </table>
+            </div>
+            <div class="col-md-6">
+                <table class="table table-borderless">
+                    <tr>
+                        <td><strong>End Time:</strong></td>
+                        <td>${data.end_time ? formatDateTime(data.end_time) : '-'}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Duration:</strong></td>
+                        <td>${formatDuration(data.duration)}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Events Count:</strong></td>
+                        <td>${data.events_count}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Tokens Used:</strong></td>
+                        <td>${data.tokens_used.toLocaleString()}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+function displayEventsTimeline(events) {
+    const container = document.getElementById('events-timeline');
+    
+    if (!events || events.length === 0) {
+        container.innerHTML = `
+            <div class="text-center text-muted">
+                <i class="bi bi-inbox" style="font-size: 3rem;"></i>
+                <p class="mt-2">No events recorded for this run</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const timeline = events.map((event, index) => {
+        const icon = getEventIcon(event.type);
+        const color = getEventColor(event.type);
+        const time = formatDateTime(event.timestamp);
+        
+        return `
+            <div class="timeline-item d-flex">
+                <div class="timeline-marker me-3">
+                    <div class="rounded-circle bg-${color} text-white d-flex align-items-center justify-content-center" style="width: 40px; height: 40px;">
+                        <i class="bi ${icon}"></i>
+                    </div>
+                </div>
+                <div class="timeline-content flex-grow-1">
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">${event.type}</h6>
+                            <small class="text-muted">${time}</small>
+                        </div>
+                        <div class="card-body">
+                            ${formatEventData(event)}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    container.innerHTML = `<div class="timeline">${timeline}</div>`;
+}
+
+function populateEventTypeFilter(events) {
+    const filterSelect = document.getElementById('event-type-filter');
+    
+    // Get unique event types
+    const eventTypes = [...new Set(events.map(event => event.type))].sort();
+    
+    // Clear existing options except "All Events"
+    filterSelect.innerHTML = '<option value="">All Events</option>';
+    
+    // Add event type options
+    eventTypes.forEach(eventType => {
+        const option = document.createElement('option');
+        option.value = eventType;
+        option.textContent = eventType.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+        filterSelect.appendChild(option);
+    });
+}
+
+function filterEvents() {
+    const selectedType = document.getElementById('event-type-filter').value;
+    
+    // Reload data with server-side filtering
+    loadRunDetails(selectedType);
+}
+
+function formatEventData(event) {
+    const data = event.data || {};
+    
+    switch (event.type) {
+        case 'llm_call':
+        case 'llm_start':
+            return `
+                <div class="row">
+                    <div class="col-12">
+                        <strong>LLM Started</strong>
+                        <pre class="bg-light p-2 rounded" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto;">${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+                    </div>
+                </div>
+            `;
+        case 'llm_complete':
+            const result = data.result || {};
+            const responseContent = result.content || result.reasoning || result.response || result.message || JSON.stringify(result);
+            return `
+                <div class="row">
+                    <div class="col-md-6">
+                        <strong>Model:</strong> <code>${result.model || 'N/A'}</code><br>
+                        <strong>Provider:</strong> <code>${result.provider || 'N/A'}</code><br>
+                        <strong>Tokens:</strong> ${result.total_tokens || 'N/A'}
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Response:</strong>
+                        <pre class="bg-light p-2 rounded" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto;">${escapeHtml(responseContent)}</pre>
+                    </div>
+                </div>
+            `;
+        case 'llm_chunk':
+            let contentHtml = '';
+            let reasoningHtml = '';
+            
+            if (data.content && data.content !== 'N/A') {
+                contentHtml = `
+                    <div class="col-md-6">
+                        <strong>Content:</strong>
+                        <pre class="bg-light p-2 rounded" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto;">${escapeHtml(data.content)}</pre>
+                    </div>
+                `;
+            }
+            
+            if (data.reasoning && data.reasoning !== 'N/A') {
+                reasoningHtml = `
+                    <div class="col-md-6">
+                        <strong>Reasoning:</strong>
+                        <pre class="bg-light p-2 rounded" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto;">${escapeHtml(data.reasoning)}</pre>
+                    </div>
+                `;
+            }
+            
+            return `
+                <div class="row">
+                    ${contentHtml}
+                    ${reasoningHtml}
+                </div>
+            `;
+        case 'tool_call':
+            return `
+                <div class="row">
+                    <div class="col-md-4">
+                        <strong>Tool:</strong> <code>${data.name || 'N/A'}</code>
+                    </div>
+                    <div class="col-md-8">
+                        <strong>Arguments:</strong>
+                        <pre class="bg-light p-2 rounded" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto;">${escapeHtml(JSON.stringify(data.arguments || {}, null, 2))}</pre>
+                    </div>
+                </div>
+            `;
+        case 'tool_start':
+            const toolCall = data.tool_call || {};
+            return `
+                <div class="row">
+                    <div class="col-md-4">
+                        <strong>Tool:</strong> <code>${toolCall.name || 'N/A'}</code>
+                    </div>
+                    <div class="col-md-8">
+                        <strong>Arguments:</strong>
+                        <pre class="bg-light p-2 rounded" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto;">${escapeHtml(JSON.stringify(toolCall.arguments || {}, null, 2))}</pre>
+                    </div>
+                </div>
+            `;
+        case 'tool_result':
+            const response = data.response || data;
+            return `
+                <div class="row">
+                    <div class="col-md-4">
+                        <strong>Tool:</strong> <code>${response.tool_name || 'N/A'}</code><br>
+                        <strong>Success:</strong> <code>${response.success ? 'Yes' : 'No'}</code><br>
+                        <strong>Execution Time:</strong> ${response.execution_time_ms ? `${response.execution_time_ms.toFixed(2)}ms` : 'N/A'}
+                    </div>
+                    <div class="col-md-8">
+                        <strong>Arguments:</strong>
+                        <pre class="bg-light p-2 rounded" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto;">${escapeHtml(JSON.stringify(response.tool_args || {}, null, 2))}</pre>
+                        <strong>Result:</strong>
+                        <pre class="bg-light p-2 rounded" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto;">${escapeHtml(response.result !== null ? response.result : 'N/A')}</pre>
+                    </div>
+                </div>
+            `;
+        case 'turn_start':
+        case 'turn_complete':
+        case 'frame_start':
+        case 'frame_complete':
+        case 'session_start':
+        case 'session_resume':
+            return `
+                <div class="row">
+                    <div class="col-12">
+                        <strong>Details:</strong>
+                        <pre class="bg-light p-2 rounded" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto;">${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+                    </div>
+                </div>
+            `;
+        case 'error':
+            return `
+                <div class="alert alert-danger">
+                    <strong>Error:</strong> ${escapeHtml(data.error || data.message || 'Unknown error')}
+                </div>
+            `;
+        default:
+            return `
+                <pre class="bg-light p-2 rounded" style="white-space: pre-wrap; max-height: 300px; overflow-y: auto;">${escapeHtml(JSON.stringify(data, null, 2))}</pre>
+            `;
+    }
+}
+
+function getEventIcon(type) {
+    const icons = {
+        'turn_start': 'bi-play-circle',
+        'frame_start': 'bi-box-arrow-in-right',
+        'llm_start': 'bi-cpu',
+        'llm_chunk': 'bi-chat-text',
+        'llm_complete': 'bi-check-circle',
+        'tool_start': 'bi-arrow-right-circle',
+        'tool_result': 'bi-tools',
+        'frame_complete': 'bi-check2-square',
+        'turn_complete': 'bi-check-all',
+        'session_start': 'bi-play-circle',
+        'session_resume': 'bi-arrow-clockwise',
+        'error': 'bi-exclamation-triangle',
+        // Legacy mappings for backward compatibility
+        'session_end': 'bi-stop-circle',
+        'tool_call': 'bi-tools',
+        'tool_complete': 'bi-check2-circle',
+        'warning': 'bi-exclamation-circle'
+    };
+    return icons[type] || 'bi-circle';
+}
+
+function getEventColor(type) {
+    const colors = {
+        'turn_start': 'primary',
+        'frame_start': 'info',
+        'llm_start': 'primary',
+        'llm_chunk': 'info',
+        'llm_complete': 'success',
+        'tool_start': 'warning',
+        'tool_result': 'warning',
+        'frame_complete': 'success',
+        'turn_complete': 'success',
+        'session_start': 'primary',
+        'session_resume': 'info',
+        'error': 'danger',
+        // Legacy mappings for backward compatibility
+        'session_end': 'secondary',
+        'tool_call': 'warning',
+        'tool_complete': 'success',
+        'warning': 'warning'
+    };
+    return colors[type] || 'secondary';
+}
+
+function getStatusColor(status) {
+    switch (status) {
+        case 'completed': return 'success';
+        case 'running': return 'primary';
+        case 'error': return 'danger';
+        default: return 'secondary';
+    }
+}
+
+function formatDateTime(dateString) {
+    if (!dateString) return '-';
+    const date = new Date(dateString);
+    return date.toLocaleString();
+}
+
+function formatDuration(seconds) {
+    if (!seconds || seconds === 0) return '-';
+    if (seconds < 60) return `${seconds.toFixed(1)}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
+    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}

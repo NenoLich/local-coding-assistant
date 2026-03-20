@@ -203,9 +203,7 @@ class TestToolFailureHandler:
         assert result.template_path is None
 
     @pytest.mark.asyncio
-    async def test_template_path_content(
-        self, handler, retryable_tool_failure_context
-    ):
+    async def test_template_path_content(self, handler, retryable_tool_failure_context):
         """Test that template_path is set correctly for retryable failures."""
         result = await handler.handle(retryable_tool_failure_context)
 

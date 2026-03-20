@@ -6,8 +6,8 @@ from local_coding_assistant.agent.llm import (
     LLMService,
     LLMTask,
     LLMResult,
+    LLMToolCall,
 )
-from local_coding_assistant.agent.llm.routing import ProviderSelector
 
 from local_coding_assistant.config.config_manager import ConfigManager
 from local_coding_assistant.config.schemas import ProviderStatus, LLMConfig
@@ -82,6 +82,15 @@ class TestLLMServiceIntegration:
         mock_router.get_provider_for_request = AsyncMock(
             return_value=(mock_provider, "test-model")
         )
+        # Add the select method that ProviderSelector has
+        from local_coding_assistant.agent.llm.routing import RoutingDecision
+
+        mock_router.select = AsyncMock(
+            return_value=(
+                RoutingDecision(provider=mock_provider, model="test-model"),
+                [],
+            )
+        )
         # Sync methods
         mock_router.mark_provider_success = MagicMock()
         mock_router.mark_provider_failure = MagicMock()
@@ -99,9 +108,14 @@ class TestLLMServiceIntegration:
         llm._request_builder = MagicMock()
         llm._response_normalizer = MagicMock()
         llm._policy_resolver = MagicMock()
-        llm._provider_selector = ProviderSelector(mock_router)
+        llm._provider_selector = mock_router  # Use the mock_router directly since it has get_provider_for_request
         llm._telemetry = MagicMock()
         llm._logger = MagicMock()
+        llm._health_manager = MagicMock()
+        llm._telemetry.attempt_start = MagicMock()
+        llm._telemetry.attempt_success = MagicMock()
+        llm._telemetry.attempt_failure = MagicMock()
+        llm._telemetry.failover_exhausted = MagicMock()
 
         # Configure mocks
         mock_request = MagicMock()
@@ -131,7 +145,7 @@ class TestLLMServiceIntegration:
 
         # Verify provider was called correctly
         mock_provider.generate_with_retry.assert_called_once()
-        mock_router.get_provider_for_request.assert_called_once()
+        mock_router.select.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_llm_tool_calls_are_executed(self):
@@ -149,14 +163,12 @@ class TestLLMServiceIntegration:
                     provider="test-provider",
                     total_tokens=50,
                     tool_calls=[
-                        {
-                            "id": "call_123",
-                            "type": "function",
-                            "function": {
-                                "name": "sum",
-                                "arguments": '{"a": 10, "b": 15}',
-                            },
-                        }
+                        LLMToolCall(
+                            id="call_123",
+                            name="sum",
+                            arguments={"a": 10, "b": 15},
+                            type="function",
+                        )
                     ],
                 )
             return await original_generate(request)
@@ -175,5 +187,5 @@ class TestLLMServiceIntegration:
         # Should have generated tool call
         assert response.tool_calls is not None
         assert len(response.tool_calls) == 1
-        assert response.tool_calls[0]["function"]["name"] == "sum"
+        assert response.tool_calls[0].name == "sum"
         assert response.content == "I'll calculate that for you."

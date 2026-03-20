@@ -151,9 +151,7 @@ class TestLangGraphIntegration:
         print("✓ Malformed input handled with fallback behavior")
 
     @pytest.mark.asyncio
-    async def test_langgraph_streaming_integration(
-        self, tool_manager, mock_llm_result
-    ):
+    async def test_langgraph_streaming_integration(self, tool_manager, mock_llm_result):
         """Test LangGraph integration with streaming responses."""
         from unittest.mock import AsyncMock, MagicMock
 

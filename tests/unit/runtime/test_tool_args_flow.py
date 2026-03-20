@@ -83,7 +83,7 @@ class TestToolArgsFlow:
             "tool_name": "read_file",
             "tool_args": {"path": "/test/file.py", "encoding": "utf-8"},
             "success": False,
-            "error_message": "Permission denied: cannot read file"
+            "error_message": "Permission denied: cannot read file",
         }
 
         failed_tools = agent._collect_failed_tools([failed_tool_result])

@@ -21,8 +21,9 @@ from local_coding_assistant.providers import (
     ProviderLLMResponse,
     ProviderLLMResponseDelta,
     ProviderManager,
-    ProviderRouter,
+    ProviderResolver,
 )
+from local_coding_assistant.providers.health import ProviderHealthManager
 
 
 @pytest.fixture
@@ -114,7 +115,9 @@ class TestProviderManagerLLMServiceIntegration:
 
         # Verify provider manager is properly integrated
         assert llm_service.provider_manager == integration_provider_manager
-        assert isinstance(llm_service._router, ProviderRouter)
+        assert hasattr(llm_service, "_provider_selector")
+        assert isinstance(llm_service._provider_selector._resolver, ProviderResolver)
+        assert isinstance(llm_service._health_manager, ProviderHealthManager)
 
         # The provider manager should be initialized with the config
         # We can verify this by checking the provider manager's state
@@ -161,10 +164,10 @@ class TestProviderManagerLLMServiceIntegration:
         llm_service._last_health_check = 0
         llm_service._cache_ttl = 30 * 60
 
-        # Mock the router
-        mock_router = MagicMock()
-        mock_router._unhealthy_providers = set()
-        llm_service.router = mock_router
+        # Mock the health manager
+        mock_health_manager = MagicMock(spec=ProviderHealthManager)
+        mock_health_manager.get_unhealthy_providers.return_value = set()
+        llm_service._health_manager = mock_health_manager
 
         # Pre-populate the cache to avoid async issues in the test
         llm_service._provider_status_cache = {
@@ -221,7 +224,7 @@ class TestProviderManagerLLMServiceIntegration:
         # Create mock provider with realistic response
         mock_provider = AsyncMock(spec=BaseProvider)
         mock_provider.name = "integration_provider"
-        
+
         # Create the actual response object
         response = ProviderLLMResponse(
             content="Integration test response",
@@ -236,13 +239,16 @@ class TestProviderManagerLLMServiceIntegration:
             ],
             finish_reason="stop",
         )
-        
+
         mock_provider.generate_with_retry = AsyncMock(return_value=response)
 
-        # Set up router to return our mock provider
-        mock_router = AsyncMock(spec=ProviderRouter)
-        mock_router.get_provider_for_request = AsyncMock(
-            return_value=(mock_provider, "gpt-4")
+        # Set up provider selector to return our mock provider
+        mock_health_manager = MagicMock(spec=ProviderHealthManager)
+        mock_provider_selector = MagicMock()
+        from local_coding_assistant.agent.llm.routing import RoutingDecision
+
+        mock_provider_selector.select = AsyncMock(
+            return_value=(RoutingDecision(provider=mock_provider, model="gpt-4"), [])
         )
 
         # Set up mock config manager
@@ -265,16 +271,14 @@ class TestProviderManagerLLMServiceIntegration:
                 config_manager=mock_config_manager,
                 provider_manager=integration_provider_manager,
             )
-            # Override the router and provider selector with our mock
-            llm_service._router = mock_router
-            from local_coding_assistant.agent.llm.routing import ProviderSelector
-            llm_service._provider_selector = ProviderSelector(mock_router)
+            # Override the provider selector with our mock
+            llm_service._provider_selector = mock_provider_selector
 
             # Test generation request
             task = LLMTask(
                 prompt="Integration test prompt",
                 system_prompt="You are a helpful assistant",
-                context=[{"role": "user", "message": "test"}],
+                context=[{"role": "user", "content": "test"}],
             )
 
             response = await llm_service.generate(task)
@@ -291,7 +295,7 @@ class TestProviderManagerLLMServiceIntegration:
 
             # Verify provider was called correctly
             mock_provider.generate_with_retry.assert_called_once()
-            mock_router.get_provider_for_request.assert_called_once()
+            mock_provider_selector.select.assert_called_once()
 
     @pytest.mark.skip(reason="Fallback test needs policy routing fix")
     @pytest.mark.asyncio
@@ -309,7 +313,7 @@ class TestProviderManagerLLMServiceIntegration:
         # Create fallback provider
         mock_fallback_provider = AsyncMock(spec=BaseProvider)
         mock_fallback_provider.name = "fallback_provider"
-        
+
         # Create the actual fallback response object
         fallback_response = ProviderLLMResponse(
             content="Fallback response",
@@ -318,14 +322,16 @@ class TestProviderManagerLLMServiceIntegration:
             tool_calls=None,
             finish_reason="stop",
         )
-        
-        mock_fallback_provider.generate_with_retry = AsyncMock(return_value=fallback_response)
 
-        # Set up router with fallback logic
-        mock_router = AsyncMock(spec=ProviderRouter)
+        mock_fallback_provider.generate_with_retry = AsyncMock(
+            return_value=fallback_response
+        )
+
+        # Set up resolver with fallback logic
+        mock_resolver = AsyncMock(spec=ProviderResolver)
         call_count = 0
 
-        async def mock_get_provider_for_request(*args, **kwargs):
+        async def mock_resolve_provider_and_model(provider_name, model_name, request):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -333,10 +339,11 @@ class TestProviderManagerLLMServiceIntegration:
             else:
                 return mock_fallback_provider, "gpt-3.5-turbo"  # Fallback succeeds
 
-        mock_router.get_provider_for_request = AsyncMock(
-            side_effect=mock_get_provider_for_request
+        mock_resolver.resolve_provider_and_model = AsyncMock(
+            side_effect=mock_resolve_provider_and_model
         )
-        mock_router._is_critical_error = MagicMock(return_value=True)
+        mock_health_manager = MagicMock(spec=ProviderHealthManager)
+        mock_health_manager.is_critical_error = MagicMock(return_value=True)
 
         # Mock the ConfigManager to return our test config
         mock_config = MagicMock()
@@ -352,10 +359,11 @@ class TestProviderManagerLLMServiceIntegration:
 
         # Mock policy resolver to return test policy with max_failovers
         from local_coding_assistant.agent.llm.models import LLMPolicy
+
         test_policy = LLMPolicy(
             name="test_fallback_policy",
             routes=["failing_provider", "fallback_provider"],
-            max_failovers=2
+            max_failovers=2,
         )
 
         with patch(
@@ -365,10 +373,13 @@ class TestProviderManagerLLMServiceIntegration:
                 config_manager=mock_config,
                 provider_manager=integration_provider_manager,
             )
-            # Override the router and provider selector with our mock
-            llm_service._router = mock_router
+            # Override the provider selector with our mock
             from local_coding_assistant.agent.llm.routing import ProviderSelector
-            llm_service._provider_selector = ProviderSelector(mock_router)
+
+            llm_service._provider_selector = ProviderSelector(
+                integration_provider_manager, mock_health_manager
+            )
+            llm_service._provider_selector._resolver = mock_resolver
             # Mock policy resolver to return our test policy
             llm_service._policy_resolver.resolve = MagicMock(return_value=test_policy)
 
@@ -376,8 +387,11 @@ class TestProviderManagerLLMServiceIntegration:
             task = LLMTask(prompt="Test with fallback")
             # Use policy to control failover behavior - need model="auto" to trigger policy
             from local_coding_assistant.agent.llm.models import LLMOptions
+
             options = LLMOptions(model="auto")
-            response = await llm_service.generate(task, policy="test_fallback_policy", options=options)
+            response = await llm_service.generate(
+                task, policy="test_fallback_policy", options=options
+            )
 
             # Verify fallback response
             assert response.content == "Fallback response"
@@ -420,15 +434,15 @@ class TestProviderStreamingIntegration:
 
         mock_provider.stream_with_retry = AsyncMock(side_effect=mock_stream_with_retry)
 
-        # Set up router
-        mock_router = AsyncMock(spec=ProviderRouter)
-        mock_router.get_provider_for_request = AsyncMock(
+        # Set up resolver
+        mock_resolver = AsyncMock(spec=ProviderResolver)
+        mock_resolver.resolve_provider_and_model = AsyncMock(
             return_value=(mock_provider, "gpt-4")
         )
 
         with patch("local_coding_assistant.config.get_config_manager"):
             llm_service = LLMService.__new__(LLMService)
-            llm_service._router = mock_router
+            llm_service._provider_selector._resolver = mock_resolver
             llm_service._provider_manager = integration_provider_manager
 
             # Test streaming request
@@ -444,7 +458,7 @@ class TestProviderStreamingIntegration:
 
             # Verify provider was called
             mock_provider.stream_with_retry.assert_called_once()
-            mock_router.get_provider_for_request.assert_called_once()
+            mock_resolver.resolve_provider_and_model.assert_called_once()
 
     @pytest.mark.skip(reason="Streaming tests need additional setup")
     @pytest.mark.asyncio
@@ -469,15 +483,15 @@ class TestProviderStreamingIntegration:
 
         mock_provider.stream_with_retry = AsyncMock(side_effect=mock_stream_with_retry)
 
-        # Set up router
-        mock_router = AsyncMock(spec=ProviderRouter)
-        mock_router.get_provider_for_request = AsyncMock(
+        # Set up resolver
+        mock_resolver = AsyncMock(spec=ProviderResolver)
+        mock_resolver.resolve_provider_and_model = AsyncMock(
             return_value=(mock_provider, "gpt-4")
         )
 
         with patch("local_coding_assistant.config.get_config_manager"):
             llm_service = LLMService.__new__(LLMService)
-            llm_service._router = mock_router
+            llm_service._provider_selector._resolver = mock_resolver
             llm_service._provider_manager = integration_provider_manager
 
             # Test streaming with empty deltas
@@ -503,9 +517,9 @@ class TestProviderConfigurationIntegration:
         mock_global_config.providers = {}
         mock_config_manager.global_config = mock_global_config
 
-        # Mock router
-        mock_router = MagicMock()
-        mock_router._unhealthy_providers = set()
+        # Mock health manager
+        mock_health_manager = MagicMock(spec=ProviderHealthManager)
+        mock_health_manager.get_unhealthy_providers.return_value = set()
 
         with patch(
             "local_coding_assistant.config.ConfigManager",
@@ -515,8 +529,8 @@ class TestProviderConfigurationIntegration:
                 config_manager=mock_config_manager,
                 provider_manager=integration_provider_manager,
             )
-            # Override the router with our mock
-            llm_service._router = mock_router
+            # Override the health manager with our mock
+            llm_service._health_manager = mock_health_manager
 
             # Set up initial cache state
             llm_service._provider_status_cache = {"old_provider": {"status": "old"}}

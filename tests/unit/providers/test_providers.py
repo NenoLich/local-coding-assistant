@@ -987,11 +987,19 @@ class TestProviderResolver:
 
         # These should be considered critical
         assert (
-            health_manager._is_critical_error(ProviderConnectionError("Connection failed"))
+            health_manager._is_critical_error(
+                ProviderConnectionError("Connection failed")
+            )
             is True
         )
-        assert health_manager._is_critical_error(ProviderAuthError("Invalid API key")) is True
-        assert health_manager._is_critical_error(ProviderRateLimitError("Rate limited")) is True
+        assert (
+            health_manager._is_critical_error(ProviderAuthError("Invalid API key"))
+            is True
+        )
+        assert (
+            health_manager._is_critical_error(ProviderRateLimitError("Rate limited"))
+            is True
+        )
 
         # This might not be critical (implementation dependent)
         assert isinstance(

@@ -416,7 +416,10 @@ async def test_persistent_many_iterations_history_grows_linearly(
     """Test that history grows linearly with many iterations."""
     # Create mock responses
     mock_responses = [
-        MagicMock(content=f"Response {i}", model="gpt-4", finish_reason=None, metadata={}) for i in range(5)
+        MagicMock(
+            content=f"Response {i}", model="gpt-4", finish_reason=None, metadata={}
+        )
+        for i in range(5)
     ]
 
     # Create a mock LLM manager
@@ -514,7 +517,9 @@ async def test_directive_success_invokes_tool_and_passes_outputs_to_llm(
     try:
         result = None
         # Test direct tool invocation
-        async for event in runtime_manager.orchestrate('tool:test_tool {"arg1": "value1"}'):
+        async for event in runtime_manager.orchestrate(
+            'tool:test_tool {"arg1": "value1"}'
+        ):
             if event.type == EventType.TURN_COMPLETE:
                 result = event.data["report"]
                 break
@@ -819,7 +824,9 @@ async def test_llm_provider_failure_handling(runtime_manager: RuntimeManager):
     try:
         # Test that the exception is propagated
         with pytest.raises(LLMError) as exc_info:
-            async for event in runtime_manager.orchestrate("test query", tool_call_mode="classic"):
+            async for event in runtime_manager.orchestrate(
+                "test query", tool_call_mode="classic"
+            ):
                 pass
 
         # Verify the exception was propagated correctly
@@ -997,4 +1004,8 @@ class TestToolHandling:
         result = await runtime_manager._execute_tool("test_tool", {"param1": "value1"})
 
         # Verify result is wrapped in a dict
-        assert result == {"execution_time_ms": 100.0, "result": "plain string result", "tool_args": {"param1": "value1"}}
+        assert result == {
+            "execution_time_ms": 100.0,
+            "result": "plain string result",
+            "tool_args": {"param1": "value1"},
+        }

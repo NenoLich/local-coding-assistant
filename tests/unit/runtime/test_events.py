@@ -131,7 +131,10 @@ class TestExecutionEvent:
 
 # Test utilities for streaming tests
 
-async def collect_events(event_iterator: AsyncIterator[ExecutionEvent]) -> list[ExecutionEvent]:
+
+async def collect_events(
+    event_iterator: AsyncIterator[ExecutionEvent],
+) -> list[ExecutionEvent]:
     """Collect all events from an async iterator into a list."""
     events = []
     async for event in event_iterator:
@@ -140,8 +143,7 @@ async def collect_events(event_iterator: AsyncIterator[ExecutionEvent]) -> list[
 
 
 async def collect_events_with_timeout(
-    event_iterator: AsyncIterator[ExecutionEvent],
-    timeout: float = 5.0
+    event_iterator: AsyncIterator[ExecutionEvent], timeout: float = 5.0
 ) -> list[ExecutionEvent]:
     """Collect events with a timeout to prevent hanging tests."""
     events = []
@@ -214,6 +216,7 @@ def sample_events():
 @pytest.fixture
 def mock_event_stream(sample_events):
     """Fixture providing a mock async iterator of events."""
+
     async def event_generator():
         for event in sample_events:
             yield event

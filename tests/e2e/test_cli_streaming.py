@@ -61,37 +61,69 @@ def capturing_console():
 @pytest.fixture
 def mock_streaming_runtime():
     """Create a mock runtime that emits predefined streaming events."""
+
     def _create_runtime(event_sequence, delay=0.01):
         return MockStreamingRuntime(event_sequence, delay)
+
     return _create_runtime
 
 
 class TestCLIStreamingE2E:
     """End-to-end tests for CLI streaming functionality."""
 
-    def test_streaming_content_display_basic(self, cli_runner, mock_streaming_runtime, capturing_console):
+    def test_streaming_content_display_basic(
+        self, cli_runner, mock_streaming_runtime, capturing_console
+    ):
         """Test that LLM content is displayed incrementally in real-time."""
         # Create a simple streaming sequence
         session_id = "streaming-test-1"
         frame_id = "frame-1"
 
         event_sequence = [
-            ExecutionEvent(type=EventType.TURN_START, session_id=session_id, data={"user_query": "Hello world"}),
-            ExecutionEvent(type=EventType.FRAME_START, session_id=session_id, frame_id=frame_id),
-            ExecutionEvent(type=EventType.LLM_START, session_id=session_id, frame_id=frame_id),
-            ExecutionEvent(type=EventType.LLM_CHUNK, session_id=session_id, frame_id=frame_id,
-                          data={"content": "Hello ", "is_final": False}),
-            ExecutionEvent(type=EventType.LLM_CHUNK, session_id=session_id, frame_id=frame_id,
-                          data={"content": "world!", "is_final": True}),
-            ExecutionEvent(type=EventType.LLM_COMPLETE, session_id=session_id, frame_id=frame_id),
-            ExecutionEvent(type=EventType.FRAME_COMPLETE, session_id=session_id, frame_id=frame_id),
-            ExecutionEvent(type=EventType.TURN_COMPLETE, session_id=session_id,
-                          data={"final_answer": "Hello world!", "report": {"message": "Hello world!"}}),
+            ExecutionEvent(
+                type=EventType.TURN_START,
+                session_id=session_id,
+                data={"user_query": "Hello world"},
+            ),
+            ExecutionEvent(
+                type=EventType.FRAME_START, session_id=session_id, frame_id=frame_id
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_START, session_id=session_id, frame_id=frame_id
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_CHUNK,
+                session_id=session_id,
+                frame_id=frame_id,
+                data={"content": "Hello ", "is_final": False},
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_CHUNK,
+                session_id=session_id,
+                frame_id=frame_id,
+                data={"content": "world!", "is_final": True},
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_COMPLETE, session_id=session_id, frame_id=frame_id
+            ),
+            ExecutionEvent(
+                type=EventType.FRAME_COMPLETE, session_id=session_id, frame_id=frame_id
+            ),
+            ExecutionEvent(
+                type=EventType.TURN_COMPLETE,
+                session_id=session_id,
+                data={
+                    "final_answer": "Hello world!",
+                    "report": {"message": "Hello world!"},
+                },
+            ),
         ]
 
         runtime = mock_streaming_runtime(event_sequence)
 
-        with patch("local_coding_assistant.cli.commands.run.bootstrap") as mock_bootstrap:
+        with patch(
+            "local_coding_assistant.cli.commands.run.bootstrap"
+        ) as mock_bootstrap:
             mock_bootstrap.return_value = {"runtime": runtime}
 
             start_time = time.time()
@@ -110,7 +142,9 @@ class TestCLIStreamingE2E:
             # Verify streaming occurred (runtime emitted events)
             assert len(runtime.events_emitted) == len(event_sequence)
 
-    def test_streaming_with_tool_execution_feedback(self, cli_runner, mock_streaming_runtime):
+    def test_streaming_with_tool_execution_feedback(
+        self, cli_runner, mock_streaming_runtime
+    ):
         """Test streaming output includes tool execution feedback."""
         session_id = "tool-streaming-test"
         frame_id = "tool-frame"
@@ -125,27 +159,62 @@ class TestCLIStreamingE2E:
         mock_tool_response.result = {"result": 8}
 
         event_sequence = [
-            ExecutionEvent(type=EventType.TURN_START, session_id=session_id,
-                          data={"user_query": "Calculate 5 + 3"}),
-            ExecutionEvent(type=EventType.FRAME_START, session_id=session_id, frame_id=frame_id),
-            ExecutionEvent(type=EventType.LLM_START, session_id=session_id, frame_id=frame_id),
-            ExecutionEvent(type=EventType.LLM_CHUNK, session_id=session_id, frame_id=frame_id,
-                          data={"content": "I need to calculate 5 + 3. ", "is_final": False}),
-            ExecutionEvent(type=EventType.LLM_CHUNK, session_id=session_id, frame_id=frame_id,
-                          data={"content": "Let me use the calculator.", "is_final": True}),
-            ExecutionEvent(type=EventType.LLM_COMPLETE, session_id=session_id, frame_id=frame_id),
-            ExecutionEvent(type=EventType.TOOL_START, session_id=session_id, frame_id=frame_id,
-                          data={"tool_call": mock_tool_call}),
-            ExecutionEvent(type=EventType.TOOL_RESULT, session_id=session_id, frame_id=frame_id,
-                          data={"tool_call": mock_tool_call, "response": mock_tool_response}),
-            ExecutionEvent(type=EventType.FRAME_COMPLETE, session_id=session_id, frame_id=frame_id),
-            ExecutionEvent(type=EventType.TURN_COMPLETE, session_id=session_id,
-                          data={"final_answer": "The result is 8", "report": {"message": "The result is 8"}}),
+            ExecutionEvent(
+                type=EventType.TURN_START,
+                session_id=session_id,
+                data={"user_query": "Calculate 5 + 3"},
+            ),
+            ExecutionEvent(
+                type=EventType.FRAME_START, session_id=session_id, frame_id=frame_id
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_START, session_id=session_id, frame_id=frame_id
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_CHUNK,
+                session_id=session_id,
+                frame_id=frame_id,
+                data={"content": "I need to calculate 5 + 3. ", "is_final": False},
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_CHUNK,
+                session_id=session_id,
+                frame_id=frame_id,
+                data={"content": "Let me use the calculator.", "is_final": True},
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_COMPLETE, session_id=session_id, frame_id=frame_id
+            ),
+            ExecutionEvent(
+                type=EventType.TOOL_START,
+                session_id=session_id,
+                frame_id=frame_id,
+                data={"tool_call": mock_tool_call},
+            ),
+            ExecutionEvent(
+                type=EventType.TOOL_RESULT,
+                session_id=session_id,
+                frame_id=frame_id,
+                data={"tool_call": mock_tool_call, "response": mock_tool_response},
+            ),
+            ExecutionEvent(
+                type=EventType.FRAME_COMPLETE, session_id=session_id, frame_id=frame_id
+            ),
+            ExecutionEvent(
+                type=EventType.TURN_COMPLETE,
+                session_id=session_id,
+                data={
+                    "final_answer": "The result is 8",
+                    "report": {"message": "The result is 8"},
+                },
+            ),
         ]
 
         runtime = mock_streaming_runtime(event_sequence)
 
-        with patch("local_coding_assistant.cli.commands.run.bootstrap") as mock_bootstrap:
+        with patch(
+            "local_coding_assistant.cli.commands.run.bootstrap"
+        ) as mock_bootstrap:
             mock_bootstrap.return_value = {"runtime": runtime}
 
             result = cli_runner.invoke(app, ["run", "query", "Calculate 5 + 3"])
@@ -163,37 +232,82 @@ class TestCLIStreamingE2E:
             # Should contain the final answer
             assert "The result is 8" in result.stdout
 
-    def test_streaming_with_multiple_iterations(self, cli_runner, mock_streaming_runtime):
+    def test_streaming_with_multiple_iterations(
+        self, cli_runner, mock_streaming_runtime
+    ):
         """Test streaming output with multiple frames/iterations."""
         session_id = "multi-frame-test"
 
         event_sequence = [
-            ExecutionEvent(type=EventType.TURN_START, session_id=session_id,
-                          data={"user_query": "Complex task requiring multiple steps"}),
+            ExecutionEvent(
+                type=EventType.TURN_START,
+                session_id=session_id,
+                data={"user_query": "Complex task requiring multiple steps"},
+            ),
             # First iteration
-            ExecutionEvent(type=EventType.FRAME_START, session_id=session_id, frame_id="frame-1"),
-            ExecutionEvent(type=EventType.LLM_START, session_id=session_id, frame_id="frame-1"),
-            ExecutionEvent(type=EventType.LLM_CHUNK, session_id=session_id, frame_id="frame-1",
-                          data={"content": "First, I need to gather information.", "is_final": True}),
-            ExecutionEvent(type=EventType.LLM_COMPLETE, session_id=session_id, frame_id="frame-1"),
-            ExecutionEvent(type=EventType.FRAME_COMPLETE, session_id=session_id, frame_id="frame-1"),
+            ExecutionEvent(
+                type=EventType.FRAME_START, session_id=session_id, frame_id="frame-1"
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_START, session_id=session_id, frame_id="frame-1"
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_CHUNK,
+                session_id=session_id,
+                frame_id="frame-1",
+                data={
+                    "content": "First, I need to gather information.",
+                    "is_final": True,
+                },
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_COMPLETE, session_id=session_id, frame_id="frame-1"
+            ),
+            ExecutionEvent(
+                type=EventType.FRAME_COMPLETE, session_id=session_id, frame_id="frame-1"
+            ),
             # Second iteration
-            ExecutionEvent(type=EventType.FRAME_START, session_id=session_id, frame_id="frame-2"),
-            ExecutionEvent(type=EventType.LLM_START, session_id=session_id, frame_id="frame-2"),
-            ExecutionEvent(type=EventType.LLM_CHUNK, session_id=session_id, frame_id="frame-2",
-                          data={"content": "Now I can provide the final answer.", "is_final": True}),
-            ExecutionEvent(type=EventType.LLM_COMPLETE, session_id=session_id, frame_id="frame-2"),
-            ExecutionEvent(type=EventType.FRAME_COMPLETE, session_id=session_id, frame_id="frame-2"),
-            ExecutionEvent(type=EventType.TURN_COMPLETE, session_id=session_id,
-                          data={"final_answer": "Task completed in multiple steps", "report": {"message": "Task completed in multiple steps"}}),
+            ExecutionEvent(
+                type=EventType.FRAME_START, session_id=session_id, frame_id="frame-2"
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_START, session_id=session_id, frame_id="frame-2"
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_CHUNK,
+                session_id=session_id,
+                frame_id="frame-2",
+                data={
+                    "content": "Now I can provide the final answer.",
+                    "is_final": True,
+                },
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_COMPLETE, session_id=session_id, frame_id="frame-2"
+            ),
+            ExecutionEvent(
+                type=EventType.FRAME_COMPLETE, session_id=session_id, frame_id="frame-2"
+            ),
+            ExecutionEvent(
+                type=EventType.TURN_COMPLETE,
+                session_id=session_id,
+                data={
+                    "final_answer": "Task completed in multiple steps",
+                    "report": {"message": "Task completed in multiple steps"},
+                },
+            ),
         ]
 
         runtime = mock_streaming_runtime(event_sequence)
 
-        with patch("local_coding_assistant.cli.commands.run.bootstrap") as mock_bootstrap:
+        with patch(
+            "local_coding_assistant.cli.commands.run.bootstrap"
+        ) as mock_bootstrap:
             mock_bootstrap.return_value = {"runtime": runtime}
 
-            result = cli_runner.invoke(app, ["run", "query", "Complex task requiring multiple steps"])
+            result = cli_runner.invoke(
+                app, ["run", "query", "Complex task requiring multiple steps"]
+            )
 
             assert result.exit_code == 0
 
@@ -213,26 +327,57 @@ class TestCLIStreamingE2E:
         frame_id = "error-frame"
 
         event_sequence = [
-            ExecutionEvent(type=EventType.TURN_START, session_id=session_id,
-                          data={"user_query": "This will cause an error"}),
-            ExecutionEvent(type=EventType.FRAME_START, session_id=session_id, frame_id=frame_id),
-            ExecutionEvent(type=EventType.LLM_START, session_id=session_id, frame_id=frame_id),
-            ExecutionEvent(type=EventType.LLM_CHUNK, session_id=session_id, frame_id=frame_id,
-                          data={"content": "Starting to process", "is_final": False}),
-            ExecutionEvent(type=EventType.ERROR, session_id=session_id, frame_id=frame_id,
-                          data={"error": "API rate limit exceeded"}),
-            ExecutionEvent(type=EventType.FRAME_COMPLETE, session_id=session_id, frame_id=frame_id,
-                          data={"result": "error"}),
-            ExecutionEvent(type=EventType.TURN_COMPLETE, session_id=session_id,
-                          data={"final_answer": "Sorry, I encountered an error. Please try again.", "report": {"message": "Sorry, I encountered an error. Please try again."}}),
+            ExecutionEvent(
+                type=EventType.TURN_START,
+                session_id=session_id,
+                data={"user_query": "This will cause an error"},
+            ),
+            ExecutionEvent(
+                type=EventType.FRAME_START, session_id=session_id, frame_id=frame_id
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_START, session_id=session_id, frame_id=frame_id
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_CHUNK,
+                session_id=session_id,
+                frame_id=frame_id,
+                data={"content": "Starting to process", "is_final": False},
+            ),
+            ExecutionEvent(
+                type=EventType.ERROR,
+                session_id=session_id,
+                frame_id=frame_id,
+                data={"error": "API rate limit exceeded"},
+            ),
+            ExecutionEvent(
+                type=EventType.FRAME_COMPLETE,
+                session_id=session_id,
+                frame_id=frame_id,
+                data={"result": "error"},
+            ),
+            ExecutionEvent(
+                type=EventType.TURN_COMPLETE,
+                session_id=session_id,
+                data={
+                    "final_answer": "Sorry, I encountered an error. Please try again.",
+                    "report": {
+                        "message": "Sorry, I encountered an error. Please try again."
+                    },
+                },
+            ),
         ]
 
         runtime = mock_streaming_runtime(event_sequence)
 
-        with patch("local_coding_assistant.cli.commands.run.bootstrap") as mock_bootstrap:
+        with patch(
+            "local_coding_assistant.cli.commands.run.bootstrap"
+        ) as mock_bootstrap:
             mock_bootstrap.return_value = {"runtime": runtime}
 
-            result = cli_runner.invoke(app, ["run", "query", "This will cause an error"])
+            result = cli_runner.invoke(
+                app, ["run", "query", "This will cause an error"]
+            )
 
             assert result.exit_code == 0  # CLI should handle errors gracefully
 
@@ -252,30 +397,59 @@ class TestCLIStreamingE2E:
 
         # Create a sequence with many small chunks to test responsiveness
         event_sequence = [
-            ExecutionEvent(type=EventType.TURN_START, session_id=session_id,
-                          data={"user_query": "Performance test"}),
-            ExecutionEvent(type=EventType.FRAME_START, session_id=session_id, frame_id=frame_id),
-            ExecutionEvent(type=EventType.LLM_START, session_id=session_id, frame_id=frame_id),
+            ExecutionEvent(
+                type=EventType.TURN_START,
+                session_id=session_id,
+                data={"user_query": "Performance test"},
+            ),
+            ExecutionEvent(
+                type=EventType.FRAME_START, session_id=session_id, frame_id=frame_id
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_START, session_id=session_id, frame_id=frame_id
+            ),
         ]
 
         # Add many small content chunks
         for i in range(10):
             event_sequence.append(
-                ExecutionEvent(type=EventType.LLM_CHUNK, session_id=session_id, frame_id=frame_id,
-                              data={"content": f"Chunk {i} ", "is_final": False})
+                ExecutionEvent(
+                    type=EventType.LLM_CHUNK,
+                    session_id=session_id,
+                    frame_id=frame_id,
+                    data={"content": f"Chunk {i} ", "is_final": False},
+                )
             )
 
-        event_sequence.extend([
-            ExecutionEvent(type=EventType.LLM_COMPLETE, session_id=session_id, frame_id=frame_id),
-            ExecutionEvent(type=EventType.FRAME_COMPLETE, session_id=session_id, frame_id=frame_id),
-            ExecutionEvent(type=EventType.TURN_COMPLETE, session_id=session_id,
-                          data={"final_answer": "Performance test completed", "report": {"message": "Performance test completed"}}),
-        ])
+        event_sequence.extend(
+            [
+                ExecutionEvent(
+                    type=EventType.LLM_COMPLETE,
+                    session_id=session_id,
+                    frame_id=frame_id,
+                ),
+                ExecutionEvent(
+                    type=EventType.FRAME_COMPLETE,
+                    session_id=session_id,
+                    frame_id=frame_id,
+                ),
+                ExecutionEvent(
+                    type=EventType.TURN_COMPLETE,
+                    session_id=session_id,
+                    data={
+                        "final_answer": "Performance test completed",
+                        "report": {"message": "Performance test completed"},
+                    },
+                ),
+            ]
+        )
 
         # Use very small delay to test responsiveness
         runtime = mock_streaming_runtime(event_sequence, delay=0.001)
 
-        with patch("local_coding_assistant.cli.commands.run.bootstrap") as mock_bootstrap:
+        with patch(
+            "local_coding_assistant.cli.commands.run.bootstrap"
+        ) as mock_bootstrap:
             mock_bootstrap.return_value = {"runtime": runtime}
 
             start_time = time.time()
@@ -310,34 +484,83 @@ class TestCLIStreamingE2E:
         mock_tool_response.result = {"result": 6}
 
         event_sequence = [
-            ExecutionEvent(type=EventType.TURN_START, session_id=session_id,
-                          data={"user_query": "Test progress indicators"}),
+            ExecutionEvent(
+                type=EventType.TURN_START,
+                session_id=session_id,
+                data={"user_query": "Test progress indicators"},
+            ),
             # First iteration
-            ExecutionEvent(type=EventType.FRAME_START, session_id=session_id, frame_id="progress-frame",
-                          data={"frame_type": "reasoning", "step": 1, "total_steps": 3}),
-            ExecutionEvent(type=EventType.LLM_START, session_id=session_id, frame_id="progress-frame"),
-            ExecutionEvent(type=EventType.LLM_CHUNK, session_id=session_id, frame_id="progress-frame",
-                          data={"content": "Step 1: Analyzing the problem", "is_final": True}),
-            ExecutionEvent(type=EventType.LLM_COMPLETE, session_id=session_id, frame_id="progress-frame"),
-            ExecutionEvent(type=EventType.FRAME_COMPLETE, session_id=session_id, frame_id="progress-frame"),
+            ExecutionEvent(
+                type=EventType.FRAME_START,
+                session_id=session_id,
+                frame_id="progress-frame",
+                data={"frame_type": "reasoning", "step": 1, "total_steps": 3},
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_START,
+                session_id=session_id,
+                frame_id="progress-frame",
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_CHUNK,
+                session_id=session_id,
+                frame_id="progress-frame",
+                data={"content": "Step 1: Analyzing the problem", "is_final": True},
+            ),
+            ExecutionEvent(
+                type=EventType.LLM_COMPLETE,
+                session_id=session_id,
+                frame_id="progress-frame",
+            ),
+            ExecutionEvent(
+                type=EventType.FRAME_COMPLETE,
+                session_id=session_id,
+                frame_id="progress-frame",
+            ),
             # Second iteration
-            ExecutionEvent(type=EventType.FRAME_START, session_id=session_id, frame_id="progress-frame-2",
-                          data={"frame_type": "tool_execution", "step": 2, "total_steps": 3}),
-            ExecutionEvent(type=EventType.TOOL_START, session_id=session_id, frame_id="progress-frame-2",
-                          data={"tool_call": mock_tool_call}),
-            ExecutionEvent(type=EventType.TOOL_RESULT, session_id=session_id, frame_id="progress-frame-2",
-                          data={"tool_call": mock_tool_call, "response": mock_tool_response}),
-            ExecutionEvent(type=EventType.FRAME_COMPLETE, session_id=session_id, frame_id="progress-frame-2"),
-            ExecutionEvent(type=EventType.TURN_COMPLETE, session_id=session_id,
-                          data={"final_answer": "Completed with progress tracking", "report": {"message": "Completed with progress tracking"}}),
+            ExecutionEvent(
+                type=EventType.FRAME_START,
+                session_id=session_id,
+                frame_id="progress-frame-2",
+                data={"frame_type": "tool_execution", "step": 2, "total_steps": 3},
+            ),
+            ExecutionEvent(
+                type=EventType.TOOL_START,
+                session_id=session_id,
+                frame_id="progress-frame-2",
+                data={"tool_call": mock_tool_call},
+            ),
+            ExecutionEvent(
+                type=EventType.TOOL_RESULT,
+                session_id=session_id,
+                frame_id="progress-frame-2",
+                data={"tool_call": mock_tool_call, "response": mock_tool_response},
+            ),
+            ExecutionEvent(
+                type=EventType.FRAME_COMPLETE,
+                session_id=session_id,
+                frame_id="progress-frame-2",
+            ),
+            ExecutionEvent(
+                type=EventType.TURN_COMPLETE,
+                session_id=session_id,
+                data={
+                    "final_answer": "Completed with progress tracking",
+                    "report": {"message": "Completed with progress tracking"},
+                },
+            ),
         ]
 
         runtime = mock_streaming_runtime(event_sequence)
 
-        with patch("local_coding_assistant.cli.commands.run.bootstrap") as mock_bootstrap:
+        with patch(
+            "local_coding_assistant.cli.commands.run.bootstrap"
+        ) as mock_bootstrap:
             mock_bootstrap.return_value = {"runtime": runtime}
 
-            result = cli_runner.invoke(app, ["run", "query", "Test progress indicators"])
+            result = cli_runner.invoke(
+                app, ["run", "query", "Test progress indicators"]
+            )
 
             assert result.exit_code == 0
 

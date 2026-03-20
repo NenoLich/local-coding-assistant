@@ -197,7 +197,7 @@ def test_cli_tool_run_executes_registered_tool(tool_test_env, cli_runner, monkey
     result = cli_runner.invoke(tool_cli.app, ["run", "cli_tool", "value=3"])
 
     assert result.exit_code == 0
-    assert "result: 12" in result.stdout
+    assert "Tool execution result:\n12" in result.stdout
 
 
 def test_cli_tool_add_persists_configuration(

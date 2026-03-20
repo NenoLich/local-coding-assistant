@@ -136,6 +136,7 @@ async def test_executor_with_tool_call(mock_llm_service, mock_tool_manager):
 
     # Mock LLM stream with tool call
     tool_call = LLMToolCall(name="get_time", arguments={}, id="call_1")
+
     async def mock_stream(task, options=None):
         chunk = MagicMock()
         chunk.content = "Let me check."
@@ -218,7 +219,12 @@ def mock_context_manager_streaming():
 
 
 @pytest.fixture
-def executor_streaming(mock_llm_service_streaming, mock_tool_manager, mock_config_manager_streaming, mock_context_manager_streaming):
+def executor_streaming(
+    mock_llm_service_streaming,
+    mock_tool_manager,
+    mock_config_manager_streaming,
+    mock_context_manager_streaming,
+):
     """Create RuntimeExecutor instance with mocked dependencies for streaming."""
     executor = RuntimeExecutor(
         llm_service=mock_llm_service_streaming,
@@ -230,7 +236,11 @@ def executor_streaming(mock_llm_service_streaming, mock_tool_manager, mock_confi
     return executor
 
 
-from local_coding_assistant.runtime.runtime_types import PromptContext, RenderedPrompt, ExecutionMode
+from local_coding_assistant.runtime.runtime_types import (
+    PromptContext,
+    RenderedPrompt,
+    ExecutionMode,
+)
 
 
 @pytest.fixture
@@ -263,15 +273,22 @@ class TestRuntimeExecutorStreaming:
     """Test RuntimeExecutor event emission in streaming mode."""
 
     @pytest.mark.asyncio
-    async def test_execute_emits_frame_start_and_complete(self, executor_streaming, sample_frame_streaming, mock_llm_service_streaming):
+    async def test_execute_emits_frame_start_and_complete(
+        self, executor_streaming, sample_frame_streaming, mock_llm_service_streaming
+    ):
         """Test that execute emits FRAME_START and FRAME_COMPLETE events."""
+
         # Mock LLM stream to return a simple response
         async def mock_stream(task, options=None):
             chunk = MagicMock()
             chunk.content = "Test response"
             chunk.tool_calls = None
             chunk.reasoning = None
-            chunk.usage = {"total_tokens": 10, "prompt_tokens": 5, "completion_tokens": 5}
+            chunk.usage = {
+                "total_tokens": 10,
+                "prompt_tokens": 5,
+                "completion_tokens": 5,
+            }
             chunk.metadata = {}
             chunk.model = "test-model"
             chunk.provider = "test-provider"
@@ -290,13 +307,18 @@ class TestRuntimeExecutorStreaming:
         assert events[0].frame_id == sample_frame_streaming.id
 
         # Find FRAME_COMPLETE event
-        frame_complete_events = [e for e in events if e.type == EventType.FRAME_COMPLETE]
+        frame_complete_events = [
+            e for e in events if e.type == EventType.FRAME_COMPLETE
+        ]
         assert len(frame_complete_events) == 1
         assert frame_complete_events[0].frame_id == sample_frame_streaming.id
 
     @pytest.mark.asyncio
-    async def test_execute_emits_llm_events(self, executor_streaming, sample_frame_streaming, mock_llm_service_streaming):
+    async def test_execute_emits_llm_events(
+        self, executor_streaming, sample_frame_streaming, mock_llm_service_streaming
+    ):
         """Test that execute emits LLM_START, LLM_CHUNK, and LLM_COMPLETE events."""
+
         async def mock_stream(task, options=None):
             # First chunk
             chunk1 = MagicMock()
@@ -327,7 +349,11 @@ class TestRuntimeExecutorStreaming:
             chunk3.content = ""
             chunk3.tool_calls = None
             chunk3.reasoning = None
-            chunk3.usage = {"total_tokens": 15, "prompt_tokens": 10, "completion_tokens": 5}
+            chunk3.usage = {
+                "total_tokens": 15,
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+            }
             chunk3.metadata = {}
             chunk3.model = "test-model"
             chunk3.provider = "test-provider"
@@ -358,7 +384,13 @@ class TestRuntimeExecutorStreaming:
         assert result.finish_reason == "stop"
 
     @pytest.mark.asyncio
-    async def test_execute_with_tool_calls_emits_tool_events(self, executor_streaming, sample_frame_streaming, mock_llm_service_streaming, mock_tool_manager):
+    async def test_execute_with_tool_calls_emits_tool_events(
+        self,
+        executor_streaming,
+        sample_frame_streaming,
+        mock_llm_service_streaming,
+        mock_tool_manager,
+    ):
         """Test that execute emits TOOL_START and TOOL_RESULT events for tool calls."""
         from local_coding_assistant.agent.llm import LLMToolCall
         from local_coding_assistant.tools.types import ToolExecutionResponse
@@ -367,14 +399,13 @@ class TestRuntimeExecutorStreaming:
         # Add tool to frame
         tool_spec = ToolSpec(name="test_tool", description="Test tool")
         sample_frame_streaming.prompt_context.tools = [tool_spec]
-        sample_frame_streaming.rendered_prompt.tool_schemas = [tool_spec.to_openai_function()]
+        sample_frame_streaming.rendered_prompt.tool_schemas = [
+            tool_spec.to_openai_function()
+        ]
 
         # Mock tool call
         tool_call = LLMToolCall(
-            id="call_1",
-            type="function",
-            name="test_tool",
-            arguments={"arg": "value"}
+            id="call_1", type="function", name="test_tool", arguments={"arg": "value"}
         )
 
         async def mock_stream(task, options=None):
@@ -396,7 +427,7 @@ class TestRuntimeExecutorStreaming:
             success=True,
             tool_name="test_tool",
             result="Tool result",
-            execution_time_ms=100.0
+            execution_time_ms=100.0,
         )
 
         events = []
@@ -417,7 +448,9 @@ class TestRuntimeExecutorStreaming:
         assert result_events[0].data["response"].success is True
 
     @pytest.mark.asyncio
-    async def test_execute_handles_llm_error(self, executor_streaming, sample_frame_streaming, mock_llm_service_streaming):
+    async def test_execute_handles_llm_error(
+        self, executor_streaming, sample_frame_streaming, mock_llm_service_streaming
+    ):
         """Test that execute handles LLM errors and emits ERROR event."""
         mock_llm_service_streaming.stream.side_effect = Exception("LLM service error")
 
@@ -430,11 +463,15 @@ class TestRuntimeExecutorStreaming:
         assert "LLM service error" in error_events[0].data["error"]
 
         # Should still emit FRAME_COMPLETE
-        frame_complete_events = [e for e in events if e.type == EventType.FRAME_COMPLETE]
+        frame_complete_events = [
+            e for e in events if e.type == EventType.FRAME_COMPLETE
+        ]
         assert len(frame_complete_events) == 1
 
     @pytest.mark.asyncio
-    async def test_prepare_llm_request(self, executor_streaming, sample_frame_streaming):
+    async def test_prepare_llm_request(
+        self, executor_streaming, sample_frame_streaming
+    ):
         """Test _prepare_llm_request method."""
         task, options = executor_streaming._prepare_llm_request(sample_frame_streaming)
 
@@ -447,7 +484,9 @@ class TestRuntimeExecutorStreaming:
         assert isinstance(options, LLMOptions)
 
     @pytest.mark.asyncio
-    async def test_generate_llm_events_yields_chunks(self, executor_streaming, mock_llm_service_streaming):
+    async def test_generate_llm_events_yields_chunks(
+        self, executor_streaming, mock_llm_service_streaming
+    ):
         """Test _generate_llm_events yields correct events."""
         # Mock config manager to enable reasoning capture
         mock_config = MagicMock()
@@ -471,7 +510,7 @@ class TestRuntimeExecutorStreaming:
                 metadata={},
                 model="test-model",
                 provider="test-provider",
-                finish_reason=None
+                finish_reason=None,
             )
             yield chunk1
 
@@ -485,7 +524,7 @@ class TestRuntimeExecutorStreaming:
                 metadata={},
                 model="test-model",
                 provider="test-provider",
-                finish_reason=None
+                finish_reason=None,
             )
             yield chunk2
 
@@ -499,7 +538,7 @@ class TestRuntimeExecutorStreaming:
                 metadata={},
                 model="test-model",
                 provider="test-provider",
-                finish_reason="stop"
+                finish_reason="stop",
             )
             yield chunk3
 

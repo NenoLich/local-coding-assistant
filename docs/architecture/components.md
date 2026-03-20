@@ -118,6 +118,32 @@ Detailed breakdown of LOCCA's core components and their responsibilities.
   - Reporting generation
 - **Data**: Execution times, resource usage, success rates
 
+## Dashboard System
+
+### Dashboard Application
+- **Purpose**: Web-based observability interface
+- **Responsibilities**:
+  - Real-time monitoring of execution sessions
+  - Historical data analysis and visualization
+  - Interactive analytics and reporting
+- **Technologies**: FastAPI, WebSocket, Jinja2 templates
+
+### Event Collector
+- **Purpose**: Execution event aggregation and storage
+- **Responsibilities**:
+  - Real-time event ingestion from RuntimeManager
+  - In-memory data aggregation and indexing
+  - WebSocket broadcasting for live updates
+- **Features**: Configurable retention limits, session tracking
+
+### Dashboard Integration
+- **Purpose**: Bridge between RuntimeManager and Dashboard
+- **Responsibilities**:
+  - HTTP-based event forwarding to dashboard
+  - Connection management and error handling
+  - Data serialization for web consumption
+- **Integration**: RuntimeManager.orchestrate() event hook
+
 ## CLI Components
 
 ### Command Parser

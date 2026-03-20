@@ -29,7 +29,7 @@ class TestConfigManager:
     def test_load_global_config(self):
         """Test loading global configuration."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         config = manager.load_global_config()
 
         assert isinstance(config, AppConfig)
@@ -41,7 +41,7 @@ class TestConfigManager:
     def test_set_session_overrides(self):
         """Test setting session overrides."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         overrides = {"llm.temperature": 0.5}
@@ -52,7 +52,7 @@ class TestConfigManager:
     def test_clear_session_overrides(self):
         """Test clearing session overrides."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         manager.set_session_overrides({"llm.temperature": 0.5})
@@ -64,7 +64,7 @@ class TestConfigManager:
     def test_resolve_global_only(self):
         """Test resolving configuration with global layer only."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         resolved = manager.resolve()
@@ -75,7 +75,7 @@ class TestConfigManager:
     def test_resolve_with_session_overrides(self):
         """Test resolving configuration with session overrides."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         session_overrides = {"llm.temperature": 0.5}
@@ -88,7 +88,7 @@ class TestConfigManager:
     def test_get_config_with_call_overrides(self):
         """Test resolving configuration with call overrides."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         call_overrides = {"llm.temperature": 0.3}
@@ -99,7 +99,7 @@ class TestConfigManager:
     def test_get_config_with_provider_override(self):
         """Test resolving configuration with provider override."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         resolved = manager.get_config(provider="anthropic")
@@ -112,7 +112,7 @@ class TestConfigManager:
     def test_get_config_with_model_override(self):
         """Test resolving configuration with model override."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         resolved = manager.get_config(model_name="gpt-4")
@@ -125,7 +125,7 @@ class TestConfigManager:
     def test_get_config_priority_order(self):
         """Test that call overrides take priority over session overrides."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         # Set session override
@@ -141,7 +141,7 @@ class TestConfigManager:
     def test_resolve_session_overrides_global(self):
         """Test that session overrides take priority over global config."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         # Session override should win over global
@@ -155,7 +155,7 @@ class TestConfigManager:
     def test_config_manager_properties(self):
         """Test ConfigManager property accessors."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         # Test global_config property
@@ -181,7 +181,7 @@ class TestConfigManager:
     def test_nested_override_application(self):
         """Test that nested overrides are applied correctly."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         # Test nested override
@@ -238,7 +238,7 @@ class TestConfigManager:
     def test_set_session_overrides_llm_validation_error(self):
         """Test LLM validation error in set_session_overrides."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         # Override with invalid LLM temperature
@@ -251,7 +251,7 @@ class TestConfigManager:
     def test_set_session_overrides_general_validation_error(self):
         """Test general validation error in set_session_overrides."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         # Override with invalid max_session_history
@@ -276,7 +276,7 @@ class TestConfigManager:
     def test_get_config_llm_validation_error(self):
         """Test LLM validation error in get_config."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         # Call with invalid LLM temperature
@@ -288,7 +288,7 @@ class TestConfigManager:
     def test_get_config_general_validation_error(self):
         """Test general validation error in get_config."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         # Call with invalid max_session_history
@@ -321,7 +321,7 @@ class TestConfigManager:
     def test_save_config_success_with_path(self):
         """Test successful save_config with explicit path."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
@@ -345,7 +345,7 @@ class TestConfigManager:
     def test_save_config_success_default_path(self):
         """Test successful save_config with default path."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
@@ -369,7 +369,7 @@ class TestConfigManager:
     def test_save_config_file_write_error(self):
         """Test save_config with file write error."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         # Mock PathManager and open to raise OSError
@@ -386,7 +386,7 @@ class TestConfigManager:
     def test_save_config_yaml_error(self):
         """Test save_config with YAML serialization error."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         # Mock yaml.safe_dump to raise an error
@@ -406,7 +406,7 @@ class TestConfigManager:
     def test_save_config_excludes_unset_defaults_none(self):
         """Test that save_config excludes unset, default, and None values."""
         manager = ConfigManager()
-        manager.register_capability(['tool_manager', 'agent'])
+        manager.register_capability(["tool_manager", "agent"])
         manager.load_global_config()
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:

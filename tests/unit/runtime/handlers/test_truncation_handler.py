@@ -162,9 +162,7 @@ class TestTruncationHandler:
         assert max_tokens_value > 1000
 
     @pytest.mark.asyncio
-    async def test_template_path_content(
-        self, handler, moderate_reasoning_context
-    ):
+    async def test_template_path_content(self, handler, moderate_reasoning_context):
         """Test that template_path is set correctly."""
         result = await handler.handle(moderate_reasoning_context)
 

@@ -278,7 +278,9 @@ class TestLLMService:
         service._provider_manager.list_providers.return_value = ["openai", "anthropic"]
         mock_provider = MagicMock()
         mock_provider.health_check = AsyncMock(return_value=True)
-        mock_provider.get_available_models = MagicMock(return_value=["model1", "model2"])
+        mock_provider.get_available_models = MagicMock(
+            return_value=["model1", "model2"]
+        )
         service._provider_manager.get_provider.return_value = mock_provider
         service._provider_manager.get_provider_source.return_value = "config"
 

@@ -19,10 +19,18 @@ from local_coding_assistant.agent.llm.pipeline import (
     StreamingNormalizer,
 )
 from local_coding_assistant.core.exceptions import LLMContentError
-from local_coding_assistant.providers.base import ProviderLLMResponse, ProviderLLMResponseDelta
-from local_coding_assistant.runtime.execution_types import ExecutionFrame, ExecutionStatus, RenderedPrompt
+from local_coding_assistant.providers.base import (
+    ProviderLLMResponse,
+    ProviderLLMResponseDelta,
+)
+from local_coding_assistant.runtime.execution_types import (
+    ExecutionFrame,
+    ExecutionStatus,
+    RenderedPrompt,
+)
 from local_coding_assistant.config.schemas import AgentProfileConfig
 from local_coding_assistant.runtime.context_manager import ContextManager
+from local_coding_assistant.runtime.events import EventType
 from local_coding_assistant.runtime.runtime_types import ExecutionMode, PromptContext
 from local_coding_assistant.runtime.executor import RuntimeExecutor
 
@@ -63,33 +71,19 @@ class TestLLMPipelineIntegration:
         assert _extract_reasoning_tokens({}) is None
 
         # Test with completion_tokens_details containing reasoning_tokens
-        usage = {
-            "completion_tokens_details": {
-                "reasoning_tokens": 42
-            }
-        }
+        usage = {"completion_tokens_details": {"reasoning_tokens": 42}}
         assert _extract_reasoning_tokens(usage) == 42
 
         # Test with string reasoning_tokens that can be converted to int
-        usage = {
-            "completion_tokens_details": {
-                "reasoning_tokens": "37"
-            }
-        }
+        usage = {"completion_tokens_details": {"reasoning_tokens": "37"}}
         assert _extract_reasoning_tokens(usage) == 37
 
         # Test with invalid reasoning_tokens (should return None)
-        usage = {
-            "completion_tokens_details": {
-                "reasoning_tokens": "invalid"
-            }
-        }
+        usage = {"completion_tokens_details": {"reasoning_tokens": "invalid"}}
         assert _extract_reasoning_tokens(usage) is None
 
         # Test with non-dict completion_tokens_details
-        usage = {
-            "completion_tokens_details": "invalid"
-        }
+        usage = {"completion_tokens_details": "invalid"}
         assert _extract_reasoning_tokens(usage) is None
 
     @pytest.mark.asyncio
@@ -108,28 +102,43 @@ class TestLLMPipelineIntegration:
                     "function": {
                         "name": "test_tool",
                         # Malformed arguments that should cause LLMContentError
-                        "arguments": "invalid json {{{"
-                    }
+                        "arguments": "invalid json {{{",
+                    },
                 }
             ],
             finish_reason="stop",
-            usage={"total_tokens": 50}
+            usage={"total_tokens": 50},
         )
 
         # Mock the _normalize_tool_arguments to raise LLMContentError
-        with patch('local_coding_assistant.agent.llm.pipeline._normalize_tool_arguments') as mock_normalize:
-            mock_normalize.side_effect = LLMContentError("Invalid JSON in tool arguments")
+        with patch(
+            "local_coding_assistant.agent.llm.pipeline._normalize_tool_arguments"
+        ) as mock_normalize:
+            mock_normalize.side_effect = LLMContentError(
+                "Invalid JSON in tool arguments"
+            )
 
-            result = normalizer.to_result(response, provider_name="test-provider", policy_name=None)
+            result = normalizer.to_result(
+                response, provider_name="test-provider", policy_name=None
+            )
 
             # Verify the result contains error metadata
             assert result.content == "Test content"
             assert result.model == "test-model"
             assert "content_error" in result.metadata
-            assert result.metadata["content_error"]["error_type"] == "tool_call_parsing_error"
-            assert "Invalid JSON in tool arguments" in result.metadata["content_error"]["message"]
+            assert (
+                result.metadata["content_error"]["error_type"]
+                == "tool_call_parsing_error"
+            )
+            assert (
+                "Invalid JSON in tool arguments"
+                in result.metadata["content_error"]["message"]
+            )
             assert result.metadata["content_error"]["raw_response"] == "Test content"
-            assert result.metadata["content_error"]["tool_calls_attempted"] == response.tool_calls
+            assert (
+                result.metadata["content_error"]["tool_calls_attempted"]
+                == response.tool_calls
+            )
 
     @pytest.mark.asyncio
     async def test_streaming_normalizer_llm_content_error_handling(self):
@@ -142,34 +151,68 @@ class TestLLMPipelineIntegration:
             tool_calls=[
                 {
                     "id": "call_1",
-                    "function": {
-                        "name": "test_tool",
-                        "arguments": "invalid json {{{"
-                    }
+                    "function": {"name": "test_tool", "arguments": "invalid json {{{"},
                 }
             ],
-            finish_reason=None
+            finish_reason=None,
         )
 
         # Mock the _normalize_tool_arguments to raise LLMContentError
-        with patch('local_coding_assistant.agent.llm.pipeline._normalize_tool_arguments') as mock_normalize:
-            mock_normalize.side_effect = LLMContentError("Invalid JSON in streaming tool arguments")
+        with patch(
+            "local_coding_assistant.agent.llm.pipeline._normalize_tool_arguments"
+        ) as mock_normalize:
+            mock_normalize.side_effect = LLMContentError(
+                "Invalid JSON in streaming tool arguments"
+            )
 
-            chunk = normalizer.to_chunk(delta, provider_name="test-provider", model_name="test-model")
+            chunk = normalizer.to_chunk(
+                delta, provider_name="test-provider", model_name="test-model"
+            )
 
             # Verify the chunk contains error metadata
             assert chunk.content == "Test content chunk"
             assert chunk.model == "test-model"
             assert "content_error" in chunk.metadata
-            assert chunk.metadata["content_error"]["error_type"] == "tool_call_parsing_error"
-            assert "Invalid JSON in streaming tool arguments" in chunk.metadata["content_error"]["message"]
-            assert chunk.metadata["content_error"]["tool_calls_attempted"] == delta.tool_calls
+            assert (
+                chunk.metadata["content_error"]["error_type"]
+                == "tool_call_parsing_error"
+            )
+            assert (
+                "Invalid JSON in streaming tool arguments"
+                in chunk.metadata["content_error"]["message"]
+            )
+            assert (
+                chunk.metadata["content_error"]["tool_calls_attempted"]
+                == delta.tool_calls
+            )
 
     @pytest.mark.asyncio
     async def test_executor_llm_content_error_partial_status(self):
         """Test RuntimeExecutor handles LLMContentError by setting PARTIAL status."""
         # Create a mock LLM service that returns a result with content_error
         mock_llm_service = AsyncMock()
+
+        # Mock the stream method to return an async iterator with the error
+        async def mock_stream(task, options=None):
+            from local_coding_assistant.agent.llm import LLMStreamChunk
+
+            # Yield a chunk with content error metadata
+            yield LLMStreamChunk(
+                content="Response with parsing error",
+                provider="test-provider",
+                model="test-model",
+                is_final=True,
+                metadata={
+                    "content_error": {
+                        "error_type": "tool_call_parsing_error",
+                        "message": "Failed to parse tool arguments",
+                        "raw_response": "raw response content",
+                        "tool_calls_attempted": [{"id": "call_1"}],
+                    }
+                },
+            )
+
+        mock_llm_service.stream = mock_stream
         mock_llm_service.generate.return_value = LLMResult(
             content="Response with parsing error",
             model="test-model",
@@ -180,21 +223,23 @@ class TestLLMPipelineIntegration:
                     "error_type": "tool_call_parsing_error",
                     "message": "Failed to parse tool arguments",
                     "raw_response": "raw response content",
-                    "tool_calls_attempted": [{"id": "call_1"}]
+                    "tool_calls_attempted": [{"id": "call_1"}],
                 }
-            }
+            },
         )
 
         # Create minimal mocks for other dependencies
         mock_tool_manager = MagicMock()
         mock_context_manager = MagicMock()
         mock_config_manager = MagicMock()
+        mock_config_manager.global_config.llm.model_name = "test-model"
+        mock_config_manager.global_config.runtime.capture_reasoning = False
 
         executor = RuntimeExecutor(
             llm_service=mock_llm_service,
             tool_manager=mock_tool_manager,
             context_manager=mock_context_manager,
-            config_manager=mock_config_manager
+            config_manager=mock_config_manager,
         )
 
         # Create a minimal execution frame
@@ -206,12 +251,12 @@ class TestLLMPipelineIntegration:
                 user_messages=["Test prompt"],
                 system_messages=[],
                 history=[],
-                tool_schemas=[]
+                tool_schemas=[],
             ),
             agent_profile=AgentProfileConfig(
                 name="test-agent",
                 description="Test agent for integration tests",
-                model_policy=None
+                model_policy=None,
             ),
             prompt_context=PromptContext(
                 session_id="test-session-123",
@@ -219,20 +264,32 @@ class TestLLMPipelineIntegration:
                 tool_call_mode="classic",
                 max_iterations=10,
                 timeout_seconds=30.0,
-                user_input="Test user input"
-            )
+                user_input="Test user input",
+            ),
         )
 
         # Execute the frame
-        result_frame = await executor.execute(frame)
+        result_frame = None
+        async for event in executor.execute(frame):
+            if event.type == EventType.FRAME_COMPLETE:
+                result_frame = event.data["frame"]
+                break
 
         # Verify PARTIAL status is set due to content error
         assert result_frame.result.status == ExecutionStatus.PARTIAL
         assert result_frame.result.handler_context is not None
         assert result_frame.result.handler_context["error_type"] == "parsing_error"
-        assert "Failed to parse tool arguments" in result_frame.result.handler_context["message"]
-        assert result_frame.result.handler_context["raw_response"] == "raw response content"
-        assert result_frame.result.handler_context["raw_tool_calls"] == [{"id": "call_1"}]
+        assert (
+            "Failed to parse tool arguments"
+            in result_frame.result.handler_context["message"]
+        )
+        assert (
+            result_frame.result.handler_context["raw_response"]
+            == "raw response content"
+        )
+        assert result_frame.result.handler_context["raw_tool_calls"] == [
+            {"id": "call_1"}
+        ]
 
     @pytest.mark.asyncio
     async def test_llm_service_except_block_error_handling(self):
@@ -254,7 +311,9 @@ class TestLLMPipelineIntegration:
         mock_decision = MagicMock()
         mock_decision.provider = AsyncMock()
         mock_decision.provider.name = "test_provider"
-        mock_decision.provider.generate_with_retry.side_effect = Exception("Generation failed")
+        mock_decision.provider.generate_with_retry.side_effect = Exception(
+            "Generation failed"
+        )
         mock_decision.model = "test-model"
         llm_service._provider_selector.select.return_value = (mock_decision, [])
 
@@ -265,23 +324,21 @@ class TestLLMPipelineIntegration:
 
         # Create a test task
         task = LLMTask(
-            prompt="Test prompt",
-            context=[],
-            system_prompt="Test system prompt"
+            prompt="Test prompt", context=[], system_prompt="Test system prompt"
         )
 
         # Test that exceptions in the except block are handled properly
         # The except block should call telemetry.attempt_failure and continue to next attempt
-        with patch.object(llm_service, '_clone_request') as mock_clone:
+        with patch.object(llm_service, "_clone_request") as mock_clone:
             mock_clone.return_value = MagicMock()
 
             # Mock resolve_options to return options that trigger multiple attempts
-            with patch.object(llm_service, '_resolve_options') as mock_resolve:
+            with patch.object(llm_service, "_resolve_options") as mock_resolve:
                 mock_resolve.return_value = MagicMock(
                     model="test-model",
                     max_failovers=1,  # Only one failover to keep test simple
                     retry_attempts=1,
-                    retry_delay=0.1
+                    retry_delay=0.1,
                 )
 
                 # This should raise LLMError after exhausting attempts
@@ -290,7 +347,7 @@ class TestLLMPipelineIntegration:
                         MagicMock(
                             task=task,
                             resolved_options=mock_resolve.return_value,
-                            provider_request=MagicMock()
+                            provider_request=MagicMock(),
                         )
                     )
 
@@ -312,13 +369,13 @@ class TestLLMPipelineIntegration:
                 "prompt_tokens": 50,
                 "completion_tokens": 40,
                 "total_tokens": 90,
-                "completion_tokens_details": {
-                    "reasoning_tokens": 15
-                }
-            }
+                "completion_tokens_details": {"reasoning_tokens": 15},
+            },
         )
 
-        result = normalizer.to_result(response, provider_name="test-provider", policy_name="test-policy")
+        result = normalizer.to_result(
+            response, provider_name="test-provider", policy_name="test-policy"
+        )
 
         # Verify usage metrics are correctly extracted and set
         assert result.prompt_tokens == 50
@@ -335,16 +392,12 @@ class TestLLMPipelineIntegration:
         # Test delta with usage containing reasoning tokens in metadata
         delta = ProviderLLMResponseDelta(
             content="Test chunk",
-            metadata={
-                "usage": {
-                    "completion_tokens_details": {
-                        "reasoning_tokens": 20
-                    }
-                }
-            }
+            metadata={"usage": {"completion_tokens_details": {"reasoning_tokens": 20}}},
         )
 
-        chunk = normalizer.to_chunk(delta, provider_name="test-provider", model_name="test-model")
+        chunk = normalizer.to_chunk(
+            delta, provider_name="test-provider", model_name="test-model"
+        )
 
         # Verify usage is passed through to metadata
         assert chunk.usage == delta.metadata.get("usage")

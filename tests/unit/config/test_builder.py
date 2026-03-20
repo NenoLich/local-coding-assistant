@@ -23,7 +23,9 @@ class TestConfigBuilder:
         """Create a mock ValidationEngine."""
         mock_engine = Mock()
         # Return the input value as validated by default
-        mock_engine.get_validated_value.side_effect = lambda path, value, **kwargs: value
+        mock_engine.get_validated_value.side_effect = (
+            lambda path, value, **kwargs: value
+        )
         return mock_engine
 
     @pytest.fixture
@@ -79,7 +81,9 @@ class TestConfigBuilder:
 
     def test_set_session_overrides(self, config_builder, validation_engine):
         """Test setting session overrides."""
-        validation_engine.get_validated_value.side_effect = lambda path, value, **kwargs: value
+        validation_engine.get_validated_value.side_effect = (
+            lambda path, value, **kwargs: value
+        )
 
         overrides = {"llm.temperature": 0.5}
         config_builder.set_session_overrides(overrides)
@@ -94,10 +98,14 @@ class TestConfigBuilder:
 
         assert config_builder._session_overrides == overrides
 
-    def test_set_session_overrides_invalid_value(self, config_builder, validation_engine):
+    def test_set_session_overrides_invalid_value(
+        self, config_builder, validation_engine
+    ):
         """Test setting session overrides with invalid value."""
         validation_engine.get_validated_value.return_value = None
-        validation_engine.get_validated_value.side_effect = lambda path, value, **kwargs: None
+        validation_engine.get_validated_value.side_effect = (
+            lambda path, value, **kwargs: None
+        )
 
         overrides = {"llm.temperature": "invalid"}
         config_builder.set_session_overrides(overrides)
@@ -106,7 +114,9 @@ class TestConfigBuilder:
 
     def test_set_call_overrides(self, config_builder, validation_engine):
         """Test setting call overrides."""
-        validation_engine.get_validated_value.side_effect = lambda path, value, **kwargs: value
+        validation_engine.get_validated_value.side_effect = (
+            lambda path, value, **kwargs: value
+        )
 
         overrides = {"llm.temperature": 0.6}
         result = config_builder.set_call_overrides(overrides)
@@ -117,7 +127,9 @@ class TestConfigBuilder:
 
     def test_set_call_overrides_invalid_value(self, config_builder, validation_engine):
         """Test setting call overrides with invalid value."""
-        validation_engine.get_validated_value.side_effect = lambda path, value, **kwargs: None if path == "llm.temperature" else value
+        validation_engine.get_validated_value.side_effect = (
+            lambda path, value, **kwargs: None if path == "llm.temperature" else value
+        )
 
         overrides = {"llm.temperature": "invalid"}
         result = config_builder.set_call_overrides(overrides)
@@ -162,12 +174,16 @@ class TestConfigBuilder:
 
         assert result1 is result2  # Same object returned
 
-    def test_build_invalidates_cache_on_overrides(self, config_builder, validation_engine):
+    def test_build_invalidates_cache_on_overrides(
+        self, config_builder, validation_engine
+    ):
         """Test that setting overrides invalidates cache."""
         config_builder.build()  # Cache the config
         assert config_builder._built_config is not None
 
-        validation_engine.get_validated_value.side_effect = lambda path, value, **kwargs: value
+        validation_engine.get_validated_value.side_effect = (
+            lambda path, value, **kwargs: value
+        )
         config_builder.set_session_overrides({"llm.temperature": 0.5})
 
         assert config_builder._built_config is None
@@ -211,7 +227,7 @@ class TestConfigBuilder:
                 "id": "test_tool",
                 "description": "A test tool",
                 "name": "test_tool",
-                "enabled": True
+                "enabled": True,
             }
         }
         config_builder.update_tools(tools)
@@ -228,21 +244,29 @@ class TestConfigBuilder:
         config_builder._base_config = Mock(spec=AppConfig)
         del config_builder._base_config.tools
 
-        with pytest.raises(ConfigError, match="Base config does not have a tools field"):
+        with pytest.raises(
+            ConfigError, match="Base config does not have a tools field"
+        ):
             config_builder.update_tools({})
 
     def test_validate_base_config_no_fields_with_deps(self, config_builder):
         """Test base config validation when no fields have dependencies."""
-        with patch('local_coding_assistant.config.builder.config_field_registry') as mock_registry:
+        with patch(
+            "local_coding_assistant.config.builder.config_field_registry"
+        ) as mock_registry:
             mock_registry.get_fields_with_dependencies.return_value = []
 
             config_builder._validate_base_config()
 
             assert config_builder._is_base_config_validated is True
 
-    def test_validate_base_config_with_validation_errors(self, config_builder, validation_engine):
+    def test_validate_base_config_with_validation_errors(
+        self, config_builder, validation_engine
+    ):
         """Test base config validation with validation errors."""
-        with patch('local_coding_assistant.config.builder.config_field_registry') as mock_registry:
+        with patch(
+            "local_coding_assistant.config.builder.config_field_registry"
+        ) as mock_registry:
             mock_field = Mock()
             mock_field.full_path = "test.field"
             mock_registry.get_fields_with_dependencies.return_value = [mock_field]
@@ -252,16 +276,24 @@ class TestConfigBuilder:
             with pytest.raises(ConfigError, match="Base config validation failed"):
                 config_builder._validate_base_config()
 
-    @patch('local_coding_assistant.config.builder.logger')
-    def test_validate_base_config_with_fallback(self, mock_logger, config_builder, validation_engine):
+    @patch("local_coding_assistant.config.builder.logger")
+    def test_validate_base_config_with_fallback(
+        self, mock_logger, config_builder, validation_engine
+    ):
         """Test base config validation adds fallback to session overrides."""
-        with patch('local_coding_assistant.config.builder.config_field_registry') as mock_registry:
+        with patch(
+            "local_coding_assistant.config.builder.config_field_registry"
+        ) as mock_registry:
             mock_field = Mock()
             mock_field.full_path = "test.field"
             mock_registry.get_fields_with_dependencies.return_value = [mock_field]
 
             config_builder._get_field_value = Mock(return_value="original")
-            validation_engine.get_validated_value.side_effect = lambda path, value, **kwargs: "fallback" if path == "test.field" else value
+            validation_engine.get_validated_value.side_effect = (
+                lambda path, value, **kwargs: "fallback"
+                if path == "test.field"
+                else value
+            )
 
             config_builder._validate_base_config()
 
@@ -270,7 +302,7 @@ class TestConfigBuilder:
 
     def test_build_calls_validate_base_config(self, config_builder):
         """Test that build calls _validate_base_config when not validated."""
-        with patch.object(config_builder, '_validate_base_config') as mock_validate:
+        with patch.object(config_builder, "_validate_base_config") as mock_validate:
             config_builder._is_base_config_validated = False
             config_builder.build()
 
@@ -278,7 +310,7 @@ class TestConfigBuilder:
 
     def test_build_does_not_call_validate_when_already_validated(self, config_builder):
         """Test that build does not re-validate when already validated."""
-        with patch.object(config_builder, '_validate_base_config') as mock_validate:
+        with patch.object(config_builder, "_validate_base_config") as mock_validate:
             config_builder._is_base_config_validated = True
             config_builder.build()
 

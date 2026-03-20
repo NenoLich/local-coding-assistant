@@ -109,7 +109,7 @@ class TestFrameAgent:
         """Test successful single iteration run."""
         # Setup mocks
         mock_context_manager.build_context.return_value = sample_prompt_context
-        
+
         # Create mock frame
         mock_frame = ExecutionFrame(
             session_id="test_session",
@@ -121,14 +121,19 @@ class TestFrameAgent:
             status=ExecutionStatus.SUCCESS,
             final_answer="Final answer",
         )
-        
+
         # Mock executor to return FRAME_COMPLETE event with frame
         async def mock_execute_func(frame):
-            yield ExecutionEvent(EventType.FRAME_COMPLETE, frame.session_id, data={"frame": mock_frame})
+            yield ExecutionEvent(
+                EventType.FRAME_COMPLETE, frame.session_id, data={"frame": mock_frame}
+            )
 
-        with patch.object(frame_agent._composer, 'render', return_value=sample_rendered_prompt), \
-             patch.object(frame_agent._executor, 'execute', mock_execute_func):
-
+        with (
+            patch.object(
+                frame_agent._composer, "render", return_value=sample_rendered_prompt
+            ),
+            patch.object(frame_agent._executor, "execute", mock_execute_func),
+        ):
             # Run agent
             final_answer = None
             async for event in frame_agent.run("Test input", session_state):
@@ -161,7 +166,7 @@ class TestFrameAgent:
         """Test multiple iterations with tool calls."""
         # Setup mocks
         mock_context_manager.build_context.return_value = sample_prompt_context
-        
+
         # Mock first frame with tool calls (no final answer)
         first_frame = ExecutionFrame(
             session_id="test_session",
@@ -193,16 +198,23 @@ class TestFrameAgent:
         # Setup executor to return different frames
         frame_sequence = [first_frame, second_frame]
         frame_index = 0
-        
+
         async def mock_execute_func(frame):
             nonlocal frame_index
             current_frame = frame_sequence[frame_index]
             frame_index += 1
-            yield ExecutionEvent(EventType.FRAME_COMPLETE, frame.session_id, data={"frame": current_frame})
+            yield ExecutionEvent(
+                EventType.FRAME_COMPLETE,
+                frame.session_id,
+                data={"frame": current_frame},
+            )
 
-        with patch.object(frame_agent._composer, 'render', return_value=sample_rendered_prompt), \
-             patch.object(frame_agent._executor, 'execute', mock_execute_func):
-
+        with (
+            patch.object(
+                frame_agent._composer, "render", return_value=sample_rendered_prompt
+            ),
+            patch.object(frame_agent._executor, "execute", mock_execute_func),
+        ):
             # Run agent
             final_answer = None
             async for event in frame_agent.run("Test input", session_state):
@@ -227,7 +239,7 @@ class TestFrameAgent:
         """Test behavior when max iterations is reached."""
         # Setup mocks
         mock_context_manager.build_context.return_value = sample_prompt_context
-        
+
         # Mock frames without final answers
         mock_frame = ExecutionFrame(
             session_id="test_session",
@@ -239,14 +251,19 @@ class TestFrameAgent:
             status=ExecutionStatus.SUCCESS,
             final_answer=None,
         )
-        
+
         # Mock executor to always return the same frame
         async def mock_execute_func(frame):
-            yield ExecutionEvent(EventType.FRAME_COMPLETE, frame.session_id, data={"frame": mock_frame})
+            yield ExecutionEvent(
+                EventType.FRAME_COMPLETE, frame.session_id, data={"frame": mock_frame}
+            )
 
-        with patch.object(frame_agent._composer, 'render', return_value=sample_rendered_prompt), \
-             patch.object(frame_agent._executor, 'execute', mock_execute_func):
-
+        with (
+            patch.object(
+                frame_agent._composer, "render", return_value=sample_rendered_prompt
+            ),
+            patch.object(frame_agent._executor, "execute", mock_execute_func),
+        ):
             # Run agent (should stop after max_iterations)
             final_answer = None
             async for event in frame_agent.run("Test input", session_state):
@@ -269,7 +286,7 @@ class TestFrameAgent:
         """Test behavior when frame execution fails."""
         # Setup mocks
         mock_context_manager.build_context.return_value = sample_prompt_context
-        
+
         # Mock failed frame
         mock_frame = ExecutionFrame(
             session_id="test_session",
@@ -281,14 +298,19 @@ class TestFrameAgent:
             status=ExecutionStatus.FAILED,
             error_message="Execution failed",
         )
-        
+
         # Mock executor to return failed frame
         async def mock_execute_func(frame):
-            yield ExecutionEvent(EventType.FRAME_COMPLETE, frame.session_id, data={"frame": mock_frame})
+            yield ExecutionEvent(
+                EventType.FRAME_COMPLETE, frame.session_id, data={"frame": mock_frame}
+            )
 
-        with patch.object(frame_agent._composer, 'render', return_value=sample_rendered_prompt), \
-             patch.object(frame_agent._executor, 'execute', mock_execute_func):
-
+        with (
+            patch.object(
+                frame_agent._composer, "render", return_value=sample_rendered_prompt
+            ),
+            patch.object(frame_agent._executor, "execute", mock_execute_func),
+        ):
             # Run agent
             final_answer = None
             async for event in frame_agent.run("Test input", session_state):
@@ -312,7 +334,7 @@ class TestFrameAgent:
         """Test that partial success stops execution if handler cannot handle it."""
         # Setup mocks
         mock_context_manager.build_context.return_value = sample_prompt_context
-        
+
         # Mock partial success frame
         partial_frame = ExecutionFrame(
             session_id="test_session",
@@ -340,16 +362,23 @@ class TestFrameAgent:
         # Mock executor to return frames in sequence
         frame_sequence = [partial_frame, final_frame]
         frame_index = 0
-        
+
         async def mock_execute_func(frame):
             nonlocal frame_index
             current_frame = frame_sequence[frame_index]
             frame_index += 1
-            yield ExecutionEvent(EventType.FRAME_COMPLETE, frame.session_id, data={"frame": current_frame})
+            yield ExecutionEvent(
+                EventType.FRAME_COMPLETE,
+                frame.session_id,
+                data={"frame": current_frame},
+            )
 
-        with patch.object(frame_agent._composer, 'render', return_value=sample_rendered_prompt), \
-             patch.object(frame_agent._executor, 'execute', mock_execute_func):
-
+        with (
+            patch.object(
+                frame_agent._composer, "render", return_value=sample_rendered_prompt
+            ),
+            patch.object(frame_agent._executor, "execute", mock_execute_func),
+        ):
             # Run agent
             final_answer = None
             async for event in frame_agent.run("Test input", session_state):
@@ -430,7 +459,6 @@ class TestFrameAgent:
         assert session_state.history[2].role == "tool"
         assert session_state.history[3].role == "tool"
 
-
     def test_frame_agent_initialization(
         self, mock_llm_service, mock_tool_manager, mock_context_manager
     ):
@@ -506,7 +534,7 @@ class TestFrameAgent:
         """Test that BLOCKED status stops execution."""
         # Setup mocks
         mock_context_manager.build_context.return_value = sample_prompt_context
-        
+
         # Mock blocked frame
         mock_frame = ExecutionFrame(
             session_id="test_session",
@@ -518,14 +546,19 @@ class TestFrameAgent:
             status=ExecutionStatus.BLOCKED,
             error_message="Rate limited",
         )
-        
+
         # Mock executor to return blocked frame
         async def mock_execute_func(frame):
-            yield ExecutionEvent(EventType.FRAME_COMPLETE, frame.session_id, data={"frame": mock_frame})
+            yield ExecutionEvent(
+                EventType.FRAME_COMPLETE, frame.session_id, data={"frame": mock_frame}
+            )
 
-        with patch.object(frame_agent._composer, 'render', return_value=sample_rendered_prompt), \
-             patch.object(frame_agent._executor, 'execute', mock_execute_func):
-
+        with (
+            patch.object(
+                frame_agent._composer, "render", return_value=sample_rendered_prompt
+            ),
+            patch.object(frame_agent._executor, "execute", mock_execute_func),
+        ):
             # Run agent
             final_answer = None
             async for event in frame_agent.run("Test input", session_state):

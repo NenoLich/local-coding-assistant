@@ -71,13 +71,18 @@ class TestRunCommand:
     def test_run_query_error_handling(self, cli_runner):
         """Test run query error handling."""
         # Mock bootstrap failure
-        with patch("local_coding_assistant.cli.commands.run.bootstrap") as mock_bootstrap:
+        with patch(
+            "local_coding_assistant.cli.commands.run.bootstrap"
+        ) as mock_bootstrap:
             mock_bootstrap.return_value = {"runtime": None}
 
             result = cli_runner.invoke(app, ["run", "query", "Hello world"])
 
             assert result.exit_code == 1
-            assert "Error: Runtime manager not available (LLM initialization failed)" in result.stdout
+            assert (
+                "Error: Runtime manager not available (LLM initialization failed)"
+                in result.stdout
+            )
 
     def test_run_query_long_text(self, cli_runner, mock_bootstrap_success):
         """Test run query with long text input."""

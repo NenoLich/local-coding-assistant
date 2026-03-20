@@ -37,7 +37,9 @@ class TestToolErrorClassifier:
     def test_classify_rate_limit_error(self, classifier):
         """Test classification of rate limit errors."""
         error = classifier.classify_error(
-            "read_file", {"file_path": "test.py"}, "Rate limit exceeded, try again later"
+            "read_file",
+            {"file_path": "test.py"},
+            "Rate limit exceeded, try again later",
         )
 
         assert error.error_type == ToolErrorType.RATE_LIMIT_ERROR
@@ -47,7 +49,9 @@ class TestToolErrorClassifier:
     def test_classify_permission_error(self, classifier):
         """Test classification of permission errors."""
         error = classifier.classify_error(
-            "read_file", {"file_path": "/etc/passwd"}, "Permission denied: cannot access file"
+            "read_file",
+            {"file_path": "/etc/passwd"},
+            "Permission denied: cannot access file",
         )
 
         assert error.error_type == ToolErrorType.PERMISSION_ERROR
@@ -57,7 +61,9 @@ class TestToolErrorClassifier:
     def test_classify_validation_error(self, classifier):
         """Test classification of validation errors."""
         error = classifier.classify_error(
-            "search_files", {"pattern": 123}, "Invalid arguments: 'pattern' must be a string"
+            "search_files",
+            {"pattern": 123},
+            "Invalid arguments: 'pattern' must be a string",
         )
 
         assert error.error_type == ToolErrorType.VALIDATION_ERROR
@@ -91,13 +97,13 @@ class TestToolErrorClassifier:
 
         assert error.error_message == "Invalid value"
         assert error.original_exception == exc
-        assert error.error_type == ToolErrorType.UNKNOWN_ERROR  # "Invalid value" doesn't match validation patterns
+        assert (
+            error.error_type == ToolErrorType.UNKNOWN_ERROR
+        )  # "Invalid value" doesn't match validation patterns
 
     def test_classify_case_insensitive(self, classifier):
         """Test that classification is case insensitive."""
-        error = classifier.classify_error(
-            "search_files", {}, "TIMEOUT occurred"
-        )
+        error = classifier.classify_error("search_files", {}, "TIMEOUT occurred")
 
         assert error.error_type == ToolErrorType.NETWORK_ERROR
 
@@ -157,8 +163,14 @@ class TestToolErrorClassifier:
             ("Internal server error", ToolErrorType.SERVICE_ERROR),
             ("API error occurred", ToolErrorType.SERVICE_ERROR),
             ("Random error message", ToolErrorType.UNKNOWN_ERROR),
-            ("Unknown function", ToolErrorType.UNKNOWN_ERROR),  # "unknown" triggers UNKNOWN_ERROR
-            ("Database connection failed", ToolErrorType.NETWORK_ERROR),  # "connection" triggers NETWORK_ERROR
+            (
+                "Unknown function",
+                ToolErrorType.UNKNOWN_ERROR,
+            ),  # "unknown" triggers UNKNOWN_ERROR
+            (
+                "Database connection failed",
+                ToolErrorType.NETWORK_ERROR,
+            ),  # "connection" triggers NETWORK_ERROR
         ],
     )
     def test_error_type_classification(self, classifier, error_message, expected_type):

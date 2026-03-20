@@ -26,6 +26,13 @@ runtime:
   # Tool calling mode: 'classic' (default), 'ptc' (programmatic tool calling), 'reasoning_only' (no tool calls)
   tool_call_mode: "classic"
 
+dashboard:
+  # Dashboard configuration
+  enabled: true
+  port: 8080
+  host: "localhost"
+  auto_start: false  # Whether to auto-start dashboard with LOCCA
+
 providers: {}
 
 agent:

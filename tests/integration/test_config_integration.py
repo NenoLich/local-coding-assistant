@@ -286,6 +286,7 @@ class TestBootstrapIntegration:
         runtime_resolved = runtime.config_manager.global_config
         assert runtime_resolved.runtime.enable_logging is False
 
+
 class TestConfigurationEdgeCases:
     """Test edge cases and error conditions."""
 
@@ -559,7 +560,9 @@ class TestConfigFieldValidationEngineIntegration:
         # Verify the value was set
         assert config.nested.inner_field == "updated_value"
 
-    def test_validation_engine_get_validated_value_valid(self, validation_engine, field_registry):
+    def test_validation_engine_get_validated_value_valid(
+        self, validation_engine, field_registry
+    ):
         """Test ValidationEngine.get_validated_value() with valid value."""
 
         # Create a simple config model
@@ -575,18 +578,22 @@ class TestConfigFieldValidationEngineIntegration:
         # Should return the value as it's valid (no dependencies)
         assert result == "valid_value"
 
-    def test_validation_engine_get_validated_value_with_fallback(self, validation_engine, field_registry, system_registry):
+    def test_validation_engine_get_validated_value_with_fallback(
+        self, validation_engine, field_registry, system_registry
+    ):
         """Test ValidationEngine.get_validated_value() with fallback."""
 
         # Create dependencies
         dependencies = SettingDependency(
             value_requirements={"invalid_value": ["missing_capability"]},
-            fallback_order=["fallback_value"]
+            fallback_order=["fallback_value"],
         )
 
         # Create config model with dependencies
         class TestConfig(AppConfig):
-            test_field: str = config_field("default", description="Test field", dependencies=dependencies)
+            test_field: str = config_field(
+                "default", description="Test field", dependencies=dependencies
+            )
 
         # Create config instance
         config = TestConfig()
@@ -596,23 +603,32 @@ class TestConfigFieldValidationEngineIntegration:
         system_registry.register_config_field_dependencies(field)
 
         # Test with invalid value that should trigger fallback
-        result = validation_engine.get_validated_value("test.test_field", "invalid_value", allow_deferring=False)
+        result = validation_engine.get_validated_value(
+            "test.test_field", "invalid_value", allow_deferring=False
+        )
 
         # Should return default value since fallback is not working
         assert result == "default"
 
-    def test_validation_engine_get_validated_value_default_fallback(self, validation_engine, field_registry, system_registry):
+    def test_validation_engine_get_validated_value_default_fallback(
+        self, validation_engine, field_registry, system_registry
+    ):
         """Test ValidationEngine.get_validated_value() falling back to default."""
 
         # Create dependencies with missing capabilities
         dependencies = SettingDependency(
-            value_requirements={"invalid_value": ["missing_capability"], "also_missing": ["another_missing"]},
-            fallback_order=["also_missing"]
+            value_requirements={
+                "invalid_value": ["missing_capability"],
+                "also_missing": ["another_missing"],
+            },
+            fallback_order=["also_missing"],
         )
 
         # Create config model
         class TestConfig(AppConfig):
-            test_field: str = config_field("default_value", description="Test field", dependencies=dependencies)
+            test_field: str = config_field(
+                "default_value", description="Test field", dependencies=dependencies
+            )
 
         # Create config instance
         config = TestConfig()
@@ -622,12 +638,16 @@ class TestConfigFieldValidationEngineIntegration:
         system_registry.register_config_field_dependencies(field)
 
         # Test with invalid value that should fall back to default
-        result = validation_engine.get_validated_value("test.test_field", "invalid_value")
+        result = validation_engine.get_validated_value(
+            "test.test_field", "invalid_value"
+        )
 
         # Should return default value
         assert result == "default_value"
 
-    def test_validation_engine_check_dependencies_no_dependencies(self, validation_engine, field_registry):
+    def test_validation_engine_check_dependencies_no_dependencies(
+        self, validation_engine, field_registry
+    ):
         """Test ValidationEngine.check_dependencies() with no dependencies."""
 
         # Create simple field without dependencies
@@ -640,20 +660,24 @@ class TestConfigFieldValidationEngineIntegration:
         # Should return empty list
         assert missing == []
 
-    def test_validation_engine_check_dependencies_with_missing(self, validation_engine, field_registry, system_registry):
+    def test_validation_engine_check_dependencies_with_missing(
+        self, validation_engine, field_registry, system_registry
+    ):
         """Test ValidationEngine.check_dependencies() with missing capabilities."""
 
         # Create dependencies requiring capabilities
         dependencies = SettingDependency(
             value_requirements={
                 "value1": ["capability1", "capability2"],
-                "value2": ["capability3"]
+                "value2": ["capability3"],
             }
         )
 
         # Create config model
         class TestConfig(AppConfig):
-            test_field: str = config_field("default", description="Test field", dependencies=dependencies)
+            test_field: str = config_field(
+                "default", description="Test field", dependencies=dependencies
+            )
 
         # Create config instance
         config = TestConfig()
@@ -672,19 +696,21 @@ class TestConfigFieldValidationEngineIntegration:
         expected_missing = {"capability2", "capability3"}
         assert set(missing) == expected_missing
 
-    def test_validation_engine_check_dependencies_all_available(self, validation_engine, field_registry, system_registry):
+    def test_validation_engine_check_dependencies_all_available(
+        self, validation_engine, field_registry, system_registry
+    ):
         """Test ValidationEngine.check_dependencies() when all capabilities are available."""
 
         # Create dependencies
         dependencies = SettingDependency(
-            value_requirements={
-                "value1": ["capability1", "capability2"]
-            }
+            value_requirements={"value1": ["capability1", "capability2"]}
         )
 
         # Create config model
         class TestConfig(AppConfig):
-            test_field: str = config_field("default", description="Test field", dependencies=dependencies)
+            test_field: str = config_field(
+                "default", description="Test field", dependencies=dependencies
+            )
 
         # Register all required capabilities
         system_registry.register_capability(["capability1", "capability2"])

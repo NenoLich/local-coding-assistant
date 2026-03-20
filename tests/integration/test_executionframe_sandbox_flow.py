@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import AsyncIterator
+
 import pytest
 
 from local_coding_assistant.agent.frame_agent import FrameAgent
-from local_coding_assistant.agent.llm import LLMResult, LLMToolCall
+from local_coding_assistant.agent.llm import LLMResult, LLMStreamChunk, LLMToolCall
 from local_coding_assistant.core.telemetry_types import (
     ExecutionEnvelope,
     ResourceMetric,
@@ -13,6 +16,7 @@ from local_coding_assistant.core.telemetry_types import (
     ToolCallTrace,
 )
 from local_coding_assistant.runtime.context_manager import ContextManager
+from local_coding_assistant.runtime.events import EventType
 from local_coding_assistant.runtime.execution_types import ActionKind
 from local_coding_assistant.runtime.session import SessionState
 from local_coding_assistant.tools.types import (
@@ -115,6 +119,8 @@ class SimpleLLMService:
             model="test-model",
             provider="test-provider",
             total_tokens=50,
+            prompt_tokens=25,
+            completion_tokens=25,
             tool_calls=[
                 LLMToolCall(
                     name="execute_python_code",
@@ -122,6 +128,43 @@ class SimpleLLMService:
                     type="function",
                 )
             ],
+        )
+
+    async def stream(self, task, *, options=None) -> AsyncIterator[LLMStreamChunk]:
+        """Stream a response that includes tool calls."""
+        content = "Running in sandbox"
+
+        # Yield content in chunks
+        words = content.split()
+        current_chunk = ""
+        for word in words:
+            current_chunk += word + " "
+            yield LLMStreamChunk(
+                content=current_chunk.strip(),
+                provider="test-provider",
+                model="test-model",
+                is_final=False,
+            )
+            await asyncio.sleep(0.01)  # Simulate streaming delay
+
+        # Final chunk with tool calls and usage information
+        yield LLMStreamChunk(
+            content=content,
+            provider="test-provider",
+            model="test-model",
+            is_final=True,
+            tool_calls=[
+                LLMToolCall(
+                    name="execute_python_code",
+                    arguments={"code": "print(1)"},
+                    type="function",
+                )
+            ],
+            usage={
+                "prompt_tokens": 25,
+                "completion_tokens": 25,
+                "total_tokens": 50,
+            },
         )
 
 
@@ -145,7 +188,11 @@ async def test_frame_agent_expands_sandbox_tool_calls():
     )
 
     session = SessionState(id="session-1")
-    await agent.run("hello", session)
+
+    # Consume the async generator returned by agent.run()
+    async for event in agent.run("hello", session):
+        if event.type == EventType.TURN_COMPLETE:
+            break
 
     frames = agent.get_frames()
     assert len(frames) == 1

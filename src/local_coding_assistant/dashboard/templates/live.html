@@ -1,0 +1,404 @@
+{% extends "base.html" %}
+
+{% block title %}LOCCA Dashboard - Live Monitoring{% endblock %}
+
+{% block content %}
+<div class="col-12">
+    <div class="row mt-4">
+        <div class="col-12">
+            <h1>
+                <i class="fas fa-broadcast-tower text-danger me-2"></i>
+                Live Monitoring
+            </h1>
+            <p class="text-muted">Real-time monitoring of active execution sessions</p>
+        </div>
+    </div>
+
+    <!-- Connection Status -->
+    <div class="row mt-3">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <h5 class="card-title mb-0">Connection Status</h5>
+                        <span id="connection-status" class="badge bg-secondary">
+                            <i class="fas fa-circle me-1"></i> Connecting...
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Active Sessions -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="fas fa-play-circle text-success me-2"></i>
+                        Active Sessions
+                    </h5>
+                    <span class="badge bg-primary" id="active-sessions-count">0</span>
+                </div>
+                <div class="card-body">
+                    <div id="active-sessions-container">
+                        <div class="text-center text-muted py-4">
+                            <i class="fas fa-inbox fa-3x mb-3"></i>
+                            <p>No active sessions</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Real-time Events -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-stream text-info me-2"></i>
+                        Live Event Stream
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div id="event-stream" style="height: 400px; overflow-y: auto; font-family: monospace; font-size: 0.9em;">
+                        <div class="text-center text-muted py-4">
+                            <i class="fas fa-satellite-dish fa-3x mb-3"></i>
+                            <p>Waiting for events...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Live Stats -->
+    <div class="row mt-4">
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="card-title">Events/sec</h5>
+                    <h2 class="text-primary" id="events-per-second">0</h2>
+                    <small class="text-muted">Current rate</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="card-title">Total Events</h5>
+                    <h2 class="text-info" id="total-events">0</h2>
+                    <small class="text-muted">This session</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="card-title">Avg Frame Time</h5>
+                    <h2 class="text-success" id="avg-frame-time">-</h2>
+                    <small class="text-muted">Last 10 frames</small>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card">
+                <div class="card-body text-center">
+                    <h5 class="card-title">Errors</h5>
+                    <h2 class="text-danger" id="error-count">0</h2>
+                    <small class="text-muted">In last minute</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let ws = null;
+let eventCount = 0;
+let eventsInLastSecond = 0;
+let lastSecondEvents = 0;
+let frameTimes = [];
+let errorCount = 0;
+let lastMinuteErrors = [];
+
+// Connect to WebSocket
+function connectWebSocket() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}/ws/ws`;
+    
+    ws = new WebSocket(wsUrl);
+    
+    ws.onopen = function() {
+        updateConnectionStatus('Connected', 'success');
+        console.log('WebSocket connected');
+    };
+    
+    ws.onmessage = function(event) {
+        const message = JSON.parse(event.data);
+        handleMessage(message);
+    };
+    
+    ws.onclose = function() {
+        updateConnectionStatus('Disconnected', 'danger');
+        console.log('WebSocket disconnected');
+        // Try to reconnect after 3 seconds
+        setTimeout(connectWebSocket, 3000);
+    };
+    
+    ws.onerror = function(error) {
+        updateConnectionStatus('Error', 'danger');
+        console.error('WebSocket error:', error);
+    };
+}
+
+// Update connection status indicator
+function updateConnectionStatus(text, statusClass) {
+    const statusEl = document.getElementById('connection-status');
+    statusEl.className = `badge bg-${statusClass}`;
+    statusEl.innerHTML = `<i class="fas fa-circle me-1"></i> ${text}`;
+}
+
+// Handle incoming WebSocket messages
+function handleMessage(message) {
+    switch(message.type) {
+        case 'stats_update':
+            updateStats(message.data);
+            break;
+        case 'sessions_update':
+            updateActiveSessions(message.data);
+            break;
+        case 'event_update':
+            handleEventUpdate(message.data);
+            break;
+        case 'pong':
+            // Keep-alive response
+            break;
+    }
+}
+
+// Update dashboard stats
+function updateStats(stats) {
+    // Update any stats that need real-time display
+    document.getElementById('active-sessions-count').textContent = stats.active_sessions || 0;
+}
+
+// Update active sessions display
+function updateActiveSessions(sessions) {
+    const container = document.getElementById('active-sessions-container');
+    
+    if (!sessions || sessions.length === 0) {
+        container.innerHTML = `
+            <div class="text-center text-muted py-4">
+                <i class="fas fa-inbox fa-3x mb-3"></i>
+                <p>No active sessions</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const sessionsHtml = sessions.map(session => `
+        <div class="card mb-3 border-left border-4 border-success">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-4">
+                        <h6 class="mb-1">Session: ${session.session_id.substring(0, 8)}...</h6>
+                        <small class="text-muted">
+                            Started: ${formatDateTime(session.start_time)}
+                        </small>
+                    </div>
+                    <div class="col-md-4">
+                        ${session.current_frame ? `
+                            <div>
+                                <strong>Current Frame:</strong> ${session.current_frame.frame_id.substring(0, 8)}...
+                                <br>
+                                <small class="text-muted">
+                                    Running for: ${formatDuration(session.current_frame.duration)}
+                                </small>
+                            </div>
+                        ` : '<span class="text-muted">No active frame</span>'}
+                    </div>
+                    <div class="col-md-4 text-end">
+                        <div class="badge bg-info me-2">
+                            ${session.events_count} events
+                        </div>
+                        <div class="progress mt-2" style="height: 6px;">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                 style="width: 100%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+    
+    container.innerHTML = sessionsHtml;
+}
+
+// Handle individual event updates
+function handleEventUpdate(eventData) {
+    eventCount++;
+    eventsInLastSecond++;
+    
+    // Add to event stream
+    const eventStream = document.getElementById('event-stream');
+    const eventHtml = createEventHtml(eventData);
+    
+    // Remove "waiting" message if this is the first event
+    if (eventCount === 1) {
+        eventStream.innerHTML = '';
+    }
+    
+    eventStream.insertAdjacentHTML('afterbegin', eventHtml);
+    
+    // Keep only last 100 events in view
+    const events = eventStream.children;
+    if (events.length > 100) {
+        eventStream.removeChild(events[events.length - 1]);
+    }
+    
+    // Track errors
+    if (eventData.event_type === 'error') {
+        errorCount++;
+        lastMinuteErrors.push(Date.now());
+    }
+    
+    // Track frame completion times
+    if (eventData.event_type === 'frame_complete' && eventData.data && eventData.data.duration) {
+        frameTimes.push(eventData.data.duration);
+        if (frameTimes.length > 10) {
+            frameTimes.shift();
+        }
+    }
+    
+    updateLiveMetrics();
+}
+
+// Create HTML for an event
+function createEventHtml(eventData) {
+    const timestamp = new Date(eventData.timestamp).toLocaleTimeString();
+    const eventType = eventData.event_type;
+    const sessionId = eventData.session_id ? eventData.session_id.substring(0, 8) : 'unknown';
+    const frameId = eventData.frame_id ? eventData.frame_id.substring(0, 8) : 'unknown';
+    
+    let icon = 'fas fa-info-circle';
+    let color = 'text-secondary';
+    
+    switch(eventType) {
+        case 'session_start':
+            icon = 'fas fa-play';
+            color = 'text-success';
+            break;
+        case 'frame_start':
+            icon = 'fas fa-step-forward';
+            color = 'text-primary';
+            break;
+        case 'frame_complete':
+            icon = 'fas fa-check';
+            color = 'text-success';
+            break;
+        case 'error':
+            icon = 'fas fa-exclamation-triangle';
+            color = 'text-danger';
+            break;
+        case 'tool_call':
+            icon = 'fas fa-tools';
+            color = 'text-info';
+            break;
+        case 'llm_call':
+            icon = 'fas fa-robot';
+            color = 'text-purple';
+            break;
+    }
+    
+    return `
+        <div class="event-item mb-2 p-2 border-bottom">
+            <div class="d-flex align-items-start">
+                <i class="${icon} ${color} me-2 mt-1"></i>
+                <div class="flex-grow-1">
+                    <div class="d-flex justify-content-between">
+                        <span class="fw-bold">${eventType}</span>
+                        <small class="text-muted">${timestamp}</small>
+                    </div>
+                    <small class="text-muted">
+                        Session: ${sessionId} | Frame: ${frameId}
+                    </small>
+                    ${eventData.data && Object.keys(eventData.data).length > 0 ? `
+                        <div class="mt-1">
+                            <small>${JSON.stringify(eventData.data, null, 2)}</small>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Update live metrics
+function updateLiveMetrics() {
+    document.getElementById('total-events').textContent = eventCount;
+    document.getElementById('events-per-second').textContent = eventsInLastSecond;
+    
+    // Update average frame time
+    if (frameTimes.length > 0) {
+        const avgTime = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
+        document.getElementById('avg-frame-time').textContent = avgTime.toFixed(1) + 's';
+    }
+    
+    // Update error count (last minute)
+    const now = Date.now();
+    lastMinuteErrors = lastMinuteErrors.filter(time => now - time < 60000);
+    document.getElementById('error-count').textContent = lastMinuteErrors.length;
+}
+
+// Calculate events per second
+setInterval(() => {
+    eventsInLastSecond = lastSecondEvents;
+    lastSecondEvents = 0;
+}, 1000);
+
+// Format date/time
+function formatDateTime(dateStr) {
+    if (!dateStr) return 'N/A';
+    return new Date(dateStr).toLocaleString();
+}
+
+// Format duration
+function formatDuration(seconds) {
+    if (!seconds || seconds < 0) return '0s';
+    if (seconds < 60) return `${seconds.toFixed(1)}s`;
+    const minutes = Math.floor(seconds / 60);
+    const secs = (seconds % 60).toFixed(1);
+    return `${minutes}m ${secs}s`;
+}
+
+// Send periodic ping to keep connection alive
+setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({type: 'ping'}));
+    }
+}, 30000);
+
+// Periodically request sessions update as fallback
+setInterval(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({type: 'request_sessions_update'}));
+    }
+}, 10000);
+
+// Initialize connection when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    connectWebSocket();
+});
+
+// Clean up on page unload
+window.addEventListener('beforeunload', function() {
+    if (ws) {
+        ws.close();
+    }
+});
+</script>
+{% endblock %}

@@ -72,7 +72,9 @@ async def test_provider_resolver_find_any_available_provider() -> None:
         parameters=OptionalParameters(),
     )
 
-    selected_provider, selected_model = await resolver.find_any_available_provider(request)
+    selected_provider, selected_model = await resolver.find_any_available_provider(
+        request
+    )
 
     # Should find the first available provider and model
     assert selected_provider.name == "primary"
@@ -98,7 +100,9 @@ async def test_provider_resolver_resolve_model_only() -> None:
         parameters=OptionalParameters(),
     )
 
-    selected_provider, selected_model = await resolver.resolve_model_only("gpt-4", request)
+    selected_provider, selected_model = await resolver.resolve_model_only(
+        "gpt-4", request
+    )
 
     # Should find the first provider that supports the model
     assert selected_provider.name in ["provider_a", "provider_b"]
@@ -123,7 +127,9 @@ async def test_provider_resolver_resolve_provider_only() -> None:
         parameters=OptionalParameters(),
     )
 
-    selected_provider, selected_model = await resolver.resolve_provider_only("my_provider", request)
+    selected_provider, selected_model = await resolver.resolve_provider_only(
+        "my_provider", request
+    )
 
     assert selected_provider.name == "my_provider"
     assert selected_model in ["model-a", "model-b"]
@@ -177,7 +183,9 @@ async def test_provider_resolver_skips_unhealthy_providers() -> None:
         parameters=OptionalParameters(),
     )
 
-    selected_provider, selected_model = await resolver.resolve_model_only("model-x", request)
+    selected_provider, selected_model = await resolver.resolve_model_only(
+        "model-x", request
+    )
 
     # Should only find the healthy provider
     assert selected_provider.name == "healthy"
@@ -198,7 +206,10 @@ def test_provider_health_manager_marking() -> None:
 
     # Mark provider as failed
     from local_coding_assistant.providers.exceptions import ProviderTimeoutError
-    health_manager.mark_provider_failure("test_provider", ProviderTimeoutError("test error"))
+
+    health_manager.mark_provider_failure(
+        "test_provider", ProviderTimeoutError("test error")
+    )
     assert "test_provider" in health_manager.get_unhealthy_providers()
 
     # Mark provider as successful
@@ -226,7 +237,9 @@ def test_provider_health_manager_critical_errors() -> None:
 async def test_provider_resolver_validation_error_handling() -> None:
     """Test resolver handles validation errors gracefully."""
     providers = {
-        "provider": FakeProvider("provider", {"valid-model"}),  # Only supports one model
+        "provider": FakeProvider(
+            "provider", {"valid-model"}
+        ),  # Only supports one model
     }
     provider_manager = StubProviderManager(providers)
     health_manager = ProviderHealthManager(DummyConfigManager())

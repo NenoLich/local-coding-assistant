@@ -880,6 +880,23 @@ class SandboxConfig(ConfigModel, section="sandbox"):
     )
 
 
+class DashboardConfig(ConfigModel, section="dashboard"):
+    """Configuration for the dashboard."""
+
+    enabled: bool = config_field(
+        default=True, description="Whether the dashboard integration is enabled"
+    )
+    port: int = config_field(
+        default=8080, gt=0, le=65535, description="Port for the dashboard server"
+    )
+    host: str = config_field(
+        default="localhost", description="Host for the dashboard server"
+    )
+    auto_start: bool = config_field(
+        default=False, description="Whether to auto-start dashboard with LOCCA"
+    )
+
+
 class AppConfig(ConfigModel, section="app"):
     """Top-level application configuration."""
 
@@ -908,6 +925,10 @@ class AppConfig(ConfigModel, section="app"):
         default_factory=SandboxConfig,
         description="Sandbox configuration",
     )
+    dashboard: DashboardConfig = config_field(
+        default_factory=DashboardConfig,
+        description="Dashboard configuration",
+    )
 
     @classmethod
     def from_dict(cls, config_dict: dict[str, Any]) -> AppConfig:
@@ -923,6 +944,7 @@ class AppConfig(ConfigModel, section="app"):
         tool_config = ToolConfigList.from_dict(config_dict.get("tools", {}))
         prompt_config = PromptTemplateConfig(**config_dict.get("prompt", {}))
         sandbox_config = SandboxConfig(**config_dict.get("sandbox", {}))
+        dashboard_config = DashboardConfig(**config_dict.get("dashboard", {}))
 
         return cls(
             llm=llm_config,
@@ -932,6 +954,7 @@ class AppConfig(ConfigModel, section="app"):
             tools=tool_config,
             prompt=prompt_config,
             sandbox=sandbox_config,
+            dashboard=dashboard_config,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -947,4 +970,5 @@ class AppConfig(ConfigModel, section="app"):
             "tools": self.tools.to_dict(),
             "prompt": self.prompt.model_dump(exclude_unset=True),
             "sandbox": self.sandbox.model_dump(exclude_unset=True),
+            "dashboard": self.dashboard.model_dump(exclude_unset=True),
         }

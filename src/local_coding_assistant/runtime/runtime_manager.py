@@ -36,6 +36,9 @@ from local_coding_assistant.tools.types import (
 if TYPE_CHECKING:
     from local_coding_assistant.tools.tool_manager import ToolManager
 
+from local_coding_assistant.runtime.dashboard_integration import (
+    collect_event_for_dashboard,
+)
 from local_coding_assistant.runtime.execution_types import ExecutionStatus
 from local_coding_assistant.runtime.handlers.handler_integration import (
     HandlerIntegration,
@@ -164,11 +167,13 @@ class RuntimeManager:
 
         if self.config_manager.global_config.runtime.agent_mode != "no_agent":
             async for event in self._run_agent_mode(request):
+                await collect_event_for_dashboard(event)
                 yield event
             return
 
         # Regular mode execution
         async for event in self._run_regular_mode(request):
+            await collect_event_for_dashboard(event)
             yield event
 
     def _setup_session(self) -> SessionState:
@@ -503,11 +508,11 @@ class RuntimeManager:
             )
             llm_service = self._require_llm_service()
             options = LLMOptions(
-                model=base_options.get("model", request.model_override),  # type: ignore
+                model=base_options.get("model", request.model_override),
                 temperature=base_options.get(
                     "temperature", request.temperature_override
-                ),  # type: ignore
-                max_tokens=base_options.get("max_tokens", request.max_tokens_override),  # type: ignore
+                ),
+                max_tokens=base_options.get("max_tokens", request.max_tokens_override),
                 policy=policy,
             )
             logger.debug("Calling llm service with options", options=options)

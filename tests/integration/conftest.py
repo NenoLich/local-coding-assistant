@@ -17,7 +17,8 @@ from local_coding_assistant.agent.llm import (
     LLMResult,
     LLMService,
     LLMTask,
-    LLMToolCall, LLMOptions,
+    LLMToolCall,
+    LLMOptions,
 )
 from local_coding_assistant.agent.llm.models import LLMStreamChunk
 from local_coding_assistant.cli.commands import sandbox as sandbox_cli
@@ -1013,7 +1014,9 @@ def mock_llm_service(mock_llm_result):
     mock_session_overrides.copy.return_value = {"llm.model_name": "gpt-4.1"}
     mock_config_manager.session_overrides = mock_session_overrides
 
-    async def mock_generate(request: LLMTask, *, options:LLMOptions | None=None) -> LLMResult:
+    async def mock_generate(
+        request: LLMTask, *, options: LLMOptions | None = None
+    ) -> LLMResult:
         # Check if we have a model in the request (from orchestrate)
         model_used = "mocked_model"
         provider = "test-provider"
@@ -1026,7 +1029,6 @@ def mock_llm_service(mock_llm_result):
             content = "[LLMManager] Echo: Received request with tool outputs"
         else:
             content = f"[LLMManager] Echo: Received request with model {model_used}"
-
 
         return LLMResult(
             provider=provider,
@@ -1352,6 +1354,7 @@ async def failing_provider():
     provider.health_check = AsyncMock(return_value=False)
 
     return provider
+
 
 @pytest.fixture
 def mock_streaming_provider():

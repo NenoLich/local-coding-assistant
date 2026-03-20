@@ -793,6 +793,18 @@ class RuntimeExecutor:
 
         reasoning_tokens = self._extract_reasoning_tokens(usage)
 
+        # Check for content errors in streaming metadata and promote to top level
+        final_metadata = {
+            "session_id": session_id,
+            "frame_id": frame_id,
+            "usage": usage,
+            "provider_metadata": metadata,
+        }
+
+        # If there's a content error in the streaming metadata, promote it
+        if metadata and metadata.get("content_error"):
+            final_metadata["content_error"] = metadata["content_error"]
+
         return LLMResult(
             content="".join(content_chunks),
             model=model,
@@ -804,10 +816,5 @@ class RuntimeExecutor:
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
             tool_calls=tool_calls_accumulator,
-            metadata={
-                "session_id": session_id,
-                "frame_id": frame_id,
-                "usage": usage,
-                "provider_metadata": metadata,
-            },
+            metadata=final_metadata,
         )

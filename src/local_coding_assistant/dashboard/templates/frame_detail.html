@@ -1,0 +1,405 @@
+{% extends "base.html" %}
+
+{% block title %}Frame {{ frame_id }} - LOCCA Dashboard{% endblock %}
+
+{% block content %}
+<div class="col-12">
+    <div class="row mt-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="/">Dashboard</a></li>
+                    <li class="breadcrumb-item"><a href="/runs">Runs</a></li>
+                    <li class="breadcrumb-item"><a href="/runs/{{ frame_id }}">Run {{ frame_id }}</a></li>
+                    <li class="breadcrumb-item active">Frame Details</li>
+                </ol>
+            </nav>
+            <h1>Frame Details</h1>
+            <p class="text-muted">Deep dive into frame execution: <code>{{ frame_id }}</code></p>
+        </div>
+    </div>
+
+    <!-- Frame Status Card -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Frame Information</h5>
+                    <button class="btn btn-sm btn-outline-primary" id="refresh-btn">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+                <div class="card-body" id="frame-info">
+                    <div class="text-center text-muted">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Loading frame information...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Prompt Context -->
+    <div class="row mt-4" id="prompt-section" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Prompt Context</h5>
+                </div>
+                <div class="card-body">
+                    <pre id="prompt-content" class="bg-light p-3 rounded" style="max-height: 400px; overflow-y: auto;"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- LLM Response -->
+    <div class="row mt-4" id="llm-response-section" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">LLM Response</h5>
+                </div>
+                <div class="card-body">
+                    <pre id="llm-response-content" class="bg-light p-3 rounded" style="max-height: 400px; overflow-y: auto;"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tool Calls -->
+    <div class="row mt-4" id="tool-calls-section" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Tool Calls</h5>
+                </div>
+                <div class="card-body">
+                    <div id="tool-calls-container">
+                        <!-- Tool calls will be inserted here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Action Timeline -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Action Timeline</h5>
+                </div>
+                <div class="card-body">
+                    <div id="actions-timeline">
+                        <div class="text-center text-muted">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading actions...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Back to Run -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body text-center">
+                    <a href="/runs/{{ frame_id }}" class="btn btn-secondary">
+                        <i class="bi bi-arrow-left"></i> Back to Run Details
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const frameId = '{{ frame_id }}';
+
+// Load frame details on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadFrameDetails();
+    
+    // Refresh button
+    document.getElementById('refresh-btn').addEventListener('click', function() {
+        loadFrameDetails();
+    });
+});
+
+function loadFrameDetails() {
+    // Load frame information
+    fetch(`/api/frames/${frameId}`)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            return response.json();
+        })
+        .then(data => {
+            displayFrameInfo(data);
+            displayPromptContext(data.prompt_context);
+            displayLLMResponse(data.llm_response);
+            displayToolCalls(data.tool_calls);
+            displayActionsTimeline(data.actions);
+        })
+        .catch(error => {
+            console.error('Error loading frame details:', error);
+            document.getElementById('frame-info').innerHTML = `
+                <div class="alert alert-danger">
+                    Error loading frame details: ${error.message}
+                </div>
+            `;
+        });
+}
+
+function displayFrameInfo(data) {
+    const container = document.getElementById('frame-info');
+    
+    container.innerHTML = `
+        <div class="row">
+            <div class="col-md-6">
+                <table class="table table-borderless">
+                    <tr>
+                        <td><strong>Frame ID:</strong></td>
+                        <td><code>${data.frame_id}</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Run ID:</strong></td>
+                        <td><code>${data.run_id}</code></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Status:</strong></td>
+                        <td>
+                            <span class="badge bg-${getStatusColor(data.status)}">${data.status}</span>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td><strong>Start Time:</strong></td>
+                        <td>${formatDateTime(data.start_time)}</td>
+                    </tr>
+                </table>
+            </div>
+            <div class="col-md-6">
+                <table class="table table-borderless">
+                    <tr>
+                        <td><strong>End Time:</strong></td>
+                        <td>${data.end_time ? formatDateTime(data.end_time) : '-'}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Duration:</strong></td>
+                        <td>${formatDuration(data.duration)}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Action Count:</strong></td>
+                        <td>${data.action_count}</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Tool Calls:</strong></td>
+                        <td>${data.tool_calls ? data.tool_calls.length : 0}</td>
+                    </tr>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+function displayPromptContext(promptContext) {
+    const section = document.getElementById('prompt-section');
+    const content = document.getElementById('prompt-content');
+    
+    if (promptContext) {
+        section.style.display = 'block';
+        content.textContent = promptContext;
+    } else {
+        section.style.display = 'none';
+    }
+}
+
+function displayLLMResponse(llmResponse) {
+    const section = document.getElementById('llm-response-section');
+    const content = document.getElementById('llm-response-content');
+    
+    if (llmResponse) {
+        section.style.display = 'block';
+        content.textContent = llmResponse;
+    } else {
+        section.style.display = 'none';
+    }
+}
+
+function displayToolCalls(toolCalls) {
+    const section = document.getElementById('tool-calls-section');
+    const container = document.getElementById('tool-calls-container');
+    
+    if (!toolCalls || toolCalls.length === 0) {
+        section.style.display = 'none';
+        return;
+    }
+    
+    section.style.display = 'block';
+    
+    const toolCallCards = toolCalls.map((call, index) => `
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0">Tool Call ${index + 1}: <code>${call.tool}</code></h6>
+                <small class="text-muted">${formatDateTime(call.timestamp)}</small>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <strong>Arguments:</strong>
+                        <pre class="bg-light p-2 rounded">${escapeHtml(JSON.stringify(call.args, null, 2))}</pre>
+                    </div>
+                    <div class="col-md-6">
+                        <strong>Result:</strong>
+                        <pre class="bg-light p-2 rounded">${escapeHtml(JSON.stringify(call.result, null, 2))}</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+    
+    container.innerHTML = toolCallCards;
+}
+
+function displayActionsTimeline(actions) {
+    const container = document.getElementById('actions-timeline');
+    
+    if (!actions || actions.length === 0) {
+        container.innerHTML = `
+            <div class="text-center text-muted">
+                <i class="bi bi-inbox" style="font-size: 3rem;"></i>
+                <p class="mt-2">No actions recorded for this frame</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const timeline = actions.map((action, index) => {
+        const icon = getActionIcon(action.type);
+        const color = getActionColor(action.type);
+        const time = formatDateTime(action.timestamp);
+        
+        // Format action data for better display
+        let actionData = action.data;
+        let displayData = {};
+        
+        if (action.type === 'tool_call' && actionData.tool_trace) {
+            displayData = {
+                name: actionData.name,
+                tool_name: actionData.tool_trace.tool_name,
+                input: actionData.tool_trace.input,
+                output: actionData.tool_trace.output,
+                success: actionData.tool_trace.success,
+                duration: actionData.tool_trace.duration_ms ? `${actionData.tool_trace.duration_ms}ms` : null
+            };
+        } else if (action.type === 'llm_call' && actionData.llm_metrics) {
+            displayData = {
+                name: actionData.name,
+                model: actionData.llm_metrics.model,
+                prompt_tokens: actionData.llm_metrics.prompt_tokens,
+                completion_tokens: actionData.llm_metrics.completion_tokens,
+                total_tokens: actionData.llm_metrics.total_tokens,
+                latency: actionData.llm_metrics.latency_ms ? `${actionData.llm_metrics.latency_ms}ms` : null
+            };
+        } else {
+            displayData = actionData;
+        }
+        
+        return `
+            <div class="timeline-item d-flex">
+                <div class="timeline-marker me-3">
+                    <div class="rounded-circle bg-${color} text-white d-flex align-items-center justify-content-center" style="width: 40px; height: 40px;">
+                        <i class="bi ${icon}"></i>
+                    </div>
+                </div>
+                <div class="timeline-content flex-grow-1">
+                    <div class="card mb-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">${action.type}${actionData.name ? `: ${actionData.name}` : ''}</h6>
+                            <small class="text-muted">${time}</small>
+                        </div>
+                        <div class="card-body">
+                            <pre class="bg-light p-2 rounded">${escapeHtml(JSON.stringify(displayData, null, 2))}</pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    container.innerHTML = `<div class="timeline">${timeline}</div>`;
+}
+
+function getActionIcon(type) {
+    const icons = {
+        'tool_start': 'bi-arrow-right-circle',
+        'tool_complete': 'bi-check2-circle',
+        'tool_call': 'bi-tools',
+        'llm_call': 'bi-cpu',
+        'llm_start': 'bi-play-circle',
+        'llm_complete': 'bi-check-circle',
+        'observation': 'bi-eye',
+        'frame_start': 'bi-box-arrow-in-right',
+        'frame_complete': 'bi-check-circle',
+        'error': 'bi-exclamation-triangle',
+        'warning': 'bi-exclamation-circle'
+    };
+    return icons[type] || 'bi-circle';
+}
+
+function getActionColor(type) {
+    const colors = {
+        'tool_start': 'info',
+        'tool_complete': 'success',
+        'tool_call': 'warning',
+        'llm_call': 'primary',
+        'llm_start': 'primary',
+        'llm_complete': 'success',
+        'observation': 'info',
+        'frame_start': 'info',
+        'frame_complete': 'success',
+        'error': 'danger',
+        'warning': 'warning'
+    };
+    return colors[type] || 'secondary';
+}
+
+function getStatusColor(status) {
+    switch (status) {
+        case 'completed': return 'success';
+        case 'running': return 'primary';
+        case 'error': return 'danger';
+        default: return 'secondary';
+    }
+}
+
+function formatDateTime(dateString) {
+    if (!dateString) return '-';
+    const date = new Date(dateString);
+    return date.toLocaleString();
+}
+
+function formatDuration(seconds) {
+    if (!seconds || seconds === 0) return '-';
+    if (seconds < 60) return `${seconds.toFixed(1)}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${Math.floor(seconds % 60)}s`;
+    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+</script>
+{% endblock %}

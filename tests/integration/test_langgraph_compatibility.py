@@ -172,9 +172,7 @@ Please describe what actions were taken and their results.
                         func_name = tool_call.name
                         args = tool_call.arguments
                         try:
-                            tool_result = self.tool_manager.run_tool(
-                                func_name, args
-                            )
+                            tool_result = self.tool_manager.run_tool(func_name, args)
 
                             if func_name == "final_answer":
                                 self.final_answer = args.get("answer", "")
@@ -325,6 +323,9 @@ Please provide:
             # Extract results
             iteration_data.update(final_state)
 
+            # Add to history before checking stopping conditions
+            self.history.append(iteration_data)
+
             # Check if we should stop
             act_result = final_state.get("act", {})
             if act_result.get("metadata", {}).get("stopped"):
@@ -343,8 +344,6 @@ Please provide:
 
             if not act_result.get("success", True):
                 break
-
-            self.history.append(iteration_data)
 
             # Update state for next iteration
             initial_state = final_state.copy()

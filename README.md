@@ -18,6 +18,7 @@ An AI-powered coding assistant that runs locally with support for LLMs, tools, a
 - **Programmatic Tool Calling (PTC)** - Advanced tool calling capabilities with sandboxed execution
 - **Sandbox Environment** - Secure, isolated execution environment for untrusted code
 - **Execution Statistics** - Comprehensive monitoring and metrics for tool execution
+- **Dashboard** - Web-based observability and analysis dashboard for ExecutionFrame monitoring
 
 ## Architecture Overview
 
@@ -43,6 +44,7 @@ LOCCA implements a sophisticated agent architecture with the following key compo
 - **Configuration System** - Three-layer precedence (global, session, call) with Pydantic schemas
 - **Sandbox Manager** - Secure execution environment with resource constraints and isolation
 - **Statistics Manager** - Tracks and reports on tool execution metrics and resource usage
+- **Dashboard System** - Web-based observability interface with real-time monitoring and analytics
 
 ## Configuration
 
@@ -187,7 +189,8 @@ All paths in configuration files can use the `@` aliases (e.g., `@data/models`) 
 │       │   ├── execution_types.py # Execution type definitions
 │       │   ├── executor.py   # Execution engine
 │       │   ├── handlers/     # Execution handlers
-│       │   └── runtime_manager.py # Session orchestration
+│       │   ├── runtime_manager.py # Session orchestration
+│       │   └── dashboard_integration.py # Dashboard event integration
 │       ├── sandbox/          # Secure code execution environment
 │       │   ├── guest/        # Guest-side sandbox components
 │       │   │   ├── agent.py  # Guest agent implementation
@@ -202,6 +205,16 @@ All paths in configuration files can use the `@` aliases (e.g., `@data/models`) 
 │       ├── tools/            # Tool system
 │       │   ├── base/         # Base tool classes and schemas
 │       │   └── tool_registry.py # Tool registration and management
+│       ├── dashboard/         # Web dashboard for observability
+│       │   ├── app.py        # FastAPI application
+│       │   ├── event_collector.py # Event aggregation and storage
+│       │   ├── models.py     # Pydantic models for dashboard data
+│       │   ├── run_dashboard.py # Dashboard runner script
+│       │   ├── routes/       # API and web routes
+│       │   │   ├── api.py    # REST API endpoints
+│       │   │   ├── main.py   # Main web page routes
+│       │   │   └── websocket.py # WebSocket handlers
+│       │   └── templates/    # Jinja2 HTML templates
 │       └── utils/            # Utility functions
 ├── tests/                    # Test suite
 │   ├── e2e/                  # End-to-end tests
@@ -303,6 +316,31 @@ uv run locca provider remove openrouter --dev
 # Start the development server
 uv run locca serve start --host 0.0.0.0 --port 8080 --reload
 ```
+
+### Dashboard
+
+```bash
+# Start the dashboard server
+uv run locca dashboard serve --host 127.0.0.1 --port 8080
+
+# Start dashboard in background (detached mode)
+uv run locca dashboard serve --detach
+
+# Stop dashboard server
+uv run locca dashboard stop --port 8080
+
+# Stop all dashboard servers
+uv run locca dashboard stop --all
+```
+
+The dashboard provides:
+- **Real-time monitoring** of active execution sessions
+- **Historical analysis** of runs and frames with detailed metrics
+- **Analytics dashboard** with charts and performance insights
+- **Interactive filtering** and data export capabilities
+- **WebSocket-based** live updates during agent execution
+
+Access the dashboard at `http://127.0.0.1:8080` when running.
 
 ## Advanced Features
 

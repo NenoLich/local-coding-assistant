@@ -132,9 +132,7 @@ class TestTruncationIntegration:
         assert "truncation" in (handler_output.template_path or "").lower()
 
         # Verify session updated
-        assert_session_continuation(
-            session, expected_keywords=["truncation"]
-        )
+        assert_session_continuation(session, expected_keywords=["truncation"])
 
     @pytest.mark.asyncio
     async def test_substantial_reasoning_truncation_strategy(self):
@@ -195,9 +193,7 @@ class TestTruncationIntegration:
         )
 
         # Verify session updated
-        assert_session_continuation(
-            session, expected_keywords=["truncation"]
-        )
+        assert_session_continuation(session, expected_keywords=["truncation"])
 
     @pytest.mark.asyncio
     async def test_truncation_retry_limit_enforcement(self):
@@ -309,11 +305,15 @@ class TestTruncationIntegration:
         }
 
         # Verify session state
-        assert "handler_context" in session.metadata, "Should have added handler context to metadata"
+        assert "handler_context" in session.metadata, (
+            "Should have added handler context to metadata"
+        )
         handler_context_meta = session.metadata["handler_context"]
         assert handler_context_meta["error_type"] == HandlerErrorType.TRUNCATION
         assert handler_context_meta["template_path"] == handler_output.template_path
-        assert "truncation" in handler_context_meta["template_path"], "Should have truncation template"
+        assert "truncation" in handler_context_meta["template_path"], (
+            "Should have truncation template"
+        )
 
     @pytest.mark.asyncio
     async def test_truncation_adjusted_llm_options_persistence(self):

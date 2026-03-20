@@ -22,6 +22,7 @@ tests/logs/
 tests/cache/
 htmlcov/
 local_docs/
+plan_docs/
 
 
 # IDE specific

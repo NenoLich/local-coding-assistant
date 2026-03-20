@@ -235,10 +235,10 @@ async def test_execute_request_success(sandbox_project_root: Path) -> None:
     request = SandboxExecutionRequest(code="print('hello')", session_id="test-session")
 
     response_data = {
-        "success": True, 
-        "stdout": "hello", 
+        "success": True,
+        "stdout": "hello",
         "return_code": 0,
-        "metrics_per_tool_call": {"tool_calls": []}
+        "metrics_per_tool_call": {"tool_calls": []},
     }
 
     mock_request_file = Path("/tmp/request.json")
@@ -259,9 +259,7 @@ async def test_execute_request_success(sandbox_project_root: Path) -> None:
             "_build_execution_response",
             return_value=SandboxExecutionResponse(success=True),
         ) as mock_build,
-        patch.object(
-            DockerSandbox, "_process_tool_call_metrics"
-        ) as mock_process,
+        patch.object(DockerSandbox, "_process_tool_call_metrics") as mock_process,
         patch.object(
             sandbox, "_add_metrics_to_response", new_callable=AsyncMock
         ) as mock_add_metrics,

@@ -18,13 +18,16 @@ LOCCA is a sophisticated AI-powered coding assistant designed to run entirely on
 - **Session Management** - Persistent sessions with context awareness
 - **Tool System** - Extensible tool registry with JSON schema validation
 - **Sandbox Environment** - Secure, isolated execution environment
+- **Dashboard** - Web-based observability and analysis dashboard
 
 ## Quick Links
 
 - [Getting Started](getting-started/installation.md) - Installation and setup
 - [CLI Usage](user-guide/cli-usage.md) - Command line interface guide
+- [Dashboard Guide](user-guide/dashboard.md) - Web dashboard documentation
 - [Architecture Overview](architecture/overview.md) - System architecture
 - [API Reference](api/agent.md) - Code documentation
+- [Dashboard API](api/dashboard.md) - Dashboard REST API
 - [Contributing](development/contributing.md) - Development guidelines
 
 ## Project Status

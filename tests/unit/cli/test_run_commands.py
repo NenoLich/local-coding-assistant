@@ -62,12 +62,14 @@ class TestRunCommands:
 
     def _mock_orchestrate(self):
         """Mock async generator for orchestrate method."""
+
         async def gen():
             yield ExecutionEvent(
                 type=EventType.TURN_COMPLETE,
                 session_id="test_session",
-                data={"report": TEST_RESPONSE}
+                data={"report": TEST_RESPONSE},
             )
+
         return gen()
 
     def test_query_basic(self):

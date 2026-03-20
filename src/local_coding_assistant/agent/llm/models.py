@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+from pydantic import BaseModel, Field
 
 from local_coding_assistant.config.schemas import LLMConfig
 from local_coding_assistant.core.exceptions import LLMContentError
@@ -29,26 +30,24 @@ def _normalize_tool_arguments(arguments: Any) -> dict[str, Any]:
     raise LLMContentError(f"Unsupported tool argument type: {type(arguments)}")
 
 
-@dataclass(slots=True)
-class LLMToolCall:
+class LLMToolCall(BaseModel):
     """Normalized representation of a tool call emitted by the provider."""
 
     name: str
-    arguments: dict[str, Any] = field(default_factory=dict)
+    arguments: dict[str, Any] = Field(default_factory=dict)
     id: str | None = None
     type: str = "function"
 
 
-@dataclass(slots=True)
-class LLMTask:
+class LLMTask(BaseModel):
     """Domain-level request for language model generation."""
 
     prompt: str
-    context: list[dict[str, Any]] = field(default_factory=list)
+    context: list[dict[str, Any]] = Field(default_factory=list)
     system_prompt: str | None = None
-    tools: list[dict[str, Any]] = field(default_factory=list)
-    tool_outputs: dict[str, Any] = field(default_factory=dict)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    tool_outputs: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     def build_provider_request(
         self,
@@ -94,8 +93,7 @@ class LLMTask:
         )
 
 
-@dataclass(slots=True)
-class LLMOptions:
+class LLMOptions(BaseModel):
     """User-supplied options for an LLM call."""
 
     provider: str | None = None
@@ -108,7 +106,7 @@ class LLMOptions:
     response_format: str | None = None
     tool_choice: str | None = None
     policy: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     def resolved(
         self,
@@ -153,8 +151,7 @@ class LLMOptions:
         )
 
 
-@dataclass(slots=True)
-class ResolvedLLMOptions:
+class ResolvedLLMOptions(BaseModel):
     """Concrete options derived from config defaults and overrides."""
 
     provider_hint: str | None
@@ -167,12 +164,11 @@ class ResolvedLLMOptions:
     response_format: str | None
     tool_choice: str | None
     policy_name: str | None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
     max_failovers: int = 1
 
 
-@dataclass(slots=True)
-class LLMPolicy:
+class LLMPolicy(BaseModel):
     """Represents a routing policy defined in configuration."""
 
     name: str
@@ -191,8 +187,7 @@ class LLMPolicy:
         return max(1, default)
 
 
-@dataclass(slots=True)
-class LLMResult:
+class LLMResult(BaseModel):
     """Normalized response returned to the rest of the application."""
 
     content: str
@@ -204,12 +199,11 @@ class LLMResult:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     total_tokens: int | None = None
-    tool_calls: list[LLMToolCall] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    tool_calls: list[LLMToolCall] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass(slots=True)
-class LLMStreamChunk:
+class LLMStreamChunk(BaseModel):
     """Represents a chunk of streaming content."""
 
     content: str
@@ -218,9 +212,9 @@ class LLMStreamChunk:
     finish_reason: str | None = None
     reasoning: str | None = None
     is_final: bool = False
-    tool_calls: list[LLMToolCall] = field(default_factory=list)
+    tool_calls: list[LLMToolCall] = Field(default_factory=list)
     usage: dict[str, Any] | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 if TYPE_CHECKING:  # pragma: no cover - typing only

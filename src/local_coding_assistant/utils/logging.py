@@ -26,6 +26,7 @@ from structlog.processors import (
     UnicodeDecoder,
 )
 from structlog.stdlib import LoggerFactory
+from structlog.typing import Processor
 
 # Type aliases
 LogLevel = int | str
@@ -38,6 +39,9 @@ THIRD_PARTY_LOGGERS = {
     "docker.auth": logging.WARNING,
     "docker.utils.config": logging.WARNING,
     "asyncio": logging.WARNING,
+    "httpx": logging.WARNING,
+    "httpcore": logging.WARNING,
+    "httpcore.connection": logging.WARNING,
 }
 
 LEVEL_EMOJI_MAP = {
@@ -270,7 +274,7 @@ def _get_console_processors() -> list[Any]:
 
 def _get_file_processors(json_format: bool = True) -> list[Any]:
     """Get processors for file output with more detailed information."""
-    processors = [
+    processors: list[Processor] = [
         # Add context variables and standard fields
         structlog.contextvars.merge_contextvars,
         structlog.stdlib.add_logger_name,  # Full logger name in files

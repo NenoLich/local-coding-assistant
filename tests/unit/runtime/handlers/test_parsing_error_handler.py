@@ -41,9 +41,7 @@ class TestParsingErrorHandler:
         )
 
     @pytest.mark.asyncio
-    async def test_handle_parsing_error_retries(
-        self, handler, parsing_error_context
-    ):
+    async def test_handle_parsing_error_retries(self, handler, parsing_error_context):
         """Test that parsing errors generate retry."""
         result = await handler.handle(parsing_error_context)
 
@@ -64,9 +62,14 @@ class TestParsingErrorHandler:
         context = result.handler_context
         assert context["error_type"] == "parsing_error"
         assert context["message"] == "Invalid JSON in tool arguments"
-        assert context["raw_response"] == '{"tool_calls": [{"name": "search_files", "arguments": "invalid json"}]}'
+        assert (
+            context["raw_response"]
+            == '{"tool_calls": [{"name": "search_files", "arguments": "invalid json"}]}'
+        )
         assert context["reasoning"] == "Some reasoning content"
-        assert context["raw_tool_calls"] == [{"name": "search_files", "arguments": "invalid json"}]
+        assert context["raw_tool_calls"] == [
+            {"name": "search_files", "arguments": "invalid json"}
+        ]
 
     @pytest.mark.asyncio
     async def test_handle_with_none_fields(self, handler):

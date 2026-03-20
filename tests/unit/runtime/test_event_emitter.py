@@ -34,7 +34,9 @@ class TestEventStream:
         """Test emitting events and iterating over them."""
         events_to_emit = [
             ExecutionEvent(type=EventType.LLM_START, session_id="test"),
-            ExecutionEvent(type=EventType.LLM_CHUNK, session_id="test", data={"content": "hello"}),
+            ExecutionEvent(
+                type=EventType.LLM_CHUNK, session_id="test", data={"content": "hello"}
+            ),
             ExecutionEvent(type=EventType.LLM_COMPLETE, session_id="test"),
         ]
 
@@ -67,6 +69,7 @@ class TestEventStream:
         assert collected_events[1].data["content"] == "hello"
         assert collected_events[2].type == EventType.LLM_COMPLETE
 
+
 class TestEventFiltering:
     """Test event filtering and mapping utilities."""
 
@@ -75,7 +78,9 @@ class TestEventFiltering:
         """Test filtering events by predicate."""
         # Filter only LLM events
         llm_events = []
-        async for event in filter_events(mock_event_stream, lambda e: e.type.value.startswith("llm")):
+        async for event in filter_events(
+            mock_event_stream, lambda e: e.type.value.startswith("llm")
+        ):
             llm_events.append(event)
 
         assert len(llm_events) == 4  # LLM_START, two LLM_CHUNK, LLM_COMPLETE
@@ -93,8 +98,8 @@ class TestEventFiltering:
                 session_id=f"mapped_{e.session_id}",
                 frame_id=e.frame_id,
                 data=e.data,
-                timestamp=e.timestamp
-            )
+                timestamp=e.timestamp,
+            ),
         ):
             transformed_events.append(event)
 
@@ -113,8 +118,8 @@ class TestEventFiltering:
                 session_id=f"processed_{e.session_id}",
                 frame_id=e.frame_id,
                 data=e.data,
-                timestamp=e.timestamp
-            )
+                timestamp=e.timestamp,
+            ),
         ):
             processed_events.append(event)
 
@@ -159,6 +164,7 @@ class TestEventSerialization:
         assert event.frame_id == "frame_1"
         assert event.data == {"content": "test content"}
         from datetime import datetime, timezone
+
         assert event.timestamp == datetime.fromtimestamp(1234567890.0, tz=timezone.utc)
 
     def test_event_from_dict_defaults(self):
@@ -175,6 +181,7 @@ class TestEventSerialization:
         assert event.frame_id is None
         assert event.data == {}
         from datetime import datetime, timezone
+
         assert event.timestamp == datetime.fromtimestamp(0.0, tz=timezone.utc)
 
     def test_serialize_deserialize_events(self, sample_events):
