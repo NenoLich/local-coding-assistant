@@ -4,10 +4,10 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-from local_coding_assistant.cli.main import app
 from local_coding_assistant.cli.commands import run as run_cli
+from local_coding_assistant.cli.main import app
+from local_coding_assistant.runtime.events import EventType, ExecutionEvent
 from local_coding_assistant.runtime.reporting import RunReport
-from local_coding_assistant.runtime.events import ExecutionEvent, EventType
 
 
 async def _fake_events_generator(

@@ -1,6 +1,5 @@
 """Unit tests for the PromptComposer class."""
 
-import os
 import pytest
 
 
@@ -38,7 +37,7 @@ def test_prompt_composition(composer, test_case_dir, load_test_case, request):
         return  # Skip assertion when updating
 
     # Read expected output
-    with open(expected_file, "r", encoding="utf-8") as f:
+    with open(expected_file, encoding="utf-8") as f:
         expected_output = f.read()
 
     # Verify the result matches expected output

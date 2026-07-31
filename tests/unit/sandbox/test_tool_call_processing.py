@@ -2,12 +2,12 @@
 
 from unittest.mock import MagicMock
 
+from local_coding_assistant.core.telemetry_types import ResourceType
 from local_coding_assistant.sandbox.docker_sandbox import DockerSandbox
 from local_coding_assistant.sandbox.sandbox_types import (
     SandboxExecutionResponse,
     ToolCallMetric,
 )
-from local_coding_assistant.core.telemetry_types import ResourceType
 
 
 class TestToolCallProcessing:

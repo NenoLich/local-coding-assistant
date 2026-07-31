@@ -1,38 +1,34 @@
 """Integration tests for LLM pipeline functions and error handling."""
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from local_coding_assistant.agent.llm import (
+    LLMResult,
     LLMService,
     LLMTask,
-    LLMResult,
-    LLMToolCall,
-    LLMOptions,
 )
 from local_coding_assistant.agent.llm.pipeline import (
-    _extract_usage_metrics,
-    _extract_reasoning_tokens,
     ResponseNormalizer,
     StreamingNormalizer,
+    _extract_reasoning_tokens,
+    _extract_usage_metrics,
 )
+from local_coding_assistant.config.schemas import AgentProfileConfig
 from local_coding_assistant.core.exceptions import LLMContentError
 from local_coding_assistant.providers.base import (
     ProviderLLMResponse,
     ProviderLLMResponseDelta,
 )
+from local_coding_assistant.runtime.events import EventType
 from local_coding_assistant.runtime.execution_types import (
     ExecutionFrame,
     ExecutionStatus,
     RenderedPrompt,
 )
-from local_coding_assistant.config.schemas import AgentProfileConfig
-from local_coding_assistant.runtime.context_manager import ContextManager
-from local_coding_assistant.runtime.events import EventType
-from local_coding_assistant.runtime.runtime_types import ExecutionMode, PromptContext
 from local_coding_assistant.runtime.executor import RuntimeExecutor
+from local_coding_assistant.runtime.runtime_types import ExecutionMode, PromptContext
 
 
 class TestLLMPipelineIntegration:
@@ -238,7 +234,6 @@ class TestLLMPipelineIntegration:
         executor = RuntimeExecutor(
             llm_service=mock_llm_service,
             tool_manager=mock_tool_manager,
-            context_manager=mock_context_manager,
             config_manager=mock_config_manager,
         )
 

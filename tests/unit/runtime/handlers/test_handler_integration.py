@@ -2,9 +2,11 @@
 Unit tests for HandlerIntegration.
 """
 
-import pytest
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
+from local_coding_assistant.runtime.execution_types import ExecutionStatus
 from local_coding_assistant.runtime.handlers.handler_integration import (
     HandlerIntegration,
 )
@@ -12,9 +14,7 @@ from local_coding_assistant.runtime.handlers.handler_types import (
     HandlerContext,
     HandlerOutput,
 )
-from local_coding_assistant.runtime.execution_types import ExecutionStatus
-from local_coding_assistant.runtime.session import SessionState, Message
-from local_coding_assistant.agent.llm import LLMResult
+from local_coding_assistant.runtime.session import SessionState
 
 
 class TestHandlerIntegration:

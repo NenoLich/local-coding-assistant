@@ -2,17 +2,17 @@
 Unit tests for ParsingErrorHandler.
 """
 
-import pytest
 from unittest.mock import Mock
 
+import pytest
+
+from local_coding_assistant.runtime.execution_types import ExecutionStatus
 from local_coding_assistant.runtime.handlers.handler_types import (
     HandlerContext,
-    HandlerOutput,
 )
 from local_coding_assistant.runtime.handlers.parsing_error_handler import (
     ParsingErrorHandler,
 )
-from local_coding_assistant.runtime.execution_types import ExecutionStatus
 
 
 class TestParsingErrorHandler:

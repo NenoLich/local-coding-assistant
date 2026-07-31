@@ -2,8 +2,8 @@ policies:
   # Plan mode with strong reasoning
   planning_mode:
     models:
-      - "mistral-ai/Codestral-2501"
-      - "z-ai/glm-4.5-air:free"
+      - "nvidia/nemotron-3-ultra-550b-a55b:free"
+      - "cohere/north-mini-code:free"
       - "fallback:any"
     max_failovers: 3
     fallback_strategy: "exponential"
@@ -11,8 +11,8 @@ policies:
   # Custom policy with exponential backoff
   coding_task:
     models:
-      - "mistral-ai/Codestral-2501"
-      - "kwaipilot/kat-coder-pro:free"
+      - "nvidia/nemotron-3-ultra-550b-a55b:free"
+      - "cohere/north-mini-code:free"
       - "fallback:any"
     max_failovers: 3
     fallback_strategy: "exponential"
@@ -20,7 +20,7 @@ policies:
   # Fast policy for simple tasks
   general:
     models:
-      - "xiaomi/mimo-v2-flash:free"
+      - "nvidia/nemotron-3-ultra-550b-a55b:free"
       - "fallback:any"
     max_failovers: 1
     fallback_strategy: "sequential"

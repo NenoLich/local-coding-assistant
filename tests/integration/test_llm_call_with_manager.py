@@ -3,14 +3,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from local_coding_assistant.agent.llm import (
+    LLMResult,
     LLMService,
     LLMTask,
-    LLMResult,
     LLMToolCall,
 )
-
 from local_coding_assistant.config.config_manager import ConfigManager
-from local_coding_assistant.config.schemas import ProviderStatus, LLMConfig
+from local_coding_assistant.config.schemas import LLMConfig, ProviderStatus
 from local_coding_assistant.providers.base import ProviderLLMResponse
 
 

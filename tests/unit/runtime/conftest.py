@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -8,7 +8,6 @@ from local_coding_assistant.core.protocols import IConfigManager
 from local_coding_assistant.runtime.runtime_types import AgentProfile
 from local_coding_assistant.runtime.session import SessionState
 from local_coding_assistant.tools.tool_manager import ToolManager
-
 
 # ─── MOCK CLASSES ────────────────────────────────────────────────────────────
 
@@ -20,7 +19,7 @@ class MockTool:
         self,
         name: str,
         description: str,
-        parameters: Optional[dict] = None,
+        parameters: dict | None = None,
         execution_mode: str = "classic",
         available: bool = True,
     ):
@@ -59,7 +58,7 @@ class MockTool:
 class MockToolManager:
     """Mock tool manager for testing tool selection and execution."""
 
-    def __init__(self, tools: Optional[list] = None):
+    def __init__(self, tools: list | None = None):
         self.tools = tools or []
 
     def list_tools(
@@ -316,11 +315,11 @@ def session_state() -> SessionState:
 
 # Re-export for backward compatibility
 __all__ = [
+    "MockConfigManager",
     "MockTool",
     "MockToolManager",
-    "MockConfigManager",
     "ToolManagerHelper",
     "config_manager",
-    "tool_manager",
     "session_state",
+    "tool_manager",
 ]

@@ -12,12 +12,11 @@ from local_coding_assistant.runtime.handlers.handler_types import (
     HandlerContext,
     HandlerErrorType,
 )
-
 from tests.integration.runtime.conftest import (
     MockLLMDriver,
-    create_test_session,
     assert_handler_output,
     assert_session_continuation,
+    create_test_session,
     verify_llm_options_adjustment,
 )
 from tests.integration.runtime.mock_llm_responses import MockLLMResponse

@@ -4,7 +4,7 @@ Tests for event emitter utilities.
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from datetime import UTC
 
 import pytest
 
@@ -163,9 +163,9 @@ class TestEventSerialization:
         assert event.session_id == "test_session"
         assert event.frame_id == "frame_1"
         assert event.data == {"content": "test content"}
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        assert event.timestamp == datetime.fromtimestamp(1234567890.0, tz=timezone.utc)
+        assert event.timestamp == datetime.fromtimestamp(1234567890.0, tz=UTC)
 
     def test_event_from_dict_defaults(self):
         """Test event_from_dict with missing optional fields."""
@@ -180,9 +180,9 @@ class TestEventSerialization:
         assert event.session_id == "test_session"
         assert event.frame_id is None
         assert event.data == {}
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        assert event.timestamp == datetime.fromtimestamp(0.0, tz=timezone.utc)
+        assert event.timestamp == datetime.fromtimestamp(0.0, tz=UTC)
 
     def test_serialize_deserialize_events(self, sample_events):
         """Test round-trip serialization of events."""

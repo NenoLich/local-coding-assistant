@@ -4,7 +4,7 @@ Unit tests for CLI run commands.
 
 import asyncio
 import logging
-from unittest.mock import AsyncMock, patch, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 import typer
@@ -93,7 +93,7 @@ class TestRunCommands:
 
         # Verify the expected output
         self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}", err=True)
-        self.mock_echo.assert_any_call(f"Using agent mode: no_agent", err=True)
+        self.mock_echo.assert_any_call("Using agent mode: no_agent", err=True)
 
         # Verify the response was printed
         self.mock_echo.assert_any_call("\nResponse:")
@@ -129,7 +129,7 @@ class TestRunCommands:
 
         # Verify the expected output
         self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}", err=True)
-        self.mock_echo.assert_any_call(f"Using agent mode: no_agent", err=True)
+        self.mock_echo.assert_any_call("Using agent mode: no_agent", err=True)
 
         # Verify the response was printed
         self.mock_echo.assert_any_call("\nResponse:")
@@ -166,7 +166,7 @@ class TestRunCommands:
 
         # Verify the expected output
         self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}", err=True)
-        self.mock_echo.assert_any_call(f"Using agent mode: no_agent", err=True)
+        self.mock_echo.assert_any_call("Using agent mode: no_agent", err=True)
 
         # Verify the response was printed
         self.mock_echo.assert_any_call("\nResponse:")
@@ -258,7 +258,7 @@ class TestRunCommands:
 
         # Verify the expected output format
         self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}", err=True)
-        self.mock_echo.assert_any_call(f"Using agent mode: no_agent", err=True)
+        self.mock_echo.assert_any_call("Using agent mode: no_agent", err=True)
         self.mock_echo.assert_any_call("\nResponse:")
         self.mock_echo.assert_any_call(TEST_RESPONSE["message"])
 

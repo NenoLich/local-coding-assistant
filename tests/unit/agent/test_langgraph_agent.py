@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from local_coding_assistant.agent.langgraph_agent import AgentState, LangGraphAgent
 from local_coding_assistant.agent import LLMService
+from local_coding_assistant.agent.langgraph_agent import AgentState, LangGraphAgent
 from local_coding_assistant.core.exceptions import AgentError
 from local_coding_assistant.tools.tool_manager import ToolManager
 

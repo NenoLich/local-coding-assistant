@@ -67,6 +67,10 @@ class LLMConfig(ConfigModel, section="llm"):
         default_factory=list,
         description="List of available providers with their status",
     )
+    auto_register_litellm_models: bool = config_field(
+        default=False,
+        description="Automatically register provider models with LiteLLM to bypass cost mapping for unmapped models",
+    )
 
     def with_overrides(self, **overrides: Any) -> LLMConfig:
         """Create a new LLMConfig with specified overrides.

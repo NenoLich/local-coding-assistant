@@ -5,8 +5,9 @@ Tests the interaction between RuntimeManager and HandlerIntegration in regular m
 specifically covering the code block that handles partial responses (lines 485-521).
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from local_coding_assistant.agent.llm import LLMResult
 from local_coding_assistant.runtime.events import EventType

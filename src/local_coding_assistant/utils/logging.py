@@ -42,6 +42,7 @@ THIRD_PARTY_LOGGERS = {
     "httpx": logging.WARNING,
     "httpcore": logging.WARNING,
     "httpcore.connection": logging.WARNING,
+    "LiteLLM": logging.INFO,
 }
 
 LEVEL_EMOJI_MAP = {

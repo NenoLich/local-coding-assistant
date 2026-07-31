@@ -1,19 +1,18 @@
 import json
 import logging
-
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from structlog.testing import capture_logs
 
 from local_coding_assistant.utils.logging import (
-    setup_logging,
-    get_logger,
-    structlog_default_serializer,
+    LEVEL_EMOJI_MAP,
     _add_emoji,
+    _add_process_info,
     _filter_sensitive_data,
     _truncate_logger_name,
-    _add_process_info,
-    LEVEL_EMOJI_MAP,
+    get_logger,
+    setup_logging,
+    structlog_default_serializer,
 )
 
 
@@ -83,11 +82,11 @@ def test_filter_sensitive_data():
 
 def test_structlog_default_serializer():
     """Test the default serializer for non-standard types."""
-    from datetime import datetime, date, time, timedelta
-    from pathlib import Path
+    from datetime import date, datetime, time, timedelta
     from decimal import Decimal
-    from uuid import UUID
     from enum import Enum
+    from pathlib import Path
+    from uuid import UUID
 
     # Test datetime
     dt = datetime(2025, 1, 1, 12, 0, 0)
@@ -210,7 +209,7 @@ def test_file_logging(tmp_path):
             # Single-line JSON object
             try:
                 entries.append(json.loads(line))
-            except json.JSONDecodeError as e:
+            except json.JSONDecodeError:
                 print(f"Failed to parse single-line entry: {line}")
                 raise
         elif line.startswith("{"):
@@ -222,7 +221,7 @@ def test_file_logging(tmp_path):
             current_entry.append(line)
             try:
                 entries.append(json.loads("\n".join(current_entry)))
-            except json.JSONDecodeError as e:
+            except json.JSONDecodeError:
                 print(f"Failed to parse multi-line entry: {current_entry}")
                 raise
             in_json = False

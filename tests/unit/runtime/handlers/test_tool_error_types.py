@@ -2,8 +2,6 @@
 Unit tests for tool error types.
 """
 
-import pytest
-
 from local_coding_assistant.runtime.handlers.tool_error_types import (
     ToolError,
     ToolErrorType,

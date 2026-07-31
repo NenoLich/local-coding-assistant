@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from local_coding_assistant.runtime import RuntimeManager
 from local_coding_assistant.runtime.events import EventType
 from local_coding_assistant.runtime.execution_types import ExecutionStatus
 from local_coding_assistant.tools.types import ToolExecutionResponse
-
 from tests.unit.runtime.conftest import MockConfigManager
 
 
@@ -449,7 +449,7 @@ class TestExecutionFrameIntegration:
     ):
         """Test that frame agent mode produces different results than regular mode."""
         # Setup mock LLM response for stream (FrameAgent)
-        from local_coding_assistant.agent.llm import LLMStreamChunk, LLMResult
+        from local_coding_assistant.agent.llm import LLMResult, LLMStreamChunk
 
         stream_response = LLMStreamChunk(
             content="Response for testing",

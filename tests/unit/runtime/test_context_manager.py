@@ -1,24 +1,23 @@
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 from local_coding_assistant.runtime.context_manager import (
     ContextManager,
-    ToolSelector,
+    ExecutionMode,
     MemoryProvider,
     SkillProvider,
-    ExecutionMode,
+    StaticComponentCache,
+    ToolsBundle,
+    ToolSelector,
     ToolSpec,
 )
+from local_coding_assistant.runtime.runtime_types import AgentProfile, PromptContext
 from local_coding_assistant.tools.types import ToolExecutionMode
-from local_coding_assistant.runtime.runtime_types import PromptContext, AgentProfile
 
 # Import shared test fixtures and mocks
 from .conftest import (
     MockTool,
-    MockToolManager,
-    config_manager,
-    tool_manager,
-    session_state,
 )
 
 
@@ -123,8 +122,7 @@ class TestContextManager:
     def test_init_with_defaults(self, config_manager):
         manager = ContextManager(config_manager)
         assert isinstance(manager.memory_provider, MemoryProvider)
-        assert isinstance(manager.skill_provider, SkillProvider)
-        assert isinstance(manager.tool_selector, ToolSelector)
+        assert isinstance(manager._cache, StaticComponentCache)
 
     def test_build_context_reasoning_mode(self, config_manager, session_state):
         manager = ContextManager(config_manager)
@@ -219,25 +217,6 @@ class TestContextManager:
         mode = manager._map_validated_mode_to_execution_mode("ptc")
         assert mode == ExecutionMode.SANDBOX_PYTHON
 
-    def test_resolve_agents_default(self, config_manager):
-        manager = ContextManager(config_manager)
-        agent = manager._resolve_agents(agent_mode=False, graph_mode=False)
-        assert agent.name == "default"
-
-    def test_resolve_agents_graph_mode(self, config_manager):
-        # Create mock agent profiles
-        planner = AgentProfile(name="planner", description="Planner")
-        executor = AgentProfile(name="executor", description="Executor")
-
-        # Create a manager with our custom agent catalog
-        manager = ContextManager(config_manager, agent_profiles=[planner, executor])
-
-        # Now when we resolve agents in graph mode, it should use our custom catalog
-        agent = manager._resolve_agents(agent_mode=False, graph_mode=True)
-
-        # We should get the first agent from the custom catalog
-        assert agent.name == "planner"
-
     def test_build_context_with_memories(self, config_manager, session_state):
         memory_provider = MemoryProvider()
         memory_provider.fetch = MagicMock(return_value=["memory1", "memory2"])
@@ -266,10 +245,154 @@ class TestContextManager:
             execution_mode=ExecutionMode.REASONING_ONLY
         )
 
-    def test_custom_agent_catalog(self, config_manager):
+    def test_custom_agent_catalog(self, config_manager, session_state):
         custom_agent = AgentProfile(name="custom", description="Custom agent")
         manager = ContextManager(config_manager, agent_profiles=[custom_agent])
 
         # Should use the provided agent catalog instead of config
-        agent = manager._resolve_agents(agent_mode=True, graph_mode=False)
-        assert agent.name == "custom"
+        context = manager.build_context(
+            session=session_state, user_input="test", tool_call_mode="reasoning_only"
+        )
+        assert context.agent_profile.name == "custom"
+
+
+class TestStaticComponentCache:
+    def test_cache_hit_agent_profile(self, config_manager):
+        cache = StaticComponentCache(config_manager)
+        profile1 = cache.get_agent_profile(agent_mode=False, graph_mode=False)
+        profile2 = cache.get_agent_profile(agent_mode=False, graph_mode=False)
+        assert profile1 is profile2  # Same object from cache
+
+    def test_cache_miss_agent_profile_different_params(self, config_manager):
+        cache = StaticComponentCache(config_manager)
+        profile1 = cache.get_agent_profile(agent_mode=False, graph_mode=False)
+        profile2 = cache.get_agent_profile(agent_mode=True, graph_mode=False)
+        assert profile1.name == "default"
+        assert profile2.name == "default"
+        # Different cache keys, but same profile from config
+
+    def test_cache_hit_tools(self, config_manager, tool_manager):
+        cache = StaticComponentCache(config_manager, tool_manager=tool_manager)
+        tools1, prompt1 = cache.get_tools("reasoning_only", tool_manager)
+        tools2, prompt2 = cache.get_tools("reasoning_only", tool_manager)
+        assert tools1 is tools2  # Same object from cache
+        assert prompt1 is prompt2
+
+    def test_cache_miss_tools_different_mode(self, config_manager, tool_manager):
+        cache = StaticComponentCache(config_manager, tool_manager=tool_manager)
+        tools1, _ = cache.get_tools("reasoning_only", tool_manager)
+        tools2, _ = cache.get_tools("classic", tool_manager)
+        # Different modes should return different results
+        assert tools1 != tools2
+
+    def test_cache_hit_skills(self, config_manager):
+        cache = StaticComponentCache(config_manager)
+        skills1 = cache.get_skills("reasoning_only")
+        skills2 = cache.get_skills("reasoning_only")
+        assert skills1 is skills2  # Same object from cache
+
+    def test_invalidate_all(self, config_manager, tool_manager):
+        cache = StaticComponentCache(config_manager, tool_manager=tool_manager)
+        # Populate caches
+        cache.get_agent_profile(agent_mode=False, graph_mode=False)
+        cache.get_tools("reasoning_only", tool_manager)
+        cache.get_skills("reasoning_only")
+
+        # Invalidate
+        cache.invalidate_all()
+
+        # Caches should be empty
+        assert len(cache._agent_profile_cache) == 0
+        assert len(cache._tools_cache) == 0
+        assert len(cache._skills_cache) == 0
+
+
+class TestToolsBundle:
+    def test_from_tool_manager_reasoning_only(self, tool_manager):
+        bundle = ToolsBundle.from_tool_manager(tool_manager, "reasoning_only")
+        assert bundle.tool_call_mode == "reasoning_only"
+        assert bundle.execution_mode == ToolExecutionMode.CLASSIC
+
+    def test_from_tool_manager_ptc(self, tool_manager):
+        bundle = ToolsBundle.from_tool_manager(tool_manager, "ptc")
+        assert bundle.tool_call_mode == "ptc"
+        assert bundle.execution_mode == ToolExecutionMode.PTC
+
+    def test_from_tool_manager_classic(self, tool_manager):
+        bundle = ToolsBundle.from_tool_manager(tool_manager, "classic")
+        assert bundle.tool_call_mode == "classic"
+        assert bundle.execution_mode == ToolExecutionMode.CLASSIC
+
+    def test_tools_bundle_equality(self, tool_manager):
+        bundle1 = ToolsBundle.from_tool_manager(tool_manager, "reasoning_only")
+        bundle2 = ToolsBundle.from_tool_manager(tool_manager, "reasoning_only")
+        assert bundle1 == bundle2
+
+    def test_tools_bundle_inequality_different_mode(self, tool_manager):
+        bundle1 = ToolsBundle.from_tool_manager(tool_manager, "reasoning_only")
+        bundle2 = ToolsBundle.from_tool_manager(tool_manager, "classic")
+        assert bundle1 != bundle2
+
+    def test_tools_bundle_frozen(self, tool_manager):
+        bundle = ToolsBundle.from_tool_manager(tool_manager, "reasoning_only")
+        with pytest.raises(Exception):  # FrozenInstanceError
+            bundle.tool_call_mode = "classic"
+
+
+class TestContextManagerCaching:
+    def test_cache_hit_repeated_calls(self, config_manager, session_state):
+        manager = ContextManager(config_manager)
+        context1 = manager.build_context(
+            session=session_state, user_input="test", tool_call_mode="reasoning_only"
+        )
+        context2 = manager.build_context(
+            session=session_state, user_input="test2", tool_call_mode="reasoning_only"
+        )
+        # Agent profile should be cached (same object)
+        assert context1.agent_profile is context2.agent_profile
+
+    def test_cache_miss_mode_change(self, config_manager, session_state):
+        manager = ContextManager(config_manager)
+        context1 = manager.build_context(
+            session=session_state, user_input="test", tool_call_mode="reasoning_only"
+        )
+        context2 = manager.build_context(
+            session=session_state, user_input="test", tool_call_mode="classic"
+        )
+        # Different modes should have different execution modes
+        assert context1.execution_mode == ExecutionMode.REASONING_ONLY
+        assert context2.execution_mode == ExecutionMode.CLASSIC_TOOLS
+
+    def test_dynamic_components_always_fresh(self, config_manager, session_state):
+        manager = ContextManager(config_manager)
+        context1 = manager.build_context(
+            session=session_state, user_input="test1", tool_call_mode="reasoning_only"
+        )
+        # Add a message to history
+        from local_coding_assistant.runtime.session import Message
+
+        session_state.history.append(Message(role="user", content="new message"))
+
+        context2 = manager.build_context(
+            session=session_state, user_input="test2", tool_call_mode="reasoning_only"
+        )
+        # History should be different (dynamic component)
+        assert len(context1.history) != len(context2.history)
+        # User input should be different
+        assert context1.user_input == "test1"
+        assert context2.user_input == "test2"
+
+    def test_invalidate_all_clears_cache(self, config_manager, session_state):
+        manager = ContextManager(config_manager)
+        # Populate cache
+        manager.build_context(
+            session=session_state, user_input="test", tool_call_mode="reasoning_only"
+        )
+
+        # Invalidate
+        manager.invalidate_all()
+
+        # Cache should be cleared
+        assert len(manager._cache._agent_profile_cache) == 0
+        assert len(manager._cache._tools_cache) == 0
+        assert len(manager._cache._skills_cache) == 0

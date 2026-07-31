@@ -51,7 +51,6 @@ class FrameAgent:
         self._executor = RuntimeExecutor(
             llm_service,
             tool_manager,
-            context_manager,
             config_manager,
         )
         self._context_manager = context_manager
@@ -229,7 +228,7 @@ class FrameAgent:
             last_frame = frame
             metrics = frame.get_llm_metrics()
             if metrics:
-                total_tokens = (total_tokens or 0) + metrics.total_tokens
+                total_tokens = (total_tokens or 0) + (metrics.total_tokens or 0)
                 if metrics.model is not None:
                     models_used.add(metrics.model)
 
@@ -289,6 +288,10 @@ class FrameAgent:
                             "arguments": getattr(tc, "arguments", "{}"),
                         },
                     }
+                    # Include extra_content if present
+                    extra_content = getattr(tc, "extra_content", {})
+                    if extra_content:
+                        formatted_tool_call["extra_content"] = extra_content
                     session.add_assistant_message(tool_call=formatted_tool_call)
 
             # Add tool messages for each parent tool call in the frame

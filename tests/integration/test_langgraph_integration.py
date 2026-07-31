@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from local_coding_assistant.agent.llm import (
+    LLMResult,
     LLMService,
     LLMTask,
-    LLMResult,
 )
 from local_coding_assistant.core.exceptions import LLMError
 from tests.integration.conftest import MockToolManager

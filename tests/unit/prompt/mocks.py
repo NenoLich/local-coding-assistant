@@ -1,6 +1,6 @@
 """Mock implementations for prompt testing."""
 
-from typing import Any, List, Optional
+from typing import Any
 
 
 class MockPromptComposer:
@@ -14,12 +14,12 @@ class MockPromptComposer:
         self,
         system_core: str,
         agent_identity: str,
-        execution_rules: Optional[str] = None,
-        constraints: Optional[List[str]] = None,
-        skills: Optional[List[str]] = None,
-        tools: Optional[List[str]] = None,
-        examples: Optional[List[str]] = None,
-        memories: Optional[List[str]] = None,
+        execution_rules: str | None = None,
+        constraints: list[str] | None = None,
+        skills: list[str] | None = None,
+        tools: list[str] | None = None,
+        examples: list[str] | None = None,
+        memories: list[str] | None = None,
         **kwargs: Any,
     ) -> str:
         """Mock compose method that stores arguments and returns a simple string."""

@@ -17,10 +17,13 @@ class DashboardIntegration:
         self._dashboard_url = dashboard_url
         self._enabled = False
         self._client: httpx.AsyncClient | None = None
+        self._consecutive_failures = 0
+        self._max_consecutive_failures = 5
 
     def enable(self, dashboard_url: str | None = None):
         """Enable dashboard integration."""
         self._enabled = True
+        self._consecutive_failures = 0
         if dashboard_url:
             self._dashboard_url = dashboard_url
         log.info(f"Dashboard integration enabled, URL: {self._dashboard_url}")
@@ -54,6 +57,10 @@ class DashboardIntegration:
             )
             return
 
+        # Temporarily disable after repeated failures to reduce noise
+        if self._consecutive_failures >= self._max_consecutive_failures:
+            return
+
         try:
             client = self._get_client()
 
@@ -78,8 +85,18 @@ class DashboardIntegration:
                 )
             else:
                 log.debug(f"Event {event.type.value} sent to dashboard successfully")
+                self._consecutive_failures = 0  # Reset on success
 
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            # Expected failures when dashboard is not running - log briefly without traceback
+            self._consecutive_failures += 1
+            if self._consecutive_failures == 1:
+                log.debug(
+                    f"Dashboard unavailable ({type(e).__name__}), will suppress further errors"
+                )
         except Exception as e:
+            # Unexpected errors - log with full traceback
+            self._consecutive_failures += 1
             log.debug(f"Failed to send event to dashboard: {e}")
             import traceback
 

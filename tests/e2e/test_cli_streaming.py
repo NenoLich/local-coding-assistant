@@ -6,13 +6,11 @@ Tests real-time content display, tool execution feedback, and progress indicator
 import asyncio
 import time
 from io import StringIO
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from rich.console import Console
-from typer.testing import CliRunner
 
-from local_coding_assistant.cli.commands import run as run_cli
 from local_coding_assistant.cli.main import app
 from local_coding_assistant.runtime.events import EventType, ExecutionEvent
 

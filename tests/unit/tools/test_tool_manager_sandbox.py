@@ -3,26 +3,23 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 from pytest_mock import MockerFixture
 
 from local_coding_assistant.core.exceptions import ToolRegistryError
+from local_coding_assistant.tools.tool_manager import ToolManager
 from local_coding_assistant.tools.types import (
     ToolExecutionRequest,
     ToolInfo,
     ToolSource,
-    ToolCategory,
 )
-from local_coding_assistant.tools.tool_manager import ToolManager
 
 from .tool_test_helpers import (
     StubToolConfig,
     SyncTestTool,
     build_manager,
-    make_tool_info,
 )
 
 # Add mocker fixture for tests that need it

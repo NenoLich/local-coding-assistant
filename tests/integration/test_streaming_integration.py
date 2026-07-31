@@ -7,13 +7,13 @@ import asyncio
 import time
 from collections.abc import AsyncIterator
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from local_coding_assistant.agent.frame_agent import FrameAgent
 from local_coding_assistant.runtime.events import EventType, ExecutionEvent
-from local_coding_assistant.runtime.executor import ExecutionFrame, RuntimeExecutor
+from local_coding_assistant.runtime.executor import RuntimeExecutor
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 
 
@@ -1279,7 +1279,6 @@ class TestTimeoutCancellationIntegration:
     @pytest.mark.asyncio
     async def test_execution_timeout_handling(self, event_collector):
         """Test handling of execution timeouts during streaming."""
-        import asyncio
 
         session_id = "timeout-test"
         frame_id = "timeout-frame"
@@ -1351,7 +1350,6 @@ class TestTimeoutCancellationIntegration:
     @pytest.mark.asyncio
     async def test_cancellation_during_streaming(self, event_collector):
         """Test cancellation of streaming execution."""
-        import asyncio
 
         session_id = "cancellation-test"
         frame_id = "cancellation-frame"

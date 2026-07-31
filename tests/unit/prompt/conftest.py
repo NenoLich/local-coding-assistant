@@ -6,9 +6,10 @@ from pathlib import Path
 import pytest
 from jinja2 import Environment, FileSystemLoader
 
+from local_coding_assistant.config.path_manager import PathManager
+
 # Use mock implementation for testing
 from .mocks import MockPromptComposer as PromptComposer
-from local_coding_assistant.config.path_manager import PathManager
 
 # Disable warnings about redefining the PromptComposer name
 # pylint: disable=redefined-outer-name

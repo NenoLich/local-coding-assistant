@@ -6,11 +6,11 @@ from unittest.mock import mock_open, patch
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 from local_coding_assistant.config import ConfigManager
 from local_coding_assistant.config.schemas import AppConfig, LLMConfig, RuntimeConfig
-from pydantic import ValidationError
-from local_coding_assistant.core.exceptions import ConfigError, LLMError
+from local_coding_assistant.core.exceptions import ConfigError
 
 
 class TestConfigManager:
@@ -336,7 +336,7 @@ class TestConfigManager:
 
                 # Verify file was created and contains valid YAML
                 assert Path(temp_path).exists()
-                with open(temp_path, "r") as f:
+                with open(temp_path) as f:
                     saved_data = yaml.safe_load(f)
                     assert saved_data is not None
         finally:

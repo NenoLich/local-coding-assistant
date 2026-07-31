@@ -3,9 +3,8 @@ Tests for streaming event infrastructure.
 """
 
 import asyncio
-import time
 from collections.abc import AsyncIterator
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 import pytest
 
@@ -154,7 +153,7 @@ async def collect_events_with_timeout(
 
     try:
         await asyncio.wait_for(collect(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass  # Timeout is expected for infinite iterators in tests
 
     return events

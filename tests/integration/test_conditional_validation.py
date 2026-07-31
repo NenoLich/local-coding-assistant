@@ -1,7 +1,8 @@
 """Integration tests for conditional validation system."""
 
-import pytest
 import os
+
+import pytest
 
 from local_coding_assistant.config.config_manager import ConfigManager
 from local_coding_assistant.config.env_manager import get_env_manager
@@ -659,7 +660,7 @@ class TestPendingValidationOverride:
         assert config_manager.global_config.runtime.tool_call_mode == "reasoning_only"
 
         # No pending validations should have been resolved
-        assert not "runtime.tool_call_mode" in resolved, (
+        assert "runtime.tool_call_mode" not in resolved, (
             "No pending validations should have been resolved"
         )
 

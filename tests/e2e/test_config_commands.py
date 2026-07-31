@@ -4,7 +4,6 @@ import os
 from unittest.mock import patch
 
 from local_coding_assistant.cli.main import app
-from local_coding_assistant.config.env_manager import get_env_manager
 
 
 class TestConfigCommands:

@@ -2,17 +2,17 @@
 Unit tests for ToolFailureHandler.
 """
 
-import pytest
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
+import pytest
+
+from local_coding_assistant.runtime.execution_types import ExecutionStatus
 from local_coding_assistant.runtime.handlers.handler_types import (
     HandlerContext,
-    HandlerOutput,
 )
 from local_coding_assistant.runtime.handlers.tool_failure_handler import (
     ToolFailureHandler,
 )
-from local_coding_assistant.runtime.execution_types import ExecutionStatus
 
 
 class TestToolFailureHandler:

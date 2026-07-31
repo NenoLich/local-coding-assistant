@@ -8,14 +8,13 @@ This test demonstrates future LangGraph integration by:
 """
 
 import asyncio
-import json
 import time
 from typing import Any
 
 import pytest
 
 from local_coding_assistant.agent.agent_loop import AgentLoop
-from local_coding_assistant.agent.llm import LLMTask, LLMOptions
+from local_coding_assistant.agent.llm import LLMOptions, LLMTask
 
 
 # Simplified LangGraph-like implementation for testing

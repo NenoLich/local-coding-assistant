@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from local_coding_assistant.providers.base import (
+    OptionalParameters,
     ProviderLLMRequest,
     ProviderLLMResponse,
 )
@@ -32,10 +33,13 @@ class TestOpenAIChatCompletionsDriver:
         )
 
     @pytest.fixture
-    def mock_client(self, driver):
-        """Mock the OpenAI client"""
-        with patch.object(driver, "client", new_callable=AsyncMock) as mock_client:
-            yield mock_client
+    def mock_acompletion(self):
+        """Mock litellm's acompletion function"""
+        with patch(
+            "local_coding_assistant.providers.compatible_drivers.acompletion",
+            new_callable=AsyncMock,
+        ) as mock:
+            yield mock
 
     @pytest.fixture
     def test_request(self):
@@ -47,19 +51,25 @@ class TestOpenAIChatCompletionsDriver:
         )
 
     @pytest.mark.asyncio
-    async def test_generate_success(self, driver, mock_client, test_request):
+    async def test_generate_success(self, driver, mock_acompletion, test_request):
         """Test successful generate call"""
 
         # Create a proper mock response class
         class MockResponse:
             def __init__(self):
                 self.choices = [self.MockChoice()]
-                self.model = "test-model"
-                self.usage = {
-                    "total_tokens": 10,
-                    "prompt_tokens": 5,
-                    "completion_tokens": 5,
-                }
+                self.model = "openai/test-model"
+                self.usage = MagicMock()
+                self.usage.total_tokens = 10
+                self.usage.prompt_tokens = 5
+                self.usage.completion_tokens = 5
+                self.usage.model_dump = MagicMock(
+                    return_value={
+                        "total_tokens": 10,
+                        "prompt_tokens": 5,
+                        "completion_tokens": 5,
+                    }
+                )
                 self.id = "test-response-id"
                 self.created = 1234567890
 
@@ -73,7 +83,7 @@ class TestOpenAIChatCompletionsDriver:
                         self.role = "assistant"
                         self.content = "Test response"
 
-        mock_client.chat.completions.create.return_value = MockResponse()
+        mock_acompletion.return_value = MockResponse()
 
         # Call the method
         response = await driver.generate(test_request)
@@ -84,17 +94,20 @@ class TestOpenAIChatCompletionsDriver:
         assert response.model == "test-model"
         assert response.finish_reason == "stop"
         assert response.tokens_used == 10
-        mock_client.chat.completions.create.assert_called_once()
+        mock_acompletion.assert_called_once()
+        # Verify model prefix was added
+        call_kwargs = mock_acompletion.call_args[1]
+        assert call_kwargs["model"] == "openai/test-model"
 
     @pytest.mark.asyncio
-    async def test_generate_with_tools(self, driver, mock_client):
+    async def test_generate_with_tools(self, driver, mock_acompletion):
         """Test generate with tool calls"""
         # Prepare test request with tools
         request = ProviderLLMRequest(
             model="test-model",
             messages=[{"role": "user", "content": "What's the weather?"}],
-            parameters={
-                "tools": [
+            parameters=OptionalParameters(
+                tools=[
                     {
                         "type": "function",
                         "function": {
@@ -108,19 +121,25 @@ class TestOpenAIChatCompletionsDriver:
                         },
                     }
                 ]
-            },
+            ),
         )
 
         # Create a proper mock response class
         class MockResponse:
             def __init__(self):
                 self.choices = [self.MockChoice()]
-                self.model = "test-model"
-                self.usage = {
-                    "total_tokens": 20,
-                    "prompt_tokens": 10,
-                    "completion_tokens": 10,
-                }
+                self.model = "openai/test-model"
+                self.usage = MagicMock()
+                self.usage.total_tokens = 20
+                self.usage.prompt_tokens = 10
+                self.usage.completion_tokens = 10
+                self.usage.model_dump = MagicMock(
+                    return_value={
+                        "total_tokens": 20,
+                        "prompt_tokens": 10,
+                        "completion_tokens": 10,
+                    }
+                )
                 self.id = "test-response-id"
                 self.created = 1234567890
 
@@ -153,7 +172,7 @@ class TestOpenAIChatCompletionsDriver:
                                     return self.arguments
                                 return default
 
-        mock_client.chat.completions.create.return_value = MockResponse()
+        mock_acompletion.return_value = MockResponse()
 
         # Call the method
         response = await driver.generate(request)
@@ -166,7 +185,7 @@ class TestOpenAIChatCompletionsDriver:
         assert response.model == "test-model"
 
     @pytest.mark.asyncio
-    async def test_stream_success(self, driver, mock_client, test_request):
+    async def test_stream_success(self, driver, mock_acompletion, test_request):
         """Test successful streaming"""
 
         # Create a proper mock chunk class
@@ -174,8 +193,9 @@ class TestOpenAIChatCompletionsDriver:
             def __init__(self):
                 self.id = "test-chunk-123"
                 self.created = 1234567890
-                self.model = "test-model"
+                self.model = "openai/test-model"
                 self.choices = [self.MockChoice()]
+                self.usage = None
 
             class MockChoice:
                 def __init__(self):
@@ -192,7 +212,7 @@ class TestOpenAIChatCompletionsDriver:
         async def mock_stream():
             yield MockChunk()
 
-        mock_client.chat.completions.create.return_value = mock_stream()
+        mock_acompletion.return_value = mock_stream()
 
         # Call the method
         chunks = []
@@ -202,19 +222,26 @@ class TestOpenAIChatCompletionsDriver:
         # Assertions
         assert len(chunks) == 1
         assert chunks[0].content == "Hello"
-        assert chunks[0].metadata["model"] == "test-model"
+        # The metadata model is the prefixed model name from litellm
+        assert chunks[0].metadata["model"] == "openai/test-model"
 
     @pytest.mark.asyncio
-    async def test_health_check_success(self, driver, mock_client):
+    async def test_health_check_success(self, driver):
         """Test successful health check"""
-        mock_client.models.list.return_value = MagicMock()
-        assert await driver.health_check() is True
+        with patch(
+            "local_coding_assistant.providers.compatible_drivers.get_valid_models",
+            return_value=["model1"],
+        ):
+            assert await driver.health_check() is True
 
     @pytest.mark.asyncio
-    async def test_health_check_failure(self, driver, mock_client):
+    async def test_health_check_failure(self, driver):
         """Test failed health check"""
-        mock_client.models.list.side_effect = Exception("API error")
-        assert await driver.health_check() is False
+        with patch(
+            "local_coding_assistant.providers.compatible_drivers.get_valid_models",
+            side_effect=Exception("API error"),
+        ):
+            assert await driver.health_check() is False
 
     @pytest.mark.parametrize(
         "status_code,error_class,error_message_suffix",
@@ -228,7 +255,7 @@ class TestOpenAIChatCompletionsDriver:
     async def test_error_handling(
         self,
         driver,
-        mock_client,
+        mock_acompletion,
         test_request,
         status_code,
         error_class,
@@ -244,7 +271,7 @@ class TestOpenAIChatCompletionsDriver:
         )
         error = HTTPStatusError("Test error", request=request, response=response)
 
-        mock_client.chat.completions.create.side_effect = error
+        mock_acompletion.side_effect = error
 
         # Assert the appropriate exception is raised with the correct message
         with pytest.raises(error_class) as exc_info:
@@ -264,11 +291,11 @@ class TestOpenAIChatCompletionsDriver:
     )
     @pytest.mark.asyncio
     async def test_string_based_error_handling(
-        self, driver, mock_client, test_request, error_message, expected_exception
+        self, driver, mock_acompletion, test_request, error_message, expected_exception
     ):
-        """Test error handling based on string content when no status code (lines 353-371)"""
-        # Mock client to raise a plain exception with error message
-        mock_client.chat.completions.create.side_effect = Exception(error_message)
+        """Test error handling based on string content when no status code"""
+        # Mock litellm to raise a plain exception with error message
+        mock_acompletion.side_effect = Exception(error_message)
 
         # Assert the appropriate exception is raised
         with pytest.raises(expected_exception) as exc_info:
@@ -277,6 +304,33 @@ class TestOpenAIChatCompletionsDriver:
         # Verify the error message contains the original error
         error_str = str(exc_info.value)
         assert error_message in error_str
+
+    def test_model_prefix_strategy(self, driver):
+        """Test that model prefix is correctly added for chat completions"""
+        request = ProviderLLMRequest(
+            model="gpt-4",
+            messages=[{"role": "user", "content": "Hello"}],
+            temperature=0.7,
+        )
+        payload = driver._build_chat_payload(request)
+        assert payload["model"] == "openai/gpt-4"
+
+    def test_extra_body_parameter_handling(self, driver):
+        """Test that extra_body parameters are correctly passed to litellm"""
+        request = ProviderLLMRequest(
+            model="gemini-3.5-flash-lite",
+            messages=[{"role": "user", "content": "Hello"}],
+            temperature=0.7,
+            parameters=OptionalParameters(
+                extra_body={"thinking_config": {"include_thought_signature": True}}
+            ),
+        )
+        payload = driver._build_chat_payload(request)
+        assert "extra_body" in payload
+        assert (
+            payload["extra_body"]["thinking_config"]["include_thought_signature"]
+            is True
+        )
 
     def test_format_messages_basic(self, driver):
         """Test basic message formatting."""
@@ -433,10 +487,13 @@ class TestOpenAIResponsesDriver:
         )
 
     @pytest.fixture
-    def mock_client(self, driver):
-        """Mock the OpenAI client"""
-        with patch.object(driver, "client", new_callable=AsyncMock) as mock_client:
-            yield mock_client
+    def mock_acompletion(self):
+        """Mock litellm's acompletion function"""
+        with patch(
+            "local_coding_assistant.providers.compatible_drivers.acompletion",
+            new_callable=AsyncMock,
+        ) as mock:
+            yield mock
 
     @pytest.fixture
     def test_request(self):
@@ -448,24 +505,31 @@ class TestOpenAIResponsesDriver:
         )
 
     @pytest.mark.asyncio
-    async def test_generate_success(self, driver, mock_client, test_request):
+    async def test_generate_success(self, driver, mock_acompletion, test_request):
         """Test successful generate call"""
 
         # Mock response
         class MockResponse:
             def __init__(self):
                 self.output_text = "Test response"
+                self.output = []
                 self.finish_reason = "stop"
-                self.model = "test-model"
+                self.model = "openai/responses/test-model"
                 self.id = "test-response-id"
                 self.created = 1234567890
-                self.usage = {
-                    "total_tokens": 10,
-                    "prompt_tokens": 5,
-                    "completion_tokens": 5,
-                }
+                self.usage = MagicMock()
+                self.usage.total_tokens = 10
+                self.usage.prompt_tokens = 5
+                self.usage.completion_tokens = 5
+                self.usage.model_dump = MagicMock(
+                    return_value={
+                        "total_tokens": 10,
+                        "prompt_tokens": 5,
+                        "completion_tokens": 5,
+                    }
+                )
 
-        mock_client.responses.create.return_value = MockResponse()
+        mock_acompletion.return_value = MockResponse()
 
         # Call the method
         response = await driver.generate(test_request)
@@ -476,17 +540,20 @@ class TestOpenAIResponsesDriver:
         assert response.model == "test-model"
         assert response.finish_reason == "stop"
         assert response.tokens_used == 10
-        mock_client.responses.create.assert_called_once()
+        mock_acompletion.assert_called_once()
+        # Verify model prefix was added
+        call_kwargs = mock_acompletion.call_args[1]
+        assert call_kwargs["model"] == "openai/responses/test-model"
 
     @pytest.mark.asyncio
-    async def test_generate_with_tools(self, driver, mock_client):
+    async def test_generate_with_tools(self, driver, mock_acompletion):
         """Test generate with tool calls"""
         # Prepare test request with tools
         request = ProviderLLMRequest(
             model="test-model",
             messages=[{"role": "user", "content": "What's the weather?"}],
-            parameters={
-                "tools": [
+            parameters=OptionalParameters(
+                tools=[
                     {
                         "type": "function",
                         "function": {
@@ -500,16 +567,17 @@ class TestOpenAIResponsesDriver:
                         },
                     }
                 ]
-            },
+            ),
         )
 
         # Create a proper mock response class
         class MockResponse:
             def __init__(self):
-                self.output_text = ""  # Must be a string, not None
+                self.output_text = ""
                 self.output = [
                     {
                         "type": "function_call",
+                        "call_id": "call_123",
                         "function": {
                             "name": "get_weather",
                             "arguments": '{"location": "San Francisco"}',
@@ -517,16 +585,22 @@ class TestOpenAIResponsesDriver:
                     }
                 ]
                 self.finish_reason = "tool_calls"
-                self.model = "test-model"
+                self.model = "openai/responses/test-model"
                 self.id = "test-response-id"
                 self.created = 1234567890
-                self.usage = {
-                    "total_tokens": 20,
-                    "prompt_tokens": 10,
-                    "completion_tokens": 10,
-                }
+                self.usage = MagicMock()
+                self.usage.total_tokens = 20
+                self.usage.prompt_tokens = 10
+                self.usage.completion_tokens = 10
+                self.usage.model_dump = MagicMock(
+                    return_value={
+                        "total_tokens": 20,
+                        "prompt_tokens": 10,
+                        "completion_tokens": 10,
+                    }
+                )
 
-        mock_client.responses.create.return_value = MockResponse()
+        mock_acompletion.return_value = MockResponse()
 
         # Call the method
         response = await driver.generate(request)
@@ -539,7 +613,7 @@ class TestOpenAIResponsesDriver:
         assert response.model == "test-model"
 
     @pytest.mark.asyncio
-    async def test_stream_success(self, driver, mock_client, test_request):
+    async def test_stream_success(self, driver, mock_acompletion, test_request):
         """Test successful streaming"""
         # Mock streaming response - create proper Responses API events
         event1 = MagicMock()
@@ -565,14 +639,17 @@ class TestOpenAIResponsesDriver:
         completion_event.response = MagicMock()
         completion_event.response.output = []
         completion_event.response.id = "test-response-id"
-        completion_event.response.usage = {"total_tokens": 10}
+        completion_event.response.usage = MagicMock()
+        completion_event.response.usage.model_dump = MagicMock(
+            return_value={"total_tokens": 10}
+        )
 
         async def mock_stream():
             yield event1
             yield event2
             yield completion_event
 
-        mock_client.responses.create.return_value = mock_stream()
+        mock_acompletion.return_value = mock_stream()
 
         # Call the method
         chunks = []
@@ -586,16 +663,22 @@ class TestOpenAIResponsesDriver:
         assert chunks[2].finish_reason == "completed"
 
     @pytest.mark.asyncio
-    async def test_health_check_success(self, driver, mock_client):
+    async def test_health_check_success(self, driver):
         """Test successful health check"""
-        mock_client.models.list.return_value = MagicMock()
-        assert await driver.health_check() is True
+        with patch(
+            "local_coding_assistant.providers.compatible_drivers.get_valid_models",
+            return_value=["model1"],
+        ):
+            assert await driver.health_check() is True
 
     @pytest.mark.asyncio
-    async def test_health_check_failure(self, driver, mock_client):
+    async def test_health_check_failure(self, driver):
         """Test failed health check"""
-        mock_client.models.list.side_effect = Exception("API error")
-        assert await driver.health_check() is False
+        with patch(
+            "local_coding_assistant.providers.compatible_drivers.get_valid_models",
+            side_effect=Exception("API error"),
+        ):
+            assert await driver.health_check() is False
 
     @pytest.mark.parametrize(
         "status_code,error_class,error_message_suffix",
@@ -609,7 +692,7 @@ class TestOpenAIResponsesDriver:
     async def test_error_handling(
         self,
         driver,
-        mock_client,
+        mock_acompletion,
         test_request,
         status_code,
         error_class,
@@ -625,7 +708,7 @@ class TestOpenAIResponsesDriver:
         )
         error = HTTPStatusError("Test error", request=request, response=response)
 
-        mock_client.responses.create.side_effect = error
+        mock_acompletion.side_effect = error
 
         # Assert the appropriate exception is raised with the correct message
         with pytest.raises(error_class) as exc_info:
@@ -645,11 +728,11 @@ class TestOpenAIResponsesDriver:
     )
     @pytest.mark.asyncio
     async def test_string_based_error_handling(
-        self, driver, mock_client, test_request, error_message, expected_exception
+        self, driver, mock_acompletion, test_request, error_message, expected_exception
     ):
-        """Test error handling based on string content when no status code (lines 746-764)"""
-        # Mock client to raise a plain exception with error message
-        mock_client.responses.create.side_effect = Exception(error_message)
+        """Test error handling based on string content when no status code"""
+        # Mock litellm to raise a plain exception with error message
+        mock_acompletion.side_effect = Exception(error_message)
 
         # Assert the appropriate exception is raised
         with pytest.raises(expected_exception) as exc_info:
@@ -658,6 +741,33 @@ class TestOpenAIResponsesDriver:
         # Verify the error message contains the original error
         error_str = str(exc_info.value)
         assert error_message in error_str
+
+    def test_model_prefix_strategy_responses(self, driver):
+        """Test that model prefix is correctly added for Responses API"""
+        request = ProviderLLMRequest(
+            model="gpt-4",
+            messages=[{"role": "user", "content": "Hello"}],
+            temperature=0.7,
+        )
+        payload = driver._build_responses_payload(request)
+        assert payload["model"] == "openai/responses/gpt-4"
+
+    def test_extra_body_parameter_handling_responses(self, driver):
+        """Test that extra_body parameters are correctly passed to litellm for Responses API"""
+        request = ProviderLLMRequest(
+            model="gemini-3.5-flash-lite",
+            messages=[{"role": "user", "content": "Hello"}],
+            temperature=0.7,
+            parameters=OptionalParameters(
+                extra_body={"thinking_config": {"include_thought_signature": True}}
+            ),
+        )
+        payload = driver._build_responses_payload(request)
+        assert "extra_body" in payload
+        assert (
+            payload["extra_body"]["thinking_config"]["include_thought_signature"]
+            is True
+        )
 
     def test_format_messages_basic(self, driver):
         """Test basic message formatting for Responses API."""

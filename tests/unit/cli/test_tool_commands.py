@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, ANY, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from rich.console import Console
@@ -18,8 +18,8 @@ SAMPLE_TOOL_STATS = {
     "total_executions": 5,
     "success_rate": 0.8,
     "avg_duration": 0.5,
-    "first_execution": datetime.now(timezone.utc) - timedelta(days=1),
-    "last_execution": datetime.now(timezone.utc) - timedelta(hours=1),
+    "first_execution": datetime.now(UTC) - timedelta(days=1),
+    "last_execution": datetime.now(UTC) - timedelta(hours=1),
     "metrics_summary": {"calls": 5, "errors": 1, "avg_latency": 0.5},
 }
 
@@ -27,8 +27,8 @@ SAMPLE_SYSTEM_STATS = {
     "total_executions": 42,
     "total_duration": 123.456,
     "avg_duration": 2.94,
-    "first_execution": datetime.now(timezone.utc) - timedelta(days=7),
-    "last_execution": datetime.now(timezone.utc) - timedelta(minutes=30),
+    "first_execution": datetime.now(UTC) - timedelta(days=7),
+    "last_execution": datetime.now(UTC) - timedelta(minutes=30),
     "metrics_summary": {"total_tools": 10, "active_tools": 7},
 }
 
@@ -52,7 +52,7 @@ def test_format_duration(seconds, expected):
 
 def test_format_timestamp():
     """Test that _format_timestamp formats timestamps correctly."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Test with None
     assert tool_commands._format_timestamp(None) == "Never"
@@ -63,13 +63,13 @@ def test_format_timestamp():
     assert formatted == "2023-01-01 12:00"  # Timezone-naive is treated as UTC
 
     # Test with timezone-aware datetime (UTC)
-    utc_dt = datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    utc_dt = datetime(2023, 1, 1, 12, 0, 0, tzinfo=UTC)
     assert tool_commands._format_timestamp(utc_dt) == "2023-01-01 12:00"
 
     # Test with recent timestamps (relative format)
     with patch("local_coding_assistant.cli.commands.tool.datetime") as mock_datetime:
         # Mock now() to return a fixed time
-        fixed_now = datetime(2023, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        fixed_now = datetime(2023, 6, 1, 12, 0, 0, tzinfo=UTC)
         mock_datetime.now.return_value = fixed_now
         mock_datetime.side_effect = lambda *args, **kw: datetime(*args, **kw)
 

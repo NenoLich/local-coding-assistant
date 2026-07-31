@@ -2,20 +2,20 @@
 Fixtures and test utilities for handler integration testing.
 """
 
+from typing import Any
+
 import pytest
-from typing import Any, Dict, List, Optional
-from unittest.mock import Mock, AsyncMock
 
 from local_coding_assistant.agent.llm import LLMResult
 from local_coding_assistant.runtime.execution_types import ExecutionStatus
-from local_coding_assistant.runtime.session import SessionState
 from local_coding_assistant.runtime.handlers.handler_types import HandlerOutput
+from local_coding_assistant.runtime.session import SessionState
 
 
 class MockLLMDriver:
     """Mock LLM driver that can be configured to return specific responses."""
 
-    def __init__(self, responses: List[LLMResult]):
+    def __init__(self, responses: list[LLMResult]):
         self.responses = responses
         self.call_count = 0
         self.generate_calls = []
@@ -41,12 +41,12 @@ class MockLLMDriver:
 class MockToolManager:
     """Mock tool manager that can be configured to return specific responses."""
 
-    def __init__(self, responses: Dict[str, List[Any]]):
+    def __init__(self, responses: dict[str, list[Any]]):
         self.responses = responses
         self.call_counts = {}
         self.execution_calls = []
 
-    async def execute_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Any:
+    async def execute_tool(self, tool_name: str, tool_args: dict[str, Any]) -> Any:
         """Return next configured response for tool."""
         if tool_name not in self.call_counts:
             self.call_counts[tool_name] = 0
@@ -81,10 +81,10 @@ def create_test_session() -> SessionState:
 def assert_handler_output(
     output: HandlerOutput,
     expected_status: ExecutionStatus,
-    should_retry: Optional[bool] = None,
-    has_continuation: Optional[bool] = None,
-    has_adjusted_options: Optional[bool] = None,
-    expected_strategy: Optional[str] = None,
+    should_retry: bool | None = None,
+    has_continuation: bool | None = None,
+    has_adjusted_options: bool | None = None,
+    expected_strategy: str | None = None,
 ):
     """Assert handler output has expected characteristics."""
     assert output.status == expected_status, (
@@ -118,7 +118,7 @@ def assert_handler_output(
 def assert_session_continuation(
     session: SessionState,
     should_have_continuation: bool = True,
-    expected_keywords: Optional[List[str]] = None,
+    expected_keywords: list[str] | None = None,
 ):
     """Assert session has been updated with handler context."""
     if should_have_continuation:
@@ -146,7 +146,7 @@ def assert_session_continuation(
 
 def capture_execution_calls(
     mock_tool_manager: MockToolManager,
-) -> Dict[str, List[Dict[str, Any]]]:
+) -> dict[str, list[dict[str, Any]]]:
     """Capture and return all tool execution calls."""
     return {
         tool_name: [
@@ -159,9 +159,9 @@ def capture_execution_calls(
 
 
 def verify_llm_options_adjustment(
-    adjusted_options: Optional[Dict[str, Any]],
+    adjusted_options: dict[str, Any] | None,
     expected_max_tokens_increase: bool = False,
-    expected_min_max_tokens: Optional[int] = None,
+    expected_min_max_tokens: int | None = None,
 ):
     """Verify LLM options were adjusted correctly."""
     if expected_max_tokens_increase:
@@ -189,8 +189,7 @@ def verify_llm_options_adjustment(
 
 
 # Import mock response factories
-from tests.integration.runtime.mock_llm_responses import MockLLMResponse
-from tests.integration.runtime.mock_tool_responses import MockToolResponse, MockToolCall
+from tests.integration.runtime.mock_tool_responses import MockToolResponse
 
 
 @pytest.fixture

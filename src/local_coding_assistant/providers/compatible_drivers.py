@@ -7,10 +7,11 @@ ensuring consistent behavior across different providers.
 
 import json
 import time
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from typing import Any, NoReturn
 
-from openai import AsyncOpenAI
+import litellm
+from litellm import acompletion, get_valid_models
 
 from local_coding_assistant.providers.base import (
     BaseDriver,
@@ -61,7 +62,7 @@ class ResponseNormalizer:
         )
 
     def _extract_tool_calls_from_response(self, response) -> list[dict[str, Any]]:
-        """Extract tool calls from the response output."""
+        """Extract tool calls from the response output with provider-specific fields."""
         tool_calls = []
         if not response.output:
             return tool_calls
@@ -78,16 +79,23 @@ class ResponseNormalizer:
                         arguments = json.loads(arguments)
                     except json.JSONDecodeError:
                         arguments = {}
-                tool_calls.append(
-                    {
-                        "id": call_id,
-                        "type": "function",
-                        "function": {
-                            "name": name,
-                            "arguments": arguments,
-                        },
-                    }
-                )
+
+                extra_content = getattr(output_item, "extra_content", None)
+
+                tool_call = {
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": arguments,
+                    },
+                }
+
+                # Add provider-specific fields if present
+                if extra_content:
+                    tool_call["extra_content"] = extra_content
+
+                tool_calls.append(tool_call)
         return tool_calls
 
     def _handle_response_completed(self, event, response) -> ProviderLLMResponseDelta:
@@ -129,23 +137,42 @@ class ResponseNormalizer:
 
 
 class OpenAIChatCompletionsDriver(BaseDriver):
-    """Driver for OpenAI-compatible chat.completions API using the openai library"""
+    """Driver for OpenAI-compatible chat.completions API using litellm"""
 
     def __init__(self, api_key: str | None, base_url: str, **kwargs):
         super().__init__(api_key, base_url, **kwargs)
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self.provider_name = kwargs.get("provider_name")
+        # litellm handles provider selection via model prefix
 
     def _build_chat_payload(  # noqa C901
         self, request: ProviderLLMRequest, stream: bool = False
     ) -> dict[str, Any]:
-        """Build payload for chat completions API."""
+        """Build payload for chat completions API using litellm format."""
+        # Use "openai/" prefix to tell litellm to use chat completion API
+        # Provider is determined by base_url and api_key, not by model prefix
+        model = f"openai/{request.model}"
+
         payload: dict[str, Any] = {
-            "model": request.model,
+            "model": model,
             "messages": self._format_messages(request.messages),
             "temperature": request.temperature,
         }
         if stream:
             payload["stream"] = True
+
+        # Add base_url and api_key for litellm
+        payload["api_base"] = self.base_url
+        payload["api_key"] = self.api_key
+
+        # Handle provider-specific parameters via extra_body
+        extra_body = {}
+        if request.parameters:
+            # Check for extra_body.thinking_config for Gemini
+            if (
+                hasattr(request.parameters, "extra_body")
+                and request.parameters.extra_body
+            ):
+                extra_body.update(request.parameters.extra_body)
 
         if request.parameters:
             if request.parameters.max_tokens is not None:
@@ -173,34 +200,38 @@ class OpenAIChatCompletionsDriver(BaseDriver):
                     "include_usage": request.parameters.include_usage
                 }  # type ignore
 
+        # Add extra_body if there are provider-specific parameters
+        if extra_body:
+            payload["extra_body"] = extra_body
+
         return payload
 
     async def generate(self, request: ProviderLLMRequest) -> ProviderLLMResponse:
-        """Generate using OpenAI chat.completions API"""
+        """Generate using litellm's completion API"""
         payload = self._build_chat_payload(request)
 
         try:
             logger.info("Request payload", payload=payload)
             start_time = time.perf_counter()
-            response = await self.client.chat.completions.create(**payload)
+            response = await acompletion(**payload)
             latency_ms = (time.perf_counter() - start_time) * 1000
             logger.debug(f"Response received in {latency_ms}", response=response)
             return self._parse_response(response, request.model, latency_ms=latency_ms)
         except Exception as e:
-            logger.error("Error in OpenAI API request", error=str(e), exc_info=True)
+            logger.error("Error in litellm API request", error=str(e), exc_info=True)
             self._handle_error(e)
 
     async def stream(
         self, request: ProviderLLMRequest
     ) -> AsyncGenerator[ProviderLLMResponseDelta, None]:
-        """Generate a streaming response using OpenAI chat.completions API"""
+        """Generate a streaming response using litellm"""
         payload = self._build_chat_payload(request, stream=True)
 
         logger.debug("Request payload", payload=payload)
 
         try:
             start_time = time.perf_counter()
-            stream = await self.client.chat.completions.create(**payload)
+            stream: AsyncIterator = await acompletion(**payload)
             async for chunk in stream:
                 # logger.debug("Received chunk", chunk=chunk)
                 if not chunk.choices:
@@ -225,25 +256,29 @@ class OpenAIChatCompletionsDriver(BaseDriver):
                 if latency_ms is not None:
                     metadata["latency_ms"] = latency_ms
 
+                parsed_tool_calls = None
+                if delta.tool_calls:
+                    parsed_tool_calls = [
+                        self._parse_tool_call(tc) for tc in delta.tool_calls
+                    ]
+
                 yield ProviderLLMResponseDelta(
                     content=delta.content or "",
                     role=getattr(delta, "role", None),
-                    tool_calls=[tc.model_dump() for tc in delta.tool_calls]
-                    if delta.tool_calls
-                    else None,
+                    tool_calls=parsed_tool_calls,
                     finish_reason=choice.finish_reason,
                     metadata=metadata,
                 )
         except Exception as e:
             logger.error(
-                "Error in OpenAI streaming request", error=str(e), exc_info=True
+                "Error in litellm streaming request", error=str(e), exc_info=True
             )
             self._handle_error(e)
 
     def _parse_response(
         self, response, model: str, latency_ms: float | None = None
     ) -> ProviderLLMResponse:
-        """Parse OpenAI API response, handling both standard and GitHub Models API formats."""
+        """Parse litellm response, handling both standard and provider-specific formats."""
         try:
             choice = response.choices[0]
             message = choice.message
@@ -313,6 +348,8 @@ class OpenAIChatCompletionsDriver(BaseDriver):
             if not isinstance(tc, dict):
                 tc = {}
 
+            extra_content = tc.get("extra_content")
+
             # Get function data, defaulting to an empty dict
             function_data = tc.get("function")
 
@@ -328,8 +365,7 @@ class OpenAIChatCompletionsDriver(BaseDriver):
             if isinstance(arguments, dict):
                 function_data["arguments"] = json.dumps(arguments)
 
-            # Build the result
-            return {
+            result = {
                 "id": str(tc.get("id", f"call_{id(tool_call)}")),
                 "type": str(tc.get("type", "function")),
                 "function": {
@@ -337,6 +373,10 @@ class OpenAIChatCompletionsDriver(BaseDriver):
                     "arguments": str(function_data.get("arguments", "{}")),
                 },
             }
+            if extra_content:
+                result["extra_content"] = extra_content
+            # Build the result
+            return result
         except Exception as err:
             logger.warning("Failed to parse tool call", error=str(err), exc_info=True)
             return {
@@ -405,10 +445,17 @@ class OpenAIChatCompletionsDriver(BaseDriver):
         return formatted
 
     async def health_check(self) -> bool:
-        """Check if the API is accessible"""
+        """Check if the API is accessible using litellm's get_valid_models"""
+        # Set global litellm configuration
+        litellm.api_base = self.base_url
+        litellm.api_key = self.api_key
+
         try:
-            await self.client.models.list()
-            return True
+            # Query the live active models endpoint using 'openai' as the target format
+            models = get_valid_models(
+                check_provider_endpoint=True, custom_llm_provider="openai"
+            )
+            return bool(models)
         except Exception:
             return False
 
@@ -509,7 +556,7 @@ class OpenAIChatCompletionsDriver(BaseDriver):
 
 
 class OpenAIResponsesDriver(BaseDriver):
-    """Driver for OpenAI responses API using the openai library"""
+    """Driver for OpenAI responses API using litellm"""
 
     def __init__(self, api_key: str | None, base_url: str, **kwargs):
         # Ensure base_url doesn't end with /responses
@@ -517,7 +564,7 @@ class OpenAIResponsesDriver(BaseDriver):
         base_url = base_url.removesuffix("/responses")
 
         super().__init__(api_key, base_url, **kwargs)
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self.provider_name = kwargs.get("provider_name")
 
     def _format_tools_for_responses_api(self, tools: Any) -> list[dict]:
         """Format tools to be compatible with Responses API
@@ -612,7 +659,10 @@ class OpenAIResponsesDriver(BaseDriver):
     def _build_responses_payload(  # noqa C901
         self, request: ProviderLLMRequest, stream: bool = False
     ) -> dict[str, Any]:
-        """Build payload for responses API."""
+        """Build payload for responses API using litellm format."""
+        # Use "openai/responses/<model_name>" to tell litellm to use Responses API schema
+        model = f"openai/responses/{request.model}"
+
         # Extract system messages for instructions
         system_messages = [
             msg for msg in request.messages if msg.get("role") == "system"
@@ -620,12 +670,26 @@ class OpenAIResponsesDriver(BaseDriver):
         instructions = "\n".join([msg.get("content", "") for msg in system_messages])
 
         payload: dict[str, Any] = {
-            "model": request.model,
+            "model": model,
             "input": self._format_messages(request.messages),
             "temperature": request.temperature,
         }
         if stream:
             payload["stream"] = True
+
+        # Add base_url and api_key for litellm
+        payload["api_base"] = self.base_url
+        payload["api_key"] = self.api_key
+
+        # Handle provider-specific parameters via extra_body
+        extra_body = {}
+        if request.parameters:
+            # Check for extra_body.thinking_config for Gemini
+            if (
+                hasattr(request.parameters, "extra_body")
+                and request.parameters.extra_body
+            ):
+                extra_body.update(request.parameters.extra_body)
 
         # Add instructions if present
         if instructions:
@@ -666,16 +730,20 @@ class OpenAIResponsesDriver(BaseDriver):
             if "tool_choice" not in payload:
                 payload["tool_choice"] = "auto"
 
+        # Add extra_body if there are provider-specific parameters
+        if extra_body:
+            payload["extra_body"] = extra_body
+
         return payload
 
     async def generate(self, request: ProviderLLMRequest) -> ProviderLLMResponse:
-        """Generate using OpenAI responses API"""
+        """Generate using litellm's completion API with responses schema"""
         payload = self._build_responses_payload(request)
 
         logger.debug("Request payload", payload=payload)
         try:
             start_time = time.perf_counter()
-            response = await self.client.responses.create(**payload)
+            response = await acompletion(**payload)
             latency_ms = (time.perf_counter() - start_time) * 1000
             logger.debug(f"Response received in {latency_ms}", response=response)
             return self._parse_response(response, request.model, latency_ms=latency_ms)
@@ -685,13 +753,13 @@ class OpenAIResponsesDriver(BaseDriver):
     async def stream(
         self, request: ProviderLLMRequest
     ) -> AsyncGenerator[ProviderLLMResponseDelta, None]:
-        """Generate a streaming response using OpenAI responses API"""
+        """Generate a streaming response using litellm"""
         payload = self._build_responses_payload(request, stream=True)
 
         logger.debug("Request payload", payload=payload)
         try:
             start_time = time.perf_counter()
-            stream = await self.client.responses.create(**payload)
+            stream = await acompletion(**payload)
             normalizer = ResponseNormalizer(start_time)
             async for delta in normalizer.normalize_stream(stream):
                 yield delta
@@ -814,6 +882,9 @@ class OpenAIResponsesDriver(BaseDriver):
                     )
                     if item_type == "function_call":
                         try:
+                            # Extract provider-specific fields from output item
+                            extra_content = output_item.get("extra_content")
+
                             # Parse the arguments if it's a string - handle both dict and object types
                             # For Responses API, the function call has a "function" subdict
                             function_data = (
@@ -858,6 +929,11 @@ class OpenAIResponsesDriver(BaseDriver):
                                     "arguments": arguments,
                                 },
                             }
+
+                            # Add provider-specific fields if present
+                            if extra_content:
+                                tool_call["extra_content"] = extra_content
+
                             tool_calls.append(tool_call)
                         except (json.JSONDecodeError, AttributeError) as e:
                             logger.warning(
@@ -870,10 +946,17 @@ class OpenAIResponsesDriver(BaseDriver):
         return tool_calls
 
     async def health_check(self) -> bool:
-        """Check if the API is accessible"""
+        """Check if the API is accessible using litellm's get_valid_models"""
+        # Set global litellm configuration
+        litellm.api_base = self.base_url
+        litellm.api_key = self.api_key
+
         try:
-            await self.client.models.list()
-            return True
+            # Query the live active models endpoint using 'openai' as the target format
+            models = get_valid_models(
+                check_provider_endpoint=True, custom_llm_provider="openai"
+            )
+            return bool(models)
         except Exception:
             return False
 

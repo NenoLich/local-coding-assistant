@@ -5,13 +5,13 @@ providers:
     api_key_env: "OPENROUTER_API_KEY"
     health_check_endpoint: "https://openrouter.ai/api/v1/key"
     models:
-      qwen/qwen3-coder:free:
+      nvidia/nemotron-3-ultra-550b-a55b:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty", "include_usage"]
-      arcee-ai/trinity-large-preview:free:
+      inclusionai/ling-3.0-flash:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format", "include_usage"]
-      nvidia/nemotron-3-nano-30b-a3b:free:
+      cohere/north-mini-code:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "include_usage"]
-      mistralai/devstral-2512:free:
+      poolside/laguna-s-2.1:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty", "include_usage"]
       z-ai/glm-4.5-air:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "include_usage"]
@@ -23,9 +23,9 @@ providers:
     api_key_env: "GEMINI_API_KEY"
     health_check_endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/models"
     models:
-      gemini-3-flash-preview:
+      gemini-3.5-flash-lite:
         supported_parameters: ["tools", "reasoning_effort", "max_tokens", "stream", "tool_choice", "response_format", "extra_body.thinking_config"]
-      gemini-2.5-flash:
+      gemini-3.6-flash:
         supported_parameters: [ "tools", "reasoning_effort", "max_tokens", "stream", "tool_choice", "response_format", "extra_body.thinking_config" ]
   github_models:
     driver: "openai_chat"

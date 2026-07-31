@@ -3,7 +3,6 @@ Unit tests for dashboard models.
 """
 
 from datetime import datetime, timedelta
-from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -16,8 +15,8 @@ from local_coding_assistant.dashboard.models import (
     PaginatedResponse,
     RecentActivityResponse,
     RunDetail,
-    RunSummary,
     RunsListResponse,
+    RunSummary,
 )
 
 
@@ -72,7 +71,7 @@ class TestRunSummary:
     def test_invalid_status_values(self):
         """Test that invalid status values are still accepted (Pydantic doesn't enforce enum by default)."""
         start_time = datetime.now()
-        
+
         # This should work since status is just a string field
         run = RunSummary(
             run_id="test-run",
@@ -82,13 +81,13 @@ class TestRunSummary:
             duration=10.0,
             events_count=1,
         )
-        
+
         assert run.status == "invalid_status"
 
     def test_missing_required_fields(self):
         """Test that missing required fields raise ValidationError."""
         start_time = datetime.now()
-        
+
         with pytest.raises(ValidationError) as exc_info:
             RunSummary(
                 run_id="test-run",
@@ -98,13 +97,13 @@ class TestRunSummary:
                 duration=10.0,
                 events_count=1,
             )
-        
+
         assert "session_id" in str(exc_info.value)
 
     def test_invalid_duration_type(self):
         """Test that invalid duration type raises ValidationError."""
         start_time = datetime.now()
-        
+
         with pytest.raises(ValidationError) as exc_info:
             RunSummary(
                 run_id="test-run",
@@ -114,7 +113,7 @@ class TestRunSummary:
                 duration="invalid",  # Should be float
                 events_count=1,
             )
-        
+
         assert "duration" in str(exc_info.value)
 
 
@@ -140,7 +139,7 @@ class TestRunDetail:
         # Should have all RunSummary fields
         assert run_detail.run_id == "test-run"
         assert run_detail.session_id == "test-session"
-        
+
         # Should have additional RunDetail fields
         assert run_detail.events == events
         assert run_detail.final_answer == "Test answer"
@@ -228,7 +227,7 @@ class TestFrameDetail:
         # Should inherit all FrameSummary fields
         assert frame_detail.frame_id == "frame-123"
         assert frame_detail.action_count == 3
-        
+
         # Should have additional FrameDetail fields
         assert frame_detail.prompt_context == "Test context"
         assert frame_detail.llm_response == "Test response"
@@ -278,7 +277,7 @@ class TestPaginatedResponse:
     def test_paginated_response_first_page(self):
         """Test paginated response for first page."""
         items = [{"id": 1}, {"id": 2}]
-        
+
         response = PaginatedResponse(
             items=items,
             total=10,
@@ -298,7 +297,7 @@ class TestPaginatedResponse:
     def test_paginated_response_middle_page(self):
         """Test paginated response for middle page."""
         items = [{"id": 3}, {"id": 4}]
-        
+
         response = PaginatedResponse(
             items=items,
             total=10,
@@ -314,7 +313,7 @@ class TestPaginatedResponse:
     def test_paginated_response_last_page(self):
         """Test paginated response for last page."""
         items = [{"id": 9}]
-        
+
         response = PaginatedResponse(
             items=items,
             total=10,
@@ -351,7 +350,7 @@ class TestRunsListResponse:
                 events_count=3,
             ),
         ]
-        
+
         response = RunsListResponse(
             items=runs,
             total=2,
@@ -373,7 +372,7 @@ class TestActivityItem:
     def test_activity_item_creation(self):
         """Test creating ActivityItem."""
         timestamp = "2024-01-01T12:00:00Z"
-        
+
         activity = ActivityItem(
             run_id="run-123",
             status="completed",
@@ -407,7 +406,7 @@ class TestRecentActivityResponse:
             ),
         ]
         last_updated = "2024-01-01T12:05:00Z"
-        
+
         response = RecentActivityResponse(
             activities=activities,
             last_updated=last_updated,
@@ -425,7 +424,7 @@ class TestModelSerialization:
     def test_run_summary_serialization(self):
         """Test RunSummary serialization to dict."""
         start_time = datetime.now()
-        
+
         run = RunSummary(
             run_id="test-run",
             session_id="test-session",
@@ -437,7 +436,7 @@ class TestModelSerialization:
         )
 
         data = run.model_dump()
-        
+
         assert data["run_id"] == "test-run"
         assert data["status"] == "completed"
         assert data["duration"] == 120.0
@@ -449,7 +448,7 @@ class TestModelSerialization:
     def test_model_json_serialization(self):
         """Test model JSON serialization."""
         start_time = datetime.now()
-        
+
         run = RunSummary(
             run_id="test-run",
             session_id="test-session",
@@ -460,7 +459,7 @@ class TestModelSerialization:
         )
 
         json_str = run.model_dump_json()
-        
+
         assert isinstance(json_str, str)
         assert "test-run" in json_str
         assert "completed" in json_str
@@ -477,7 +476,7 @@ class TestModelSerialization:
                 events_count=5,
             )
         ]
-        
+
         response = RunsListResponse(
             items=runs,
             total=1,
@@ -488,7 +487,7 @@ class TestModelSerialization:
         )
 
         data = response.model_dump()
-        
+
         assert "items" in data
         assert len(data["items"]) == 1
         assert data["items"][0]["run_id"] == "run-1"

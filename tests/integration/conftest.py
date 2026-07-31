@@ -14,11 +14,11 @@ from typer.testing import CliRunner
 
 from local_coding_assistant.agent.agent_loop import AgentLoop
 from local_coding_assistant.agent.llm import (
+    LLMOptions,
     LLMResult,
     LLMService,
     LLMTask,
     LLMToolCall,
-    LLMOptions,
 )
 from local_coding_assistant.agent.llm.models import LLMStreamChunk
 from local_coding_assistant.cli.commands import sandbox as sandbox_cli

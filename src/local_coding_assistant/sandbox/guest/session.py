@@ -90,10 +90,12 @@ class Session:
             return str(error).split("\n")[0]
 
         field_errors = []
-        for err in error.errors():  # type: ignore[union-attr]
-            loc = ".".join(str(_loc) for _loc in err.get("loc", []))
-            msg = err.get("msg", "Unknown error")
-            field_errors.append(f"{loc}: {msg}" if loc else msg)
+        errors_method = getattr(error, "errors", None)
+        if callable(errors_method):
+            for err in errors_method():
+                loc = ".".join(str(_loc) for _loc in err.get("loc", []))
+                msg = err.get("msg", "Unknown error")
+                field_errors.append(f"{loc}: {msg}" if loc else msg)
         return "; ".join(field_errors)
 
     def _get_resource_metrics(self) -> dict[str, Any]:

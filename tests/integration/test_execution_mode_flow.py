@@ -6,9 +6,9 @@ from jinja2 import TemplateError
 from local_coding_assistant.agent.llm.models import LLMResult
 from local_coding_assistant.config.schemas import AppConfig
 from local_coding_assistant.prompt.composer import PromptComposer
+from local_coding_assistant.runtime.events import EventType
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.runtime.runtime_types import ExecutionMode, RenderedPrompt
-from local_coding_assistant.runtime.events import EventType
 from local_coding_assistant.tools.types import ToolExecutionMode, ToolInfo
 
 

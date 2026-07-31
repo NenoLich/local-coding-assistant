@@ -4,7 +4,6 @@ from pathlib import Path
 
 from local_coding_assistant.cli.rendering import render_report
 
-
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
 

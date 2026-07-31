@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from local_coding_assistant.agent.frame_agent import FrameAgent
 from local_coding_assistant.runtime.events import EventType, ExecutionEvent
@@ -13,14 +14,14 @@ from local_coding_assistant.runtime.execution_types import (
     ExecutionStatus,
 )
 from local_coding_assistant.runtime.runtime_types import (
-    PromptContext,
-    RenderedPrompt,
     AgentProfile,
     ExecutionMode,
+    PromptContext,
+    RenderedPrompt,
     ToolSpec,
 )
 
-from .conftest import MockConfigManager, session_state
+from .conftest import MockConfigManager
 
 
 @pytest.fixture

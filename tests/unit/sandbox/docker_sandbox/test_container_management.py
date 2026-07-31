@@ -45,7 +45,7 @@ class DummyContainer:
         self.reload_calls += 1
 
 
-@pytest.fixture()
+@pytest.fixture
 def sandbox_project_root(tmp_path: Path) -> Path:
     """Provide a temporary project root with expected sub-structure."""
     (tmp_path / "src" / "local_coding_assistant" / "sandbox" / "guest").mkdir(
@@ -86,7 +86,6 @@ async def test_reuse_tracked_container_drops_non_running_container(
 @pytest.mark.asyncio
 async def test_cleanup_container_success(sandbox_project_root: Path) -> None:
     """Test successful container cleanup with IPC directory removal."""
-    import shutil
 
     sandbox = DockerSandbox(path_manager=FakePathManager(sandbox_project_root))
     paths = await sandbox.ensure_directories()
@@ -218,7 +217,6 @@ async def test_get_existing_container_reload_failure(
     sandbox_project_root: Path,
 ) -> None:
     """Test retrieval when container reload fails."""
-    import docker.errors
 
     sandbox = DockerSandbox(path_manager=FakePathManager(sandbox_project_root))
 

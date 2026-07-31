@@ -10,14 +10,12 @@ from local_coding_assistant.runtime.handlers.handler_integration import (
 )
 from local_coding_assistant.runtime.handlers.handler_types import (
     HandlerContext,
-    HandlerOutput,
 )
-
 from tests.integration.runtime.conftest import (
     MockToolManager,
-    create_test_session,
     assert_handler_output,
     assert_session_continuation,
+    create_test_session,
 )
 from tests.integration.runtime.mock_tool_responses import MockToolResponse
 

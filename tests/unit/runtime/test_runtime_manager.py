@@ -1,17 +1,13 @@
 from collections.abc import AsyncIterator
 from copy import deepcopy
-
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
 from local_coding_assistant.agent import LLMService
 from local_coding_assistant.agent.llm.models import LLMToolCall
-
 from local_coding_assistant.core.exceptions import LLMError
-from local_coding_assistant.runtime.events import EventType
-from local_coding_assistant.tools.tool_manager import ToolExecutionResponse
 from local_coding_assistant.providers.base import (
     BaseProvider,
     ProviderLLMRequest,
@@ -19,7 +15,9 @@ from local_coding_assistant.providers.base import (
     ProviderLLMResponseDelta,
 )
 from local_coding_assistant.providers.provider_manager import ProviderManager
+from local_coding_assistant.runtime.events import EventType
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
+from local_coding_assistant.tools.tool_manager import ToolExecutionResponse
 
 # Import shared test fixtures and mocks
 from .conftest import (

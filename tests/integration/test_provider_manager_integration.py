@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from local_coding_assistant.agent.llm import LLMService, LLMTask, LLMResult
+from local_coding_assistant.agent.llm import LLMResult, LLMService, LLMTask
 from local_coding_assistant.providers import (
     BaseProvider,
     ProviderError,

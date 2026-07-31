@@ -4,13 +4,12 @@ Tests event buffering, backward compatibility, and configuration handling.
 """
 
 import asyncio
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from local_coding_assistant.cli.main import app
 from local_coding_assistant.runtime.events import EventType, ExecutionEvent
-from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 
 
 class MockStreamingRuntimeForCompatibility:

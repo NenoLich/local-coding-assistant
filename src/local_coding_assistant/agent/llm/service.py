@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import AsyncIterator
-from dataclasses import replace
 from typing import Any
 
 from local_coding_assistant.core.exceptions import (
@@ -342,7 +341,7 @@ class LLMService:
     ) -> ResolvedLLMOptions:
         candidate = options or LLMOptions()
         if policy is not None:
-            candidate = replace(candidate, policy=policy)
+            candidate.policy = policy
 
         llm_defaults = self._config_manager.global_config.llm
         return candidate.resolved(defaults=llm_defaults, runtime_stream=stream)

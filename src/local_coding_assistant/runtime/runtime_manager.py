@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from local_coding_assistant.agent.llm import (
     LLMOptions,
@@ -404,6 +404,10 @@ class RuntimeManager:
                 "arguments": getattr(tool_call, "arguments", "{}"),
             },
         }
+        # Include extra_content if present
+        extra_content = getattr(tool_call, "extra_content", {})
+        if extra_content:
+            formatted_tool_call["extra_content"] = extra_content
         session.add_assistant_message(tool_call=formatted_tool_call)
 
         if tool_call.type == "code" and not session_id:
@@ -507,8 +511,9 @@ class RuntimeManager:
                 user_message, session, tool_outputs
             )
             llm_service = self._require_llm_service()
+            model_val = base_options.get("model", request.model_override)
             options = LLMOptions(
-                model=base_options.get("model", request.model_override),
+                model=cast(str | None, model_val),
                 temperature=base_options.get(
                     "temperature", request.temperature_override
                 ),

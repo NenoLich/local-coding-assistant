@@ -44,6 +44,10 @@ class OptionalParameters(BaseModel):
     include_usage: bool | None = Field(
         default=None, description="Whether to include usage data in streaming responses"
     )
+    extra_body: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Provider-specific parameters passed via extra_body to litellm",
+    )
 
     # Set of parameter names that are required when tools are used
     REQUIRED_WITH_TOOLS: ClassVar[frozenset[str]] = frozenset({"tools", "tool_choice"})

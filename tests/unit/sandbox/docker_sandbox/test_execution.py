@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -43,7 +42,7 @@ class FakePathManager:
         raise ValueError(msg)
 
 
-@pytest.fixture()
+@pytest.fixture
 def sandbox_project_root(tmp_path: Path) -> Path:
     """Provide a temporary project root with expected sub-structure."""
     (tmp_path / "src" / "local_coding_assistant" / "sandbox" / "guest").mkdir(

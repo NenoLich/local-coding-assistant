@@ -2,16 +2,15 @@
 Unit tests for TruncationHandler.
 """
 
-import pytest
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
+import pytest
+
+from local_coding_assistant.runtime.execution_types import ExecutionStatus
 from local_coding_assistant.runtime.handlers.handler_types import (
     HandlerContext,
-    HandlerOutput,
 )
 from local_coding_assistant.runtime.handlers.truncation_handler import TruncationHandler
-from local_coding_assistant.runtime.execution_types import ExecutionStatus
-from local_coding_assistant.agent.llm import LLMResult
 
 
 class TestTruncationHandler:

@@ -12,6 +12,8 @@ llm:
   retry_delay: 1.0
   capture_reasoning: true
   reasoning_max_chars: 1000
+  # Whether to automatically register unmapped models with LiteLLM to bypass cost mapping
+  auto_register_litellm_models: true
   # Providers will be dynamically managed at runtime
   providers: []
 

@@ -2,11 +2,11 @@
 Test to verify that tool_args flow works correctly from tool call to failed tool collection.
 """
 
-import pytest
 from unittest.mock import Mock
 
-from local_coding_assistant.agent.frame_agent import FrameAgent
+import pytest
 
+from local_coding_assistant.agent.frame_agent import FrameAgent
 from local_coding_assistant.runtime.session import SessionState
 from local_coding_assistant.tools.types import ToolExecutionResponse
 

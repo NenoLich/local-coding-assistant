@@ -4,8 +4,6 @@ Test fixtures and utilities for streaming tests.
 
 import asyncio
 from collections.abc import AsyncIterator
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -71,7 +69,7 @@ async def collect_events_with_timeout(
 
     try:
         await asyncio.wait_for(collect(), timeout=timeout)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass  # Timeout is expected for infinite iterators in tests
 
     return events

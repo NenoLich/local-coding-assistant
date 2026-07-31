@@ -1,8 +1,8 @@
+import json
 import logging
 import re
-import pytest
-import json
-from local_coding_assistant.utils.logging import setup_logging, get_logger
+
+from local_coding_assistant.utils.logging import get_logger, setup_logging
 
 
 def mask_dynamic_parts(text):

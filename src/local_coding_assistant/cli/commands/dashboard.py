@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import psutil
 import typer
@@ -103,7 +104,7 @@ def _build_server_command(
 def _launch_subprocess(cmd: list[str]) -> subprocess.Popen:
     """Launch the dashboard server as a subprocess."""
     # Set creation flags for Windows
-    kwargs = {}
+    kwargs: dict[str, Any] = {}
     if sys.platform == "win32":
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
 

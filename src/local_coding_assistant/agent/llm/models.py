@@ -37,6 +37,7 @@ class LLMToolCall(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
     id: str | None = None
     type: str = "function"
+    extra_content: dict[str, Any] = Field(default_factory=dict)
 
 
 class LLMTask(BaseModel):

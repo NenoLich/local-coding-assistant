@@ -3,19 +3,19 @@ End-to-end integration tests for handler integration system.
 Tests the complete flow through handler integration without full FrameAgent complexity.
 """
 
-import pytest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock
 
+import pytest
+
+from local_coding_assistant.agent.llm import LLMResult
+from local_coding_assistant.runtime.execution_types import ExecutionStatus
 from local_coding_assistant.runtime.handlers.handler_integration import (
     HandlerIntegration,
 )
 from local_coding_assistant.runtime.handlers.handler_types import (
     HandlerContext,
-    HandlerOutput,
 )
 from local_coding_assistant.runtime.session import SessionState
-from local_coding_assistant.runtime.execution_types import ExecutionStatus
-from local_coding_assistant.agent.llm import LLMResult
 
 
 class TestHandlerIntegrationE2E:

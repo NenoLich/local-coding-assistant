@@ -679,6 +679,7 @@ Please provide:
                     "name": getattr(call, "name", ""),
                     "arguments": getattr(call, "arguments", {}),
                     "type": getattr(call, "type", "function"),
+                    "extra_content": getattr(call, "extra_content", {}),
                 }
             )
         return normalized

@@ -32,7 +32,6 @@ from local_coding_assistant.utils.logging import get_logger
 
 if TYPE_CHECKING:
     from local_coding_assistant.core.protocols import IConfigManager, IToolManager
-    from local_coding_assistant.runtime.context_manager import ContextManager
 
 logger = get_logger("runtime.executor")
 
@@ -46,12 +45,10 @@ class RuntimeExecutor:
         self,
         llm_service: LLMService,
         tool_manager: IToolManager,
-        context_manager: ContextManager | None = None,
         config_manager: IConfigManager | None = None,
     ):
         self._llm_service = llm_service
         self._tool_manager = tool_manager
-        self._context_manager = context_manager
         self._config_manager = config_manager
         self._error_classifier = ToolErrorClassifier()
 

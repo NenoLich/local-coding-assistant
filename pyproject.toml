@@ -25,7 +25,6 @@ dependencies = [
     "pydantic>=2.12.0",
     "typer>=0.19.2",
     "python-dotenv>=1.0.0",
-    "openai>=2.3.0",
     "langgraph>=1.0.0a4",
     "docker>=7.1.0",
     "docstring-parser>=0.17.0",
@@ -37,6 +36,7 @@ dependencies = [
     "psutil>=6.0.0",
     "websockets>=16.0",
     "httpx>=0.28.1",
+    "litellm>=1.94.0",
 ]
 
 [project.scripts]

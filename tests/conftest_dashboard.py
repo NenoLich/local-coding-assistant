@@ -36,7 +36,7 @@ def dashboard_client():
 def mock_event_collector():
     """Create a mock EventCollector for testing."""
     collector = AsyncMock(spec=EventCollector)
-    
+
     # Setup default return values
     collector.get_dashboard_stats.return_value = {
         "total_runs": 10,
@@ -46,7 +46,7 @@ def mock_event_collector():
         "completed_runs": 8,
         "error_runs": 2,
     }
-    
+
     collector.get_recent_activity.return_value = {
         "activities": [
             {
@@ -58,7 +58,7 @@ def mock_event_collector():
         ],
         "last_updated": "2024-01-01T12:05:00Z",
     }
-    
+
     collector.get_runs.return_value = {
         "runs": [
             {
@@ -72,7 +72,7 @@ def mock_event_collector():
             }
         ]
     }
-    
+
     collector.get_run_details.return_value = {
         "run_id": "test-run-1",
         "session_id": "test-session-1",
@@ -87,7 +87,7 @@ def mock_event_collector():
         ],
         "final_answer": "Test final answer",
     }
-    
+
     collector.get_frame_details.return_value = {
         "frame_id": "test-frame-1",
         "run_id": "test-run-1",
@@ -102,11 +102,9 @@ def mock_event_collector():
         ],
         "prompt_context": "Test prompt context",
         "llm_response": "Test LLM response",
-        "tool_calls": [
-            {"name": "test_tool", "args": {"param": "value"}}
-        ],
+        "tool_calls": [{"name": "test_tool", "args": {"param": "value"}}],
     }
-    
+
     collector.get_events_by_session.return_value = [
         {
             "type": "session_start",
@@ -115,7 +113,7 @@ def mock_event_collector():
             "data": {"user_query": "Test query"},
         }
     ]
-    
+
     collector.get_active_sessions.return_value = [
         {
             "session_id": "test-session-1",
@@ -124,7 +122,7 @@ def mock_event_collector():
             "events_count": 5,
         }
     ]
-    
+
     return collector
 
 
@@ -135,7 +133,7 @@ def sample_execution_events():
     session_id = "test-session-123"
     run_id = "test-run-456"
     frame_id = "test-frame-789"
-    
+
     return [
         ExecutionEvent(
             type=EventType.SESSION_START,
@@ -190,7 +188,11 @@ def sample_execution_events():
             type=EventType.RUN_END,
             session_id=session_id,
             timestamp=now + timedelta(seconds=6),
-            data={"run_id": run_id, "status": "completed", "final_answer": "Test answer"},
+            data={
+                "run_id": run_id,
+                "status": "completed",
+                "final_answer": "Test answer",
+            },
         ),
     ]
 
@@ -258,9 +260,7 @@ def sample_frame_detail():
         action_count=5,
         prompt_context="Test prompt context",
         llm_response="Test LLM response",
-        tool_calls=[
-            {"name": "test_tool", "args": {"param": "value"}}
-        ],
+        tool_calls=[{"name": "test_tool", "args": {"param": "value"}}],
         actions=[
             {"type": "tool_call", "timestamp": datetime.now(UTC)},
         ],
@@ -325,20 +325,20 @@ class DashboardTestHelpers:
         """Create event data in the format expected by the API."""
         if timestamp is None:
             timestamp = datetime.now(UTC).isoformat()
-        
+
         if data is None:
             data = {}
-        
+
         event_data = {
             "type": event_type,
             "session_id": session_id,
             "timestamp": timestamp,
             "data": data,
         }
-        
+
         if frame_id:
             event_data["frame_id"] = frame_id
-        
+
         return event_data
 
     @staticmethod
@@ -351,7 +351,7 @@ class DashboardTestHelpers:
         """Create a complete set of events for a session."""
         if base_time is None:
             base_time = datetime.now(UTC)
-        
+
         return [
             DashboardTestHelpers.create_event_data(
                 "session_start",
@@ -410,7 +410,11 @@ class DashboardTestHelpers:
                 "run_end",
                 session_id,
                 (base_time + timedelta(seconds=6)).isoformat(),
-                {"run_id": run_id, "status": "completed", "final_answer": "Test answer"},
+                {
+                    "run_id": run_id,
+                    "status": "completed",
+                    "final_answer": "Test answer",
+                },
             ),
         ]
 
@@ -440,20 +444,20 @@ class DashboardTestHelpers:
         return websocket
 
     @staticmethod
-    def create_performance_test_data(num_sessions: int, events_per_session: int) -> list[dict[str, Any]]:
+    def create_performance_test_data(
+        num_sessions: int, events_per_session: int
+    ) -> list[dict[str, Any]]:
         """Create performance test data with multiple sessions."""
         all_events = []
         base_time = datetime.now(UTC)
-        
+
         for session_idx in range(num_sessions):
             session_id = f"perf-session-{session_idx}"
             run_id = f"perf-run-{session_idx}"
-            
+
             for event_idx in range(events_per_session):
-                event_time = base_time + timedelta(
-                    seconds=session_idx * 10 + event_idx
-                )
-                
+                event_time = base_time + timedelta(seconds=session_idx * 10 + event_idx)
+
                 event_data = DashboardTestHelpers.create_event_data(
                     "tool_call",
                     session_id,
@@ -465,7 +469,7 @@ class DashboardTestHelpers:
                     },
                 )
                 all_events.append(event_data)
-        
+
         return all_events
 
 
@@ -503,7 +507,7 @@ def patch_connection_manager():
         mock_manager.broadcast_stats_update = AsyncMock()
         mock_manager.broadcast_sessions_update = AsyncMock()
         mock_manager.active_connections = []
-        
+
         m.setattr(
             "local_coding_assistant.dashboard.routes.websocket.manager",
             mock_manager,
@@ -524,12 +528,13 @@ def async_test_event_loop():
 @pytest.fixture
 def validate_dashboard_response():
     """Helper to validate dashboard API responses."""
+
     def _validate(response_data: dict[str, Any], expected_fields: list[str]):
         """Validate that response contains expected fields."""
         for field in expected_fields:
             assert field in response_data, f"Missing field: {field}"
         return True
-    
+
     return _validate
 
 
@@ -567,21 +572,22 @@ def error_scenarios():
 @pytest.fixture
 def performance_timer():
     """Helper to measure performance in tests."""
+
     class Timer:
         def __init__(self):
             self.start_time = None
             self.end_time = None
-        
+
         def start(self):
             self.start_time = datetime.now()
-        
+
         def stop(self):
             self.end_time = datetime.now()
-        
+
         @property
         def duration(self):
             if self.start_time and self.end_time:
                 return (self.end_time - self.start_time).total_seconds()
             return None
-    
+
     return Timer()

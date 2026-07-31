@@ -69,12 +69,14 @@ def _normalize_tool_calls(raw_calls: list[dict[str, Any]] | None) -> list[LLMToo
         function_payload = raw_call.get("function") or raw_call
         name = function_payload.get("name", "unknown")
         args = _normalize_tool_arguments(function_payload.get("arguments"))
+        extra_content = raw_call.get("extra_content") or {}
         tool_calls.append(
             LLMToolCall(
                 id=raw_call.get("id"),
                 name=name,
                 arguments=args,
                 type=raw_call.get("type", "function"),
+                extra_content=extra_content,
             )
         )
     return tool_calls

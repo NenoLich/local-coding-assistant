@@ -3,7 +3,7 @@ Mock tool responses for testing handler integration scenarios.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from local_coding_assistant.tools.types import ToolExecutionResponse
 
@@ -140,7 +140,7 @@ class MockToolCall:
     @staticmethod
     def search_files_call(
         pattern: str = "*.py", max_results: int = 10
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a search_files tool call."""
         return {
             "id": "call_search_123",
@@ -149,7 +149,7 @@ class MockToolCall:
         }
 
     @staticmethod
-    def read_file_call(file_path: str = "example.py") -> Dict[str, Any]:
+    def read_file_call(file_path: str = "example.py") -> dict[str, Any]:
         """Create a read_file tool call."""
         return {
             "id": "call_read_456",
@@ -158,7 +158,7 @@ class MockToolCall:
         }
 
     @staticmethod
-    def execute_command_call(command: str = "ls -la") -> Dict[str, Any]:
+    def execute_command_call(command: str = "ls -la") -> dict[str, Any]:
         """Create an execute_command tool call."""
         return {
             "id": "call_exec_789",

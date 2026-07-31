@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from local_coding_assistant.core.protocols import IConfigManager, IToolManager
@@ -19,6 +20,133 @@ if TYPE_CHECKING:
 
 
 log = get_logger("runtime.context_manager")
+
+
+@dataclass(frozen=True)
+class ToolsBundle:
+    """Represents the state of available tools for caching."""
+
+    tool_call_mode: str
+    tool_names: tuple[str, ...]  # Sorted list of available tool names
+    execution_mode: ToolExecutionMode
+
+    @classmethod
+    def from_tool_manager(
+        cls, tool_manager: IToolManager | None, tool_call_mode: str
+    ) -> ToolsBundle:
+        """Create bundle from current tool manager state."""
+        execution_mode = (
+            ToolExecutionMode.PTC
+            if tool_call_mode == "ptc"
+            else ToolExecutionMode.CLASSIC
+        )
+        if tool_manager is None:
+            tool_names = ()
+        else:
+            tools = tool_manager.list_tools(
+                available_only=True, execution_mode=execution_mode
+            )
+            tool_names = tuple(
+                sorted(
+                    [str(t[0]) if isinstance(t, tuple) else str(t.name) for t in tools]
+                )
+            )
+        return cls(
+            tool_call_mode=tool_call_mode,
+            tool_names=tool_names,
+            execution_mode=execution_mode,
+        )
+
+
+class StaticComponentCache:
+    def __init__(
+        self,
+        config_manager: IConfigManager,
+        tool_manager: IToolManager | ToolManager | None = None,
+        skill_provider: SkillProvider | None = None,
+        agent_profiles: Iterable[AgentProfile] | None = None,
+    ):
+        self.config_manager = config_manager
+        self.tool_selector = ToolSelector(tool_manager=tool_manager)
+        self.skill_provider = skill_provider or SkillProvider()
+        self._agent_catalog = list(agent_profiles) if agent_profiles else []
+
+        # Caches
+        self._agent_profile_cache: dict[tuple[bool, bool], AgentProfile] = {}
+        self._tools_cache: dict[ToolsBundle, tuple[list[ToolSpec], list[str]]] = {}
+        self._skills_cache: dict[str, list[str]] = {}
+
+    def get_agent_profile(self, agent_mode: bool, graph_mode: bool) -> AgentProfile:
+        """Get cached agent profile or compute if not cached."""
+        cache_key = (agent_mode, graph_mode)
+        if cache_key in self._agent_profile_cache:
+            log.debug(
+                "Agent profile cache hit for agent_mode=%s, graph_mode=%s",
+                agent_mode,
+                graph_mode,
+            )
+            return self._agent_profile_cache[cache_key]
+
+        log.debug(
+            "Agent profile cache miss for agent_mode=%s, graph_mode=%s",
+            agent_mode,
+            graph_mode,
+        )
+
+        # Use explicitly provided profile if available
+        if self._agent_catalog:
+            profile = self._agent_catalog[0]  # Return first (and only) profile
+        else:
+            # Get agent config
+            agent_config = self.config_manager.global_config.agent
+
+            # In graph mode, use the planner profile (executor would be separate agent)
+            if graph_mode:
+                profile_data = agent_config.get_profile("planner")
+                profile = AgentProfile(**profile_data.model_dump())
+            # In agent mode, use the default agent profile
+            elif agent_mode:
+                profile_data = agent_config.get_profile("default")
+                profile = AgentProfile(**profile_data.model_dump())
+            # Fall back to default profile if no specific mode is set
+            else:
+                profile_data = agent_config.get_profile("default")
+                profile = AgentProfile(**profile_data.model_dump())
+
+        self._agent_profile_cache[cache_key] = profile
+        return profile
+
+    def get_tools(
+        self, tool_call_mode: str, tool_manager: IToolManager | None
+    ) -> tuple[list[ToolSpec], list[str]]:
+        """Get cached tools or compute if not cached."""
+        bundle = ToolsBundle.from_tool_manager(tool_manager, tool_call_mode)
+        if bundle in self._tools_cache:
+            log.debug("Tools cache hit for bundle: %s", bundle)
+            return self._tools_cache[bundle]
+
+        log.debug("Tools cache miss for bundle: %s", bundle)
+        tools, tools_prompt = self.tool_selector.select(tool_call_mode=tool_call_mode)
+        self._tools_cache[bundle] = (tools, tools_prompt)
+        return tools, tools_prompt
+
+    def get_skills(self, execution_mode: str) -> list[str]:
+        """Get cached skills or compute if not cached."""
+        if execution_mode in self._skills_cache:
+            log.debug("Skills cache hit for execution_mode=%s", execution_mode)
+            return self._skills_cache[execution_mode]
+
+        log.debug("Skills cache miss for execution_mode=%s", execution_mode)
+        skills = self.skill_provider.resolve(execution_mode=execution_mode)
+        self._skills_cache[execution_mode] = skills
+        return skills
+
+    def invalidate_all(self):
+        """Clear all caches."""
+        log.info("Invalidated all caches")
+        self._agent_profile_cache.clear()
+        self._tools_cache.clear()
+        self._skills_cache.clear()
 
 
 class MemoryProvider:
@@ -220,14 +348,17 @@ class ContextManager:
         tool_manager: IToolManager | ToolManager | None = None,
         memory_provider: MemoryProvider | None = None,
         skill_provider: SkillProvider | None = None,
-        tool_selector: ToolSelector | None = None,
         agent_profiles: Iterable[AgentProfile] | None = None,
     ) -> None:
         self.config_manager = config_manager
-        self.tool_selector = tool_selector or ToolSelector(tool_manager=tool_manager)
+        self.tool_manager = tool_manager
         self.memory_provider = memory_provider or MemoryProvider()
-        self.skill_provider = skill_provider or SkillProvider()
-        self._agent_catalog = list(agent_profiles) if agent_profiles else []
+        self._cache = StaticComponentCache(
+            config_manager=config_manager,
+            tool_manager=tool_manager,
+            skill_provider=skill_provider,
+            agent_profiles=agent_profiles,
+        )
 
     def build_context(
         self,
@@ -287,10 +418,14 @@ class ContextManager:
         # Map validated tool_call_mode to execution_mode
         execution_mode = self._map_validated_mode_to_execution_mode(tool_call_mode)
 
-        agent = self._resolve_agents(agent_mode=agent_mode, graph_mode=graph_mode)
+        # Get cached static components
+        agent = self._cache.get_agent_profile(agent_mode, graph_mode)
+        tools, tools_prompt = self._cache.get_tools(tool_call_mode, self.tool_manager)
+        skills = self._cache.get_skills(execution_mode)
+
+        # Dynamic components (always fresh)
         memories = self.memory_provider.fetch(session=session)
-        skills = self.skill_provider.resolve(execution_mode=execution_mode)
-        tools, tools_prompt = self.tool_selector.select(tool_call_mode=tool_call_mode)
+        history = [m.model_dump() for m in session.history]
 
         metadata = {
             "execution_mode": execution_mode,
@@ -314,16 +449,20 @@ class ContextManager:
             execution_mode=execution_mode,
             tool_call_mode=tool_call_mode,
             user_input=user_input,
-            agent_profile=agent,  # Single profile instead of list
+            agent_profile=agent,
             active_skills=skills,
             tools_prompt=tools_prompt,
             memories=memories,
             tools=tools,
-            history=[m.model_dump() for m in session.history],
+            history=history,
             metadata=metadata,
             is_sandbox_enabled=sandbox_config.enabled,
             handler_context=handler_context,
         )
+
+    def invalidate_all(self):
+        """Invalidate all caches."""
+        self._cache.invalidate_all()
 
     def _map_validated_mode_to_execution_mode(
         self, tool_call_mode: str
@@ -342,40 +481,6 @@ class ContextManager:
             return ExecutionMode.SANDBOX_PYTHON
         else:  # "classic" or any other valid mode
             return ExecutionMode.CLASSIC_TOOLS
-
-    def _resolve_agents(
-        self, *, agent_mode: bool, graph_mode: bool
-    ) -> AgentProfile | None:
-        """Resolve which agent profile to use based on the current mode.
-
-        Args:
-            agent_mode: Whether agent mode is enabled
-            graph_mode: Whether graph mode is enabled
-
-        Returns:
-            Single AgentProfile to use for the current context
-        """
-        # Use explicitly provided profile if available
-        if self._agent_catalog:
-            return self._agent_catalog[0]  # Return first (and only) profile
-
-        # Get agent config
-        agent_config = self.config_manager.global_config.agent
-
-        # In graph mode, use the planner profile (executor would be separate agent)
-        if graph_mode:
-            planner = agent_config.get_profile("planner")
-            return AgentProfile(**planner.model_dump())
-
-        # In agent mode, use the default agent profile
-        if agent_mode:
-            default_profile = agent_config.get_profile("default")
-            return AgentProfile(**default_profile.model_dump())
-
-        # Fall back to default profile if no specific mode is set
-
-        default_profile = agent_config.get_profile("default")
-        return AgentProfile(**default_profile.model_dump())
 
 
 __all__ = [

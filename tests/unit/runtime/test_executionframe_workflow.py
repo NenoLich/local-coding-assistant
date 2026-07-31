@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock
 
+import pytest
 
+from local_coding_assistant.agent.llm import LLMResult, LLMToolCall
+from local_coding_assistant.core.telemetry_types import (
+    ExecutionEnvelope,
+    ResourceMetric,
+    ResourceType,
+    ToolCallTrace,
+)
 from local_coding_assistant.runtime.execution_types import (
     ActionKind,
     ExecutionFrame,
@@ -13,21 +20,13 @@ from local_coding_assistant.runtime.execution_types import (
 )
 from local_coding_assistant.runtime.executor import RuntimeExecutor
 from local_coding_assistant.runtime.runtime_types import (
-    PromptContext,
-    RenderedPrompt,
     AgentProfile,
     ExecutionMode,
+    PromptContext,
+    RenderedPrompt,
     ToolSpec,
 )
-from local_coding_assistant.agent.llm import LLMResult, LLMToolCall
 from local_coding_assistant.tools.types import ToolExecutionResponse
-
-from local_coding_assistant.core.telemetry_types import (
-    ToolCallTrace,
-    ResourceMetric,
-    ResourceType,
-    ExecutionEnvelope,
-)
 
 
 @pytest.fixture
@@ -53,12 +52,11 @@ def mock_context_manager():
 
 
 @pytest.fixture
-def runtime_executor(mock_llm_service, mock_tool_manager, mock_context_manager):
+def runtime_executor(mock_llm_service, mock_tool_manager):
     """Runtime executor fixture."""
     return RuntimeExecutor(
         llm_service=mock_llm_service,
         tool_manager=mock_tool_manager,
-        context_manager=mock_context_manager,
     )
 
 
@@ -708,24 +706,12 @@ class TestRuntimeExecutor:
         tool_calls = result_frame.get_tool_results()
         assert len(tool_calls) == 1  # Only the main tool call
 
-    def test_executor_initialization(
-        self, mock_llm_service, mock_tool_manager, mock_context_manager
-    ):
+    def test_executor_initialization(self, mock_llm_service, mock_tool_manager):
         """Test RuntimeExecutor initialization."""
-        # Test with all parameters
+        # Test with minimal parameters
         executor = RuntimeExecutor(
             llm_service=mock_llm_service,
             tool_manager=mock_tool_manager,
-            context_manager=mock_context_manager,
         )
         assert executor._llm_service == mock_llm_service
         assert executor._tool_manager == mock_tool_manager
-        assert executor._context_manager == mock_context_manager
-
-        # Test with minimal parameters
-        executor_default = RuntimeExecutor(
-            llm_service=mock_llm_service,
-            tool_manager=mock_tool_manager,
-        )
-        assert executor_default._llm_service == mock_llm_service
-        assert executor_default._tool_manager == mock_tool_manager

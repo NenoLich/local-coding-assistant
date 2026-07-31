@@ -33,7 +33,7 @@ class FakePathManager:
         raise ValueError(msg)
 
 
-@pytest.fixture()
+@pytest.fixture
 def sandbox_project_root(tmp_path: Path) -> Path:
     """Provide a temporary project root with expected sub-structure."""
     (tmp_path / "src" / "local_coding_assistant" / "sandbox" / "guest").mkdir(
@@ -45,7 +45,6 @@ def sandbox_project_root(tmp_path: Path) -> Path:
 @pytest.mark.asyncio
 async def test_check_docker_available_success(sandbox_project_root: Path) -> None:
     """Test successful Docker availability check."""
-    import docker
 
     sandbox = DockerSandbox(path_manager=FakePathManager(sandbox_project_root))
 
@@ -80,7 +79,6 @@ async def test_check_docker_available_connection_failure(
     sandbox_project_root: Path,
 ) -> None:
     """Test Docker availability check when connection fails."""
-    import docker
 
     sandbox = DockerSandbox(path_manager=FakePathManager(sandbox_project_root))
 
@@ -100,7 +98,6 @@ async def test_check_docker_available_client_close_error(
     sandbox_project_root: Path,
 ) -> None:
     """Test Docker availability check when client close fails."""
-    import docker
 
     sandbox = DockerSandbox(path_manager=FakePathManager(sandbox_project_root))
 
@@ -258,7 +255,6 @@ async def test_initialize_sandbox_failure(sandbox_project_root: Path) -> None:
 @pytest.mark.asyncio
 async def test_ensure_client_success(sandbox_project_root: Path) -> None:
     """Test successful Docker client initialization."""
-    import docker
 
     sandbox = DockerSandbox(path_manager=FakePathManager(sandbox_project_root))
 
@@ -288,7 +284,6 @@ async def test_ensure_client_already_initialized(sandbox_project_root: Path) -> 
 @pytest.mark.asyncio
 async def test_ensure_client_failure(sandbox_project_root: Path) -> None:
     """Test client initialization when Docker is not available."""
-    import docker
 
     sandbox = DockerSandbox(path_manager=FakePathManager(sandbox_project_root))
 

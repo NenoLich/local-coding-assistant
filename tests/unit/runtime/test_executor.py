@@ -1,14 +1,14 @@
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
-from unittest.mock import MagicMock, AsyncMock
-
+from local_coding_assistant.agent.llm.models import LLMToolCall
 from local_coding_assistant.runtime.execution_types import (
-    ExecutionFrame,
     ActionKind,
+    ExecutionFrame,
     ExecutionStatus,
 )
 from local_coding_assistant.runtime.executor import RuntimeExecutor
-from local_coding_assistant.agent.llm.models import LLMToolCall
 from local_coding_assistant.tools.types import ToolExecutionResponse
 
 
@@ -195,8 +195,8 @@ async def test_executor_with_tool_call(mock_llm_service, mock_tool_manager):
 
 
 # Streaming tests
-from local_coding_assistant.runtime.events import EventType
 from local_coding_assistant.agent.llm import LLMOptions, LLMTask
+from local_coding_assistant.runtime.events import EventType
 
 
 @pytest.fixture
@@ -213,23 +213,15 @@ def mock_config_manager_streaming():
 
 
 @pytest.fixture
-def mock_context_manager_streaming():
-    """Mock context manager for streaming testing."""
-    return MagicMock()
-
-
-@pytest.fixture
 def executor_streaming(
     mock_llm_service_streaming,
     mock_tool_manager,
     mock_config_manager_streaming,
-    mock_context_manager_streaming,
 ):
     """Create RuntimeExecutor instance with mocked dependencies for streaming."""
     executor = RuntimeExecutor(
         llm_service=mock_llm_service_streaming,
         tool_manager=mock_tool_manager,
-        context_manager=mock_context_manager_streaming,
         config_manager=None,  # Set to None to avoid mocking issues
     )
     executor._max_tokens = 10000
@@ -237,9 +229,9 @@ def executor_streaming(
 
 
 from local_coding_assistant.runtime.runtime_types import (
+    ExecutionMode,
     PromptContext,
     RenderedPrompt,
-    ExecutionMode,
 )
 
 
@@ -393,8 +385,8 @@ class TestRuntimeExecutorStreaming:
     ):
         """Test that execute emits TOOL_START and TOOL_RESULT events for tool calls."""
         from local_coding_assistant.agent.llm import LLMToolCall
-        from local_coding_assistant.tools.types import ToolExecutionResponse
         from local_coding_assistant.runtime.runtime_types import ToolSpec
+        from local_coding_assistant.tools.types import ToolExecutionResponse
 
         # Add tool to frame
         tool_spec = ToolSpec(name="test_tool", description="Test tool")

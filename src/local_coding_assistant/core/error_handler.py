@@ -121,7 +121,10 @@ def async_error_handler[**P, R](
     context: str | None = None,
     verbose: bool = False,
     error_callback: ErrorHandler | None = None,
-) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R | None]]]:
+) -> (
+    Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R | None]]]
+    | Callable[P, Awaitable[R | None]]
+):
     """Decorator to wrap async functions with error handling.
 
     Args:
@@ -159,7 +162,7 @@ def async_error_handler[**P, R](
 
     # Handle both @async_error_handler and @async_error_handler() syntax
     if func is not None:
-        return decorator(func)  # type: ignore[arg-type]
+        return decorator(func)
     return decorator
 
 
@@ -175,10 +178,11 @@ def _copy_function_signature(
     try:
         # Copy signature if available
         if hasattr(original_func, "__signature__"):
-            wrapper_func.__signature__ = original_func.__signature__  # type: ignore[attr-defined]
+            setattr(wrapper_func, "__signature__", original_func.__signature__)  # noqa: B010
+
         else:
             signature = inspect.signature(original_func)
-            wrapper_func.__signature__ = signature  # type: ignore[attr-defined]
+            setattr(wrapper_func, "__signature__", signature)  # noqa: B010
 
         # Copy other metadata if they exist
         if hasattr(original_func, "__module__"):

@@ -2,21 +2,22 @@
 Tests for FrameAgent event emission and session updates.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from local_coding_assistant.runtime.events import EventType, ExecutionEvent
 from local_coding_assistant.runtime.execution_types import (
-    ExecutionStatus,
     ExecutionResult,
+    ExecutionStatus,
 )
+from local_coding_assistant.runtime.reporting import RunReport
 from local_coding_assistant.runtime.runtime_types import (
+    ExecutionMode,
     PromptContext,
     RenderedPrompt,
-    ExecutionMode,
 )
 from local_coding_assistant.runtime.session import SessionState
-from local_coding_assistant.runtime.reporting import RunReport
 from tests.unit.conftest import collect_events
 
 

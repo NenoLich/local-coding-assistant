@@ -3,7 +3,7 @@ Mock LLM responses for testing handler integration scenarios.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from local_coding_assistant.agent.llm import LLMResult
 
@@ -104,7 +104,7 @@ class MockLLMResponse:
     @staticmethod
     def tool_call_response(
         content: str = "I'll help you with that task.",
-        tool_calls: list[Dict[str, Any]] = None,
+        tool_calls: list[dict[str, Any]] = None,
         reasoning: str = "The user needs help with a specific task that requires tool usage.",
         reasoning_tokens: int = 100,
         total_tokens: int = 300,

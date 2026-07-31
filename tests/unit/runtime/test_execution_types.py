@@ -2,18 +2,18 @@
 
 import pytest
 
+from local_coding_assistant.core.telemetry_types import (
+    ResourceMetric,
+    ResourceType,
+    ToolCallTrace,
+)
 from local_coding_assistant.runtime.execution_types import (
-    ActionRecord,
     ActionKind,
+    ActionRecord,
     ExecutionFrame,
     ExecutionResult,
     ExecutionStatus,
     LLMMetrics,
-)
-from local_coding_assistant.core.telemetry_types import (
-    ToolCallTrace,
-    ResourceMetric,
-    ResourceType,
 )
 from local_coding_assistant.runtime.runtime_types import ExecutionMode
 

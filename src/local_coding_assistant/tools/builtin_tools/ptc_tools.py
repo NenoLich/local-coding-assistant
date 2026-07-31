@@ -163,13 +163,15 @@ final_answer(processed)
             if security_manager:
                 security_manager.validate_code(input_data.code)
 
-            persistence = self.sandbox_manager.config.persistence  # type: ignore[possibly-missing-attribute]
+            if self.sandbox_manager is None:
+                raise RuntimeError("Sandbox manager not available")
+            persistence = self.sandbox_manager.config.persistence
 
             # Execute the code in the sandbox
             response = await self.execute_in_sandbox(
                 code=input_data.code,
                 session_id=input_data.session_id,
-                timeout=self.sandbox_manager.config.timeout,  # type: ignore[possibly-missing-attribute]
+                timeout=self.sandbox_manager.config.timeout,
                 env_vars=self._get_env_vars(input_data.session_id),
                 persistence=persistence,
             )
@@ -252,6 +254,9 @@ class RunShellCommandTool(SandboxTool):
             if security_manager:
                 security_manager.validate_command(input_data.command)
 
+            if self.sandbox_manager is None:
+                raise RuntimeError("Sandbox manager not available")
+
             # 1. Try native shell execution if available
             if hasattr(sandbox, "execute_shell") and asyncio.iscoroutinefunction(
                 sandbox.execute_shell
@@ -259,7 +264,7 @@ class RunShellCommandTool(SandboxTool):
                 response = await sandbox.execute_shell(
                     command=input_data.command,
                     session_id=input_data.session_id,
-                    timeout=self.sandbox_manager.config.timeout,  # type: ignore[possibly-missing-attribute]
+                    timeout=self.sandbox_manager.config.timeout,
                 )
                 return self.Output(
                     success=response.success,
@@ -274,14 +279,14 @@ class RunShellCommandTool(SandboxTool):
             # 2. Fall back to Python subprocess wrapper
             code = await self._build_subprocess_wrapper(
                 command=input_data.command,
-                timeout=self.sandbox_manager.config.timeout,  # type: ignore[possibly-missing-attribute]
+                timeout=self.sandbox_manager.config.timeout,
                 cwd=input_data.cwd,
             )
 
             response = await self.execute_in_sandbox(
                 code=code,
                 session_id=input_data.session_id,
-                timeout=self.sandbox_manager.config.timeout,  # type: ignore[possibly-missing-attribute]
+                timeout=self.sandbox_manager.config.timeout,
                 persistence=bool(
                     input_data.session_id and input_data.session_id != "default"
                 ),

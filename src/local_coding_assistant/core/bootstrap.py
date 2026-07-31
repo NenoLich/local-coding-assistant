@@ -108,6 +108,74 @@ def bootstrap(
 # --- Helper Functions ---
 
 
+def _register_litellm_models_from_config(config_manager: IConfigManager) -> None:
+    """Register provider models with LiteLLM from configuration.
+
+    Reads provider configurations and registers models with LiteLLM to bypass
+    cost mapping for unmapped models. Only called if auto_register_litellm_models is enabled.
+
+    Args:
+        config_manager: The config manager with loaded provider configurations
+    """
+    try:
+        import litellm
+
+        providers_config = config_manager.global_config.providers
+        if not providers_config:
+            logger.debug("No providers configured, skipping LiteLLM model registration")
+            return
+
+        custom_models = {}
+        for _, provider_config in providers_config.items():
+            # Convert ProviderConfig to dict if needed
+            if hasattr(provider_config, "model_dump"):
+                provider_dict = provider_config.model_dump()
+            else:
+                provider_dict = provider_config
+
+            models = provider_dict.get("models", [])
+            driver = provider_dict.get("driver", "")
+
+            # Only register models for openai_chat and openai_responses drivers
+            if driver not in ("openai_chat", "openai_responses"):
+                continue
+
+            for model in models:
+                model_name = model if isinstance(model, str) else model.get("name", "")
+                if not model_name:
+                    continue
+
+                # Determine provider prefix based on driver
+                # openai_chat uses "openai/" prefix in compatible_drivers.py
+                litellm_provider = "openai"
+                model_key = (
+                    f"openai/{model_name}"
+                    if driver == "openai_chat"
+                    else f"openai/responses/{model_name}"
+                )
+
+                custom_models[model_key] = {
+                    "max_tokens": 1_000_000,
+                    "input_cost_per_token": 0.0,
+                    "output_cost_per_token": 0.0,
+                    "litellm_provider": litellm_provider,
+                    "mode": "chat" if driver == "openai_chat" else "responses",
+                }
+
+        if custom_models:
+            litellm.register_model(custom_models)
+            logger.info(
+                f"Registered {len(custom_models)} models with LiteLLM from provider config"
+            )
+        else:
+            logger.debug("No models to register with LiteLLM")
+
+    except ImportError:
+        logger.debug("LiteLLM not available, skipping model registration")
+    except Exception as e:
+        logger.warning(f"Failed to register models with LiteLLM: {e}")
+
+
 def _initialize_config(
     config_path: str | None,
     config_manager: IConfigManager | None = None,
@@ -234,6 +302,10 @@ def _initialize_llm_service(config_manager: IConfigManager) -> LLMService | None
         Initialized LLMService instance or None if initialization fails
     """
     try:
+        # Register models with LiteLLM if auto-registration is enabled
+        if config_manager.global_config.llm.auto_register_litellm_models:
+            _register_litellm_models_from_config(config_manager)
+
         # Lazy import to avoid circular imports
         from local_coding_assistant.providers.provider_manager import provider_manager
 

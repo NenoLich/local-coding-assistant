@@ -1,9 +1,10 @@
 """Tests for the updated resource tracker with proper argument capture."""
 
-import pytest
 import asyncio
 import time
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from local_coding_assistant.sandbox.guest.resource_tracker import ResourceTracker
 
