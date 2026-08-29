@@ -1,0 +1,25 @@
+{
+"compilerOptions": {
+// Target modern JS
+"target": "ES2022",
+
+/*
+   Next.js / Vite bundler resolution
+*/
+"moduleResolution": "bundler",
+
+"strict": true,
+"jsx": "preserve",
+
+"paths": {
+  "@/*": ["./src/*"],
+  "@components/*": ["./src/components/*"],
+},
+
+
+},
+"exclude": [
+"node_modules",
+"dist",
+],
+}

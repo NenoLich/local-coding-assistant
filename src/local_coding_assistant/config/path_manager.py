@@ -114,7 +114,13 @@ class PathManager:
         if self.is_development:
             return self._project_root / "data"
         # production
-        return self._get_system_data_dir() / "local-coding-assistant"
+        return self._get_system_data_dir() / "LOCCA"
+
+    def get_target_project_root(self) -> Path:
+        """Get the target project root directory."""
+        if self.is_production:
+            return Path(os.getcwd())
+        return self._project_root
 
     def get_cache_dir(self) -> Path:
         """Get the cache directory for the current environment."""
@@ -123,7 +129,7 @@ class PathManager:
         if self.is_development:
             return self._project_root / ".cache"
         # production
-        return self._get_system_cache_dir() / "local-coding-assistant"
+        return self._get_system_cache_dir() / "LOCCA"
 
     def get_log_dir(self) -> Path:
         """Get the log directory for the current environment."""
@@ -132,48 +138,35 @@ class PathManager:
         if self.is_development:
             return self._project_root / "logs"
         # production
-        return self._get_system_log_dir() / "local-coding-assistant"
+        return self._get_system_log_dir() / "LOCCA"
 
     def _get_system_config_dir(self) -> Path:
         """Get the system configuration directory."""
         if os.name == "nt":  # Windows
-            return (
-                Path(os.environ.get("APPDATA", ""))
-                / "Local"
-                / "LocalCodingAssistant"
-                / "config"
-            )
+            return Path(os.environ.get("APPDATA", "")) / "Local" / "LOCCA" / "config"
         # Unix-like
-        return Path.home() / ".config" / "local-coding-assistant"
+        return Path.home() / ".config" / "LOCCA"
 
     def _get_system_data_dir(self) -> Path:
         """Get the system data directory."""
         if os.name == "nt":  # Windows
-            return Path(os.environ.get("LOCALAPPDATA", "")) / "LocalCodingAssistant"
+            return Path(os.environ.get("LOCALAPPDATA", "")) / "LOCCA"
         # Unix-like
         return Path.home() / ".local" / "share"
 
     def _get_system_cache_dir(self) -> Path:
         """Get the system cache directory."""
         if os.name == "nt":  # Windows
-            return (
-                Path(os.environ.get("LOCALAPPDATA", ""))
-                / "LocalCodingAssistant"
-                / "Cache"
-            )
+            return Path(os.environ.get("LOCALAPPDATA", "")) / "LOCCA" / "Cache"
         # Unix-like
         return Path.home() / ".cache"
 
     def _get_system_log_dir(self) -> Path:
         """Get the system log directory."""
         if os.name == "nt":  # Windows
-            return (
-                Path(os.environ.get("LOCALAPPDATA", ""))
-                / "LocalCodingAssistant"
-                / "Logs"
-            )
+            return Path(os.environ.get("LOCALAPPDATA", "")) / "LOCCA" / "Logs"
         # Unix-like
-        return Path("/var") / "log" / "local-coding-assistant"
+        return Path("/var") / "log" / "LOCCA"
 
     def get_module_dir(self) -> Path:
         """Get the module directory for the current environment."""
@@ -191,10 +184,8 @@ class PathManager:
             )
             if not site_packages:
                 # Fallback to a relative path if site-packages can't be determined
-                return (
-                    Path("lib") / "site-packages" / "local_coding_assistant" / "modules"
-                )
-            return Path(site_packages) / "local_coding_assistant" / "modules"
+                return Path("lib") / "site-packages" / "LOCCA" / "modules"
+            return Path(site_packages) / "LOCCA" / "modules"
 
     def get_tools_dir(self) -> Path:
         """Get the tools directory for the current environment."""
@@ -280,6 +271,7 @@ class PathManager:
         prefix_handlers = {
             "config": self.get_config_dir,
             "data": self.get_data_dir,
+            "target": self.get_target_project_root,
             "cache": self.get_cache_dir,
             "log": self.get_log_dir,
             "module": self.get_module_dir,

@@ -19,6 +19,7 @@ An AI-powered coding assistant that runs locally with support for LLMs, tools, a
 - **Sandbox Environment** - Secure, isolated execution environment for untrusted code
 - **Execution Statistics** - Comprehensive monitoring and metrics for tool execution
 - **Dashboard** - Web-based observability and analysis dashboard for ExecutionFrame monitoring
+- **Repository Context Service** - AST-backed repository indexing, repo-map generation, symbol search, and metadata extraction for code-aware prompts
 
 ## Architecture Overview
 
@@ -42,9 +43,39 @@ LOCCA implements a sophisticated agent architecture with the following key compo
 - **Tool Registry** - Dynamic tool loading and management with schema validation
 - **Runtime Manager** - Session and context management with persistence
 - **Configuration System** - Three-layer precedence (global, session, call) with Pydantic schemas
+- **Repository Context Service** - Builds a lightweight code index using AST parsing, metadata extraction, repo-map generation, and symbol search
 - **Sandbox Manager** - Secure execution environment with resource constraints and isolation
 - **Statistics Manager** - Tracks and reports on tool execution metrics and resource usage
 - **Dashboard System** - Web-based observability interface with real-time monitoring and analytics
+
+### Repository Context Service
+
+The repository layer is implemented as a first-class service, not just a prompt helper. It indexes tracked files, extracts project metadata, builds a repo map, and supports symbol search using SQLite + FTS-based lookups.
+
+Key capabilities in the current codebase:
+
+- AST-based parsing for Python, JavaScript/TypeScript, Rust, Go, and other supported languages
+- Project metadata extraction from `pyproject.toml`, Cargo manifests, TS config, and workspace config files
+- Repository map generation with ranked symbols and language distribution snapshots
+- Incremental reindexing and file-change monitoring for git-tracked files
+- Persistent, temporary, and test database modes via `StorageManager`
+- Search APIs for symbol names, types, and file filtering through `RepositoryContextService.search_symbols()`
+
+This service is wired into runtime/context setup and can be used directly from the codebase or via tool integrations when a repository-aware prompt is needed.
+
+```python
+from pathlib import Path
+from local_coding_assistant.repository import RepositoryContextService
+
+service = RepositoryContextService(
+    target_project_root=Path("/path/to/project"),
+    config_manager=config_manager,
+)
+
+project_info = service.get_project_info()
+repo_map = service.get_repo_map_data()
+symbol_matches = service.search_symbols("load_config", limit=10)
+```
 
 ## Configuration
 
@@ -59,24 +90,27 @@ Higher layers override lower layers. The default bootstrap loads `.env`, optiona
 
 ### Path Management
 
-The `path_manager` utility provides a unified way to handle file paths throughout the application. It resolves paths using the following aliases:
+The `path_manager` utility provides a unified way to handle file paths throughout the application. In the current implementation, the valid runtime aliases include:
 
-- `@root`: Project root directory
+- `@project`: Project root directory
 - `@config`: Configuration directory (from `LOCCA_CONFIG_DIR`)
 - `@data`: Data directory (from `LOCCA_DATA_DIR`)
 - `@cache`: Cache directory (from `LOCCA_CACHE_DIR`)
-- `@logs`: Logs directory (from `LOCCA_LOGS_DIR`)
+- `@log`: Log directory (from `LOCCA_LOG_DIR`)
+- `@module`: Module or package root
+- `@tools`: Tools directory
+- `@templates`: Template directory
 
 Example usage:
 ```python
 from local_coding_assistant.config.path_manager import PathManager
 
-# Resolve a path relative to config directory
-config_path = path_manager.resolve("@config/providers/default.yaml")
-
-# Join paths using the path manager
-log_file = path_manager.join("@logs", "app.log")
+path_manager = PathManager()
+config_path = path_manager.resolve("@config/providers.default.yaml")
+log_file = path_manager.join("@log", "app.log")
 ```
+
+Note: `@root` and `@logs` are not real aliases in the current path manager; use `@project` and `@log` instead.
 
 ### .env Files
 
@@ -129,7 +163,7 @@ All paths in configuration files can use the `@` aliases (e.g., `@data/models`) 
 4. Create and activate a virtual environment:
    ```bash
    uv venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   source .venv_linux/bin/activate  # On Windows: .venv_linux\Scripts\activate
    ```
 5. Install development dependencies:
    ```bash
@@ -191,6 +225,16 @@ All paths in configuration files can use the `@` aliases (e.g., `@data/models`) 
 │       │   ├── handlers/     # Execution handlers
 │       │   ├── runtime_manager.py # Session orchestration
 │       │   └── dashboard_integration.py # Dashboard event integration
+│       ├── repository/       # Repository-aware context layer
+│       │   ├── ast_parser/   # Tree-sitter symbol and relationship extraction
+│       │   ├── metadata/     # Project metadata extraction logic
+│       │   ├── call_graph.py # Repo Map ranking and call-graph utilities
+│       │   ├── database.py   # SQLite-backed repository index
+│       │   ├── repo_map.py   # Repo map builder and formatter
+│       │   ├── service.py    # Main RepositoryContextService orchestrator
+│       │   ├── storage.py    # Persistent/temp/test storage lifecycle
+│       │   ├── symbol_search.py # Full-text symbol lookup
+│       │   └── file_monitoring.py # Reindex callbacks and file-change detection
 │       ├── sandbox/          # Secure code execution environment
 │       │   ├── guest/        # Guest-side sandbox components
 │       │   │   ├── agent.py  # Guest agent implementation

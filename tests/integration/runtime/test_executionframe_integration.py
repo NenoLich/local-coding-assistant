@@ -50,7 +50,7 @@ def runtime_manager(mock_llm_service, mock_tool_manager):
     original_build_context = manager._context_manager.build_context
 
     def mock_build_context(
-        session, user_input, tool_call_mode, agent_mode, handler_context
+        session, user_input, tool_call_mode, agent_mode, handler_context, agent_file_changes
     ):
         context = original_build_context(
             session=session,
@@ -58,6 +58,7 @@ def runtime_manager(mock_llm_service, mock_tool_manager):
             tool_call_mode=tool_call_mode,
             agent_mode=agent_mode,
             handler_context=handler_context,
+            agent_file_changes=agent_file_changes,
         )
         context.tools.append(test_tool)
         return context

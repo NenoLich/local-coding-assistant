@@ -70,6 +70,9 @@ class RuntimeExecutor:
             model=self._config_manager.global_config.llm.model_name
             if self._config_manager
             else None,
+            stream=self._config_manager.global_config.runtime.stream
+            if self._config_manager
+            else True,
         )
 
         return llm_task, options
@@ -268,17 +271,29 @@ class RuntimeExecutor:
 
             # 4. Call LLM and yield events
             start_time = time.perf_counter()
-            response = None
-            async for event in self._generate_llm_events(
-                llm_task,
-                options=options,
-                session_id=frame.session_id,
-                frame_id=frame.id,
-            ):
-                yield event
-                if event.type == EventType.LLM_COMPLETE:
-                    response = event.data["result"]
-                    break
+            if options.stream:
+                response = None
+                async for event in self._generate_llm_events(
+                    llm_task,
+                    options=options,
+                    session_id=frame.session_id,
+                    frame_id=frame.id,
+                ):
+                    yield event
+                    if event.type == EventType.LLM_COMPLETE:
+                        response = event.data["result"]
+                        break
+            else:
+                response = await self._llm_service.generate(
+                    llm_task,
+                    options=options,
+                )
+                yield ExecutionEvent(
+                    EventType.LLM_COMPLETE,
+                    frame.session_id,
+                    frame.id,
+                    {"result": response},
+                )
 
             if response is None:
                 raise RuntimeError("No LLM response received")
@@ -359,6 +374,7 @@ class RuntimeExecutor:
                     frame,
                     tool_call,
                     tool_response,
+                    result,
                     tool_action,
                     execution_mode,
                     tool_start_time,
@@ -484,12 +500,13 @@ class RuntimeExecutor:
             f"Sandbox tool call {tool_call.name} completed with output: {output}"
         )
 
-        if result.files_created is None:
-            result.files_created = []
-        if result.files_modified is None:
-            result.files_modified = []
-        result.files_created.extend(tool_response.envelope.files_created or [])
-        result.files_modified.extend(tool_response.envelope.files_modified or [])
+        # Add file changes from envelope to result
+        if tool_response.envelope.file_changes:
+            result.agent_file_changes.extend(tool_response.envelope.file_changes)
+
+        # Also add file changes from tool_response directly (for non-envelope tools)
+        if tool_response.file_changes:
+            result.agent_file_changes.extend(tool_response.file_changes)
 
         tool_trace = ToolCallTrace(
             call_id=tool_call.id if tool_call.id else "unknown",
@@ -518,6 +535,7 @@ class RuntimeExecutor:
         frame: ExecutionFrame,
         tool_call: LLMToolCall,
         tool_response: ToolExecutionResponse,
+        result: ExecutionResult,
         tool_action,
         execution_mode,
         tool_start_time,
@@ -547,6 +565,10 @@ class RuntimeExecutor:
             tool_action.id,
             output=tool_trace,  # Store ToolCallTrace directly
         )
+
+        # Add file changes from tool response
+        if tool_response.file_changes:
+            result.agent_file_changes.extend(tool_response.file_changes)
 
     def _update_final_answer(
         self, result: ExecutionResult, tool_response: ToolExecutionResponse

@@ -6,6 +6,8 @@ from typing import Any
 
 from local_coding_assistant.providers.base import BaseProvider
 from local_coding_assistant.providers.compatible_drivers import (
+    LocalDriver,
+    MockDriver,
     OpenAIChatCompletionsDriver,
     OpenAIResponsesDriver,
 )
@@ -16,6 +18,8 @@ logger = get_logger("providers.generic")
 driver_map = {
     "openai_chat": OpenAIChatCompletionsDriver,
     "openai_responses": OpenAIResponsesDriver,
+    "local": LocalDriver,
+    "mock": MockDriver,
 }
 
 
@@ -49,12 +53,13 @@ class GenericProvider(BaseProvider):
         # Extract models if provided, otherwise use empty list
         models = kwargs.pop("models", [])
 
-        # Initialize the base provider
+        # Initialize the base provider with skip_driver_init to prevent double initialization
         super().__init__(
             name=name,
             base_url=base_url,
             env_manager=env_manager,
             models=models,  # Pass models to BaseProvider
+            skip_driver_init=True,  # We'll create the driver ourselves
             **{
                 k: v
                 for k, v in kwargs.items()
@@ -76,7 +81,20 @@ class GenericProvider(BaseProvider):
             if not api_key and self.api_key_env:
                 api_key = env_manager.get_env(self.api_key_env)
 
-            driver_kwargs = {"provider_name": self.name}
+            # Pass additional kwargs to driver (excluding provider-specific ones)
+            driver_kwargs = {
+                "provider_name": self.name,
+            }
+            # Add any driver-specific parameters from kwargs
+            driver_specific_params = [
+                "mock_responses_dir",
+                "responses_dir",
+                "default_response",
+            ]
+            for param in driver_specific_params:
+                if param in kwargs:
+                    driver_kwargs[param] = kwargs[param]
+
             self.driver_instance = driver_class(
                 api_key=api_key, base_url=self.base_url, **driver_kwargs
             )

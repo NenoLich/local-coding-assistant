@@ -470,6 +470,7 @@ class BaseProvider(abc.ABC):
         health_check_method: str = "GET",
         health_check_timeout: float = 5.0,
         allow_test_requests: bool = False,
+        skip_driver_init: bool = False,
         **kwargs,
     ):
         self.name = name
@@ -494,8 +495,11 @@ class BaseProvider(abc.ABC):
 
             raise ProviderError(f"No API key provided for provider {name}")
 
-        # Initialize driver instance immediately
-        self.driver_instance = self._create_driver_instance()
+        # Initialize driver instance immediately (unless skipped)
+        if not skip_driver_init:
+            self.driver_instance = self._create_driver_instance()
+        else:
+            self.driver_instance = None
 
     def _normalize_models(
         self, models: list[ModelConfig] | list[str] | dict[str, dict] | None
@@ -599,6 +603,7 @@ class BaseProvider(abc.ABC):
             "openai_chat": "OpenAIChatCompletionsDriver",
             "openai_responses": "OpenAIResponsesDriver",
             "local": "LocalDriver",
+            "mock": "MockDriver",
         }
 
         driver_name = driver_mapping.get(self.driver)
@@ -610,6 +615,7 @@ class BaseProvider(abc.ABC):
         # Import the driver class locally to avoid circular imports
         from local_coding_assistant.providers.compatible_drivers import (
             LocalDriver,
+            MockDriver,
             OpenAIChatCompletionsDriver,
             OpenAIResponsesDriver,
         )
@@ -618,6 +624,7 @@ class BaseProvider(abc.ABC):
             "OpenAIChatCompletionsDriver": OpenAIChatCompletionsDriver,
             "OpenAIResponsesDriver": OpenAIResponsesDriver,
             "LocalDriver": LocalDriver,
+            "MockDriver": MockDriver,
         }
 
         driver_class = driver_classes.get(driver_name)
@@ -652,6 +659,9 @@ class BaseProvider(abc.ABC):
                 "API calls are disabled in test environment. "
                 "Set allow_test_requests=True to enable API calls in tests"
             )
+
+        if self.driver_instance is None:
+            self.driver_instance = self._create_driver_instance()
 
         try:
             return await self.driver_instance.generate(request)

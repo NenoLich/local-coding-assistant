@@ -1,0 +1,60 @@
+{% set ctx = context -%}
+{% set metadata_parts = [] -%}
+{% if ctx.project_info.name -%}{% set _ = metadata_parts.append("- Name: " + ctx.project_info.name) -%}{% endif -%}
+{% if ctx.project_info.description -%}{% set _ = metadata_parts.append("- Description: " + ctx.project_info.description) -%}{% endif -%}
+{% if ctx.repo_map_data.language_distribution -%}
+  {% set lang_strs = [] -%}
+  {% for lang, pct in ctx.repo_map_data.language_distribution.items() | sort(attribute='1', reverse=true) -%}
+    {% set _ = lang_strs.append(lang + " (" + (pct | round(1)) | string + "%)") -%}
+  {% endfor -%}
+  {% set _ = metadata_parts.append("- Languages: " + lang_strs | join(', ')) -%}
+{% endif -%}
+{% if ctx.project_info.language_version -%}{% set _ = metadata_parts.append("- Language version: " + ctx.project_info.language_version) -%}{% endif -%}
+{% if ctx.project_info.language_version_edition -%}{% set _ = metadata_parts.append("- Language version edition: " + ctx.project_info.language_version_edition) -%}{% endif -%}
+{% if ctx.project_info.package_manager -%}{% set _ = metadata_parts.append("- Package Manager: " + ctx.project_info.package_manager) -%}{% endif -%}
+{% if ctx.project_info.core_frameworks -%}{% set _ = metadata_parts.append("- Core Frameworks: " + ctx.project_info.core_frameworks | join(', ')) -%}{% endif -%}
+{% if ctx.project_info.build_backend -%}{% set _ = metadata_parts.append("- Build Backend: " + ctx.project_info.build_backend) -%}{% endif -%}
+{% if ctx.project_info.linter_formatter -%}{% set _ = metadata_parts.append("- Formatter: " + ctx.project_info.linter_formatter | join(', ')) -%}{% endif -%}
+{% if ctx.project_info.test_frameworks -%}{% set _ = metadata_parts.append("- Test Frameworks: " + ctx.project_info.test_frameworks | join(', ')) -%}{% endif -%}
+{% if ctx.project_info.license -%}{% set _ = metadata_parts.append("- License: " + ctx.project_info.license) -%}{% endif -%}
+{% if ctx.project_info.ts_config_target -%}{% set _ = metadata_parts.append("- TS config target: " + ctx.project_info.ts_config_target) -%}{% endif -%}
+{% if ctx.project_info.ts_config_module -%}{% set _ = metadata_parts.append("- TS config module: " + ctx.project_info.ts_config_module) -%}{% endif -%}
+{% if ctx.project_info.ts_config_module_resolution -%}{% set _ = metadata_parts.append("- TS config module resolution: " + ctx.project_info.ts_config_module_resolution) -%}{% endif -%}
+{% if ctx.project_info.ts_config_jsx_mode -%}{% set _ = metadata_parts.append("- TS config jsx mode: " + ctx.project_info.ts_config_jsx_mode) -%}{% endif -%}
+{% if ctx.project_info.ts_config_strict_mode is not none -%}{% set _ = metadata_parts.append("- TS config strict mode: " + ctx.project_info.ts_config_strict_mode | string) -%}{% endif -%}
+{% if ctx.project_info.ts_config_path_aliases -%}{% set _ = metadata_parts.append("- TS config path aliases: " + ctx.project_info.ts_config_path_aliases | join(', ')) -%}{% endif -%}
+{% if ctx.project_info.is_workspace is not none -%}{% set _ = metadata_parts.append("- Is rust workspace: " + ctx.project_info.is_workspace | string) -%}{% endif -%}
+{% if ctx.project_info.workspace_members -%}{% set _ = metadata_parts.append("- Workspace members: " + ctx.project_info.workspace_members) -%}{% endif -%}
+{% if ctx.project_info.clean_dependencies -%}{% set _ = metadata_parts.append("- Dependencies: " + ctx.project_info.clean_dependencies | join(', ')) -%}{% endif -%}
+{% if ctx.project_info.manifest_files -%}{% set _ = metadata_parts.append("- Manifest files: " + ctx.project_info.manifest_files | join(', ')) -%}{% endif -%}
+{% if ctx.project_info.available_scripts -%}{% set _ = metadata_parts.append("- Available scripts: " + ctx.project_info.available_scripts | join(', ')) -%}{% endif -%}
+
+{% if metadata_parts or ctx.repo_map_data.grouped_symbols -%}
+{% if metadata_parts -%}
+Project Metadata:
+{% for part in metadata_parts -%}
+{{ part }}
+{% endfor -%}
+{% endif -%}
+
+{% if ctx.repo_map_data.grouped_symbols -%}
+{% set symbol_count = ctx.repo_map_data.num_symbols | default(ctx.repo_map_data.total_symbols | default(0)) -%}
+The Repo Map below is a high-level architectural guide. It may be slightly out of sync with recent edits.
+Note: Showing top {{ symbol_count }} symbols by usage frequency. Not all symbols are shown.
+{% for file_path in ctx.repo_map_data.grouped_symbols.keys() | sort -%}
+{{ file_path }}
+{% for symbol in ctx.repo_map_data.grouped_symbols[file_path] | sort(attribute='line_number') -%}
+  {% set line_number = symbol.line_number -%}
+  {% set end_line_number = symbol.get('end_line_number') -%}
+  {% if end_line_number and end_line_number != line_number -%}
+    {% set line_range = "[line: " + line_number | string + "-" + end_line_number | string + "]" -%}
+  {% else -%}
+    {% set line_range = "[line: " + line_number | string + "]" -%}
+  {% endif -%}
+  {% set signature = symbol.get('signature') or symbol.name -%}
+  - [{{ symbol.symbol_type }}] {{ signature }} {{ line_range }}
+{% endfor -%}
+
+{% endfor -%}
+{% endif -%}
+{% endif -%}

@@ -610,10 +610,10 @@ async def test_directive_invalid_json_raises(runtime_manager: RuntimeManager):
         assert len(result["history"]) == 2
         assert (
             result["history"][0]["content"]
-            == "Invalid JSON in tool payload: Expecting value: line 1 column 1 (char 0)"
+            == "tool:sum not-json"
         )
         assert result["history"][0]["role"] == "user"
-        assert "Invalid JSON" in result["history"][1]["content"]
+        assert "Invalid JSON in tool payload: Expecting value: line 1 column 1 (char 0)" in result["history"][1]["content"]
         assert result["history"][1]["role"] == "assistant"
 
         # Verify LLM was called once with the error message
@@ -661,11 +661,11 @@ async def test_directive_invalid_payload_validation_raises(
         assert result["models_used"] == ["gpt-4"]
         assert len(result["history"]) == 2
         assert any(
-            msg in result["history"][0]["content"]
+            msg in result["history"][1]["content"]
             for msg in ["validation error", "Input should be a valid dictionary"]
         )
         assert result["history"][0]["role"] == "user"
-        assert "validation error" in result["history"][1]["content"]
+        assert "tool:sum null" in result["history"][0]["content"]
         assert result["history"][1]["role"] == "assistant"
 
         # Verify LLM was called once with the error message

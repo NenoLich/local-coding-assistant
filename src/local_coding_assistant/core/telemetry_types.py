@@ -9,6 +9,21 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+class FileChangeType(str, Enum):
+    """Types of file change events."""
+
+    MODIFIED = "modified"
+    CREATED = "created"
+    DELETED = "deleted"
+
+
+class FileChange(BaseModel):
+    """Represents a file change with path and change type."""
+
+    path: str
+    change_type: FileChangeType
+
+
 class ResourceType(str, Enum):
     """Type of resource being measured."""
 
@@ -63,8 +78,7 @@ class ExecutionEnvelope(BaseModel):
     stdout: str | None = None
     stderr: str | None = None
     error: str | None = None
-    files_created: list[str] = Field(default_factory=list)
-    files_modified: list[str] = Field(default_factory=list)
+    file_changes: list[FileChange] = Field(default_factory=list)
     return_code: int | None = None
     system_metrics: list[ResourceMetric] = Field(default_factory=list)
 

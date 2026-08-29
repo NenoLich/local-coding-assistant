@@ -88,3 +88,44 @@ def test_composer_with_all_components(composer):
     assert "Tool 1" in result
     assert "Example 1" in result
     assert "Memory 1" in result
+
+
+def test_repo_context_template(template_env, request):
+    """Test that the repo_context template renders correctly."""
+    import json
+    from pathlib import Path
+
+    # Load test data
+    test_dir = Path(__file__).parent / "golden" / "repo_context"
+    input_file = test_dir / "input.json"
+    expected_file = test_dir / "expected_output.txt"
+
+    with open(input_file) as f:
+        data = json.load(f)
+
+    # Render template
+    template = template_env.get_template("blocks/repo_context.jinja2")
+    result = template.render(**data)
+
+    # Update golden files if in update mode
+    if request.config.getoption("--update-goldens"):
+        expected_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(expected_file, "w", encoding="utf-8") as f:
+            f.write(result)
+        return  # Skip assertion when updating
+
+    # Read expected output
+    with open(expected_file, encoding="utf-8") as f:
+        expected_output = f.read()
+
+    # Verify the result matches expected output
+    assert result == expected_output, (
+        f"\n\nRendered template does not match expected output.\n"
+        f"Expected file: {expected_file}\n"
+        "Run with `pytest tests/unit/prompt/test_composer.py::test_repo_context_template -v --update-goldens` to update golden file\n"
+        f"Diff (expected vs actual):\n{'=' * 40}\n"
+        f"{expected_output}\n"
+        f"{'=' * 40}\n"
+        f"{result}\n"
+        f"{'=' * 40}"
+    )

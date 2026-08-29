@@ -45,6 +45,9 @@ class TestIConfigManagerProtocol:
             def register_capability(self, capabilities):
                 return {}
 
+            def unregister_capability(self, capabilities):
+                return {}
+
             def reload_tools(self):
                 pass
 

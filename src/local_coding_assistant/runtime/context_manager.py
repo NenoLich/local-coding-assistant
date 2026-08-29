@@ -5,6 +5,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from local_coding_assistant.core.protocols import IConfigManager, IToolManager
+from local_coding_assistant.core.telemetry_types import FileChange, FileChangeType
+from local_coding_assistant.repository import (
+    ProjectInfo,
+    RepoMapData,
+    RepositoryContextService,
+)
 from local_coding_assistant.runtime.runtime_types import (
     AgentProfile,
     ExecutionMode,
@@ -65,16 +71,19 @@ class StaticComponentCache:
         tool_manager: IToolManager | ToolManager | None = None,
         skill_provider: SkillProvider | None = None,
         agent_profiles: Iterable[AgentProfile] | None = None,
+        repository_context_service: RepositoryContextService | None = None,
     ):
         self.config_manager = config_manager
         self.tool_selector = ToolSelector(tool_manager=tool_manager)
         self.skill_provider = skill_provider or SkillProvider()
+        self.repository_context_service = repository_context_service
         self._agent_catalog = list(agent_profiles) if agent_profiles else []
 
         # Caches
         self._agent_profile_cache: dict[tuple[bool, bool], AgentProfile] = {}
         self._tools_cache: dict[ToolsBundle, tuple[list[ToolSpec], list[str]]] = {}
         self._skills_cache: dict[str, list[str]] = {}
+        self._repo_context_cache: tuple[ProjectInfo, RepoMapData | None] | None = None
 
     def get_agent_profile(self, agent_mode: bool, graph_mode: bool) -> AgentProfile:
         """Get cached agent profile or compute if not cached."""
@@ -141,12 +150,35 @@ class StaticComponentCache:
         self._skills_cache[execution_mode] = skills
         return skills
 
+    def get_repo_context(self) -> tuple[ProjectInfo, RepoMapData | None, bool] | None:
+        """Get cached repository context or compute if not cached."""
+        is_fresh = False
+        if self._repo_context_cache is not None:
+            log.debug("Repo context cache hit")
+            proj_info, repo_map = self._repo_context_cache
+            return proj_info, repo_map, is_fresh
+
+        log.debug("Repo context cache miss")
+        if self.repository_context_service is None:
+            log.debug("Repository context service not available")
+            return None
+
+        try:
+            proj_info, repo_map = self.repository_context_service.get_repo_context()
+            is_fresh = True
+            self._repo_context_cache = proj_info, repo_map
+            return proj_info, repo_map, is_fresh
+        except Exception as e:
+            log.warning(f"Failed to get repository context: {e}")
+            return None
+
     def invalidate_all(self):
         """Clear all caches."""
         log.info("Invalidated all caches")
         self._agent_profile_cache.clear()
         self._tools_cache.clear()
         self._skills_cache.clear()
+        self._repo_context_cache = None
 
 
 class MemoryProvider:
@@ -349,16 +381,82 @@ class ContextManager:
         memory_provider: MemoryProvider | None = None,
         skill_provider: SkillProvider | None = None,
         agent_profiles: Iterable[AgentProfile] | None = None,
+        repository_context_service: RepositoryContextService | None = None,
     ) -> None:
         self.config_manager = config_manager
         self.tool_manager = tool_manager
+        self.repository_context_service = repository_context_service
         self.memory_provider = memory_provider or MemoryProvider()
         self._cache = StaticComponentCache(
             config_manager=config_manager,
             tool_manager=tool_manager,
             skill_provider=skill_provider,
             agent_profiles=agent_profiles,
+            repository_context_service=repository_context_service,
         )
+        self.user_file_changes: list[FileChange] = []
+
+        # Register file monitoring callback if repository service is available
+        if (
+            repository_context_service
+            and repository_context_service.file_monitoring_service
+        ):
+            repository_context_service.register_file_change_callback(
+                self._on_file_change
+            )
+
+    def _on_file_change(self, event: Any) -> None:
+        """Handle file change events from file monitoring service.
+
+        Args:
+            event: FileChangeEvent from file monitoring service.
+        """
+        # Convert FileChangeEvent to FileChange
+        from local_coding_assistant.repository.file_monitoring import FileChangeEvent
+        from local_coding_assistant.repository.file_monitoring import (
+            FileChangeType as RepoFileChangeType,
+        )
+
+        if isinstance(event, FileChangeEvent):
+            # Map repository FileChangeType to telemetry FileChangeType
+            change_type_map = {
+                RepoFileChangeType.MODIFIED: FileChangeType.MODIFIED,
+                RepoFileChangeType.CREATED: FileChangeType.CREATED,
+                RepoFileChangeType.DELETED: FileChangeType.DELETED,
+            }
+            change_type = change_type_map.get(
+                event.change_type, FileChangeType.MODIFIED
+            )
+            file_change = FileChange(path=event.path, change_type=change_type)
+            self.user_file_changes.append(file_change)
+
+    def flush_user_file_changes(self) -> None:
+        """Clear user file changes after they have been processed."""
+        if self.user_file_changes:
+            log.debug(f"Flushing {len(self.user_file_changes)} user file changes")
+            self.user_file_changes.clear()
+
+    def _format_file_changes_message(self, file_changes: list[FileChange]) -> str:
+        """Format file changes into a system message.
+
+        Args:
+            file_changes: List of file changes to format.
+
+        Returns:
+            Formatted system message string.
+        """
+        if not file_changes:
+            return ""
+
+        lines = [
+            "The user made recent changes to the filesystem outside of this conversation. Changes:"
+        ]
+        for change in file_changes:
+            lines.append(f"- [{change.change_type.value.capitalize()}] {change.path}")
+        lines.append(
+            "If some files are relevant to the current task they need to be rediscovered. Do not respond to this message."
+        )
+        return "\n".join(lines)
 
     def build_context(
         self,
@@ -369,6 +467,7 @@ class ContextManager:
         agent_mode: bool = False,
         graph_mode: bool = False,
         handler_context: dict[str, Any] | None = None,
+        agent_file_changes: list[FileChange] | None = None,
     ) -> PromptContext:
         """Build the context for the LLM based on the current state and configuration.
 
@@ -379,6 +478,7 @@ class ContextManager:
             agent_mode: Whether agent mode is enabled
             graph_mode: Whether graph mode is enabled
             handler_context: The handler context to pass to the LLM
+            agent_file_changes: List of file changes made by the agent in previous turn
 
         Returns:
             A PromptContext object containing all necessary information for the LLM
@@ -387,26 +487,7 @@ class ContextManager:
             ValueError: If tool_call_mode is invalid or session is not provided
             TypeError: If user_input is not a string
         """
-        # Input validation
-        if not isinstance(session, SessionState):
-            raise ValueError("session must be an instance of SessionState")
-
-        if not isinstance(tool_call_mode, str):
-            raise TypeError(
-                f"tool_call_mode must be a string, got {type(tool_call_mode).__name__}"
-            )
-
         tool_call_mode = tool_call_mode.lower()
-
-        if not isinstance(agent_mode, bool):
-            raise TypeError(
-                f"agent_mode must be a boolean, got {type(agent_mode).__name__}"
-            )
-
-        if not isinstance(graph_mode, bool):
-            raise TypeError(
-                f"graph_mode must be a boolean, got {type(graph_mode).__name__}"
-            )
         runtime_config = self.config_manager.global_config.runtime
         sandbox_config = self.config_manager.global_config.sandbox
 
@@ -422,6 +503,35 @@ class ContextManager:
         agent = self._cache.get_agent_profile(agent_mode, graph_mode)
         tools, tools_prompt = self._cache.get_tools(tool_call_mode, self.tool_manager)
         skills = self._cache.get_skills(execution_mode)
+
+        project_info = None
+        repo_map_data = None
+        is_repo_context_fresh = None
+        repo_context = self._cache.get_repo_context()
+        if repo_context is not None:
+            project_info, repo_map_data, is_repo_context_fresh = repo_context
+
+        if is_repo_context_fresh is not None and not is_repo_context_fresh:
+            # Combine and filter file changes
+            combined_file_changes: list[FileChange] = []
+            agent_file_paths = (
+                {fc.path for fc in agent_file_changes} if agent_file_changes else set()
+            )
+
+            # Add user file changes, excluding those made by agent
+            for user_change in self.user_file_changes:
+                if user_change.path not in agent_file_paths:
+                    combined_file_changes.append(user_change)
+
+            # Format and append file changes to session history
+            if combined_file_changes:
+                file_change_message = self._format_file_changes_message(
+                    combined_file_changes
+                )
+                session.add_system_message(file_change_message)
+
+        # Flush user file changes after processing
+        self.flush_user_file_changes()
 
         # Dynamic components (always fresh)
         memories = self.memory_provider.fetch(session=session)
@@ -458,6 +568,8 @@ class ContextManager:
             metadata=metadata,
             is_sandbox_enabled=sandbox_config.enabled,
             handler_context=handler_context,
+            project_info=project_info,
+            repo_map_data=repo_map_data,
         )
 
     def invalidate_all(self):

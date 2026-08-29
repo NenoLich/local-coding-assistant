@@ -1,0 +1,5 @@
+The Repo Map below is a high - level architectural guide. It may be slightly out of sync with recent edits.
+Note: Showing top 2 symbols by usage frequency. Not all symbols are shown.
+test.py
+  - [class] class TestClass [line: 5-30]
+  - [function] def test_function(x: int) -> bool [line: 10-20]

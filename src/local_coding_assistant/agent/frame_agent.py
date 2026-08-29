@@ -66,6 +66,9 @@ class FrameAgent:
         self._continuation_attempts = 0
         self.max_continuation_attempts = max_continuation_attempts
 
+        # Track agent file changes from previous frame
+        self._last_agent_file_changes: list = []
+
     async def run(
         self, user_input: str, session: SessionState
     ) -> AsyncIterator[ExecutionEvent]:
@@ -140,6 +143,7 @@ class FrameAgent:
             tool_call_mode=mode,
             agent_mode=True,
             handler_context=handler_context,
+            agent_file_changes=self._last_agent_file_changes,
         )
 
         rendered_prompt = self._composer.render(prompt_context)
@@ -194,6 +198,14 @@ class FrameAgent:
 
         # Update session history based on frame actions
         self._update_session(session, completed_frame)
+
+        # Capture agent file changes for next iteration
+        if completed_frame.result:
+            self._last_agent_file_changes = (
+                completed_frame.result.agent_file_changes or []
+            )
+        else:
+            self._last_agent_file_changes = []
 
         # Reset attempt count on successful execution (non-partial response)
         if self._continuation_attempts > 0:
@@ -272,8 +284,17 @@ class FrameAgent:
             session.add_user_message(user_prompt)
 
         # Add assistant message if LLM spoke
-        if llm_response := frame.model_response_raw:
-            session.add_assistant_message(content=llm_response)
+        # Use processed content from handler_context if available (for truncation handling)
+        assistant_content = frame.model_response_raw
+        if (
+            frame.result
+            and frame.result.handler_context
+            and frame.result.handler_context.get("reasoning")
+        ):
+            assistant_content = frame.result.handler_context.get("reasoning")
+
+        if assistant_content:
+            session.add_assistant_message(content=assistant_content)
 
         for action in frame.actions:
             if action.kind == ActionKind.LLM_MESSAGE and action.tool_calls:
@@ -343,9 +364,7 @@ class FrameAgent:
             error_message=completed_frame.result.handler_context.get("message")
             if completed_frame.result.handler_context
             else None,
-            raw_response=completed_frame.result.handler_context.get("raw_response")
-            if completed_frame.result.handler_context
-            else None,
+            raw_response=completed_frame.model_response_raw,
             failed_tools=failed_tools,
             raw_tool_calls=completed_frame.result.handler_context.get("raw_tool_calls")
             if completed_frame.result.handler_context
@@ -369,8 +388,11 @@ class FrameAgent:
             # Clear handler context from session metadata
             session.metadata.pop("handler_context", None)
             return False, current_iteration
-        # Update session with current handler context
-        if session.metadata.get("handler_context"):
+        # Update session for CONTINUE_WITH_HISTORY strategy (truncation with simple template)
+        if handler_output.template_path == "handlers/truncation_continue.jinja2":
+            self._update_session(session, completed_frame)
+        # Update session with current handler context (existing logic for other handlers)
+        elif session.metadata.get("handler_context"):
             self._update_session(session, completed_frame)
         # Store handler context in session metadata for next iteration
         session.metadata["handler_context"] = {

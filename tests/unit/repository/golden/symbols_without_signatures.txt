@@ -1,0 +1,6 @@
+The Repo Map below is a high - level architectural guide. It may be slightly out of sync with recent edits.
+Note: Showing top 3 symbols by usage frequency. Not all symbols are shown.
+test.py
+  - [class] TestClass [line: 5-15]
+  - [class] AnotherClass [line: 20-30]
+  - [function] simple_function [line: 35-40]

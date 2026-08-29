@@ -96,7 +96,6 @@ class LLMService:
         options: LLMOptions | None = None,
     ) -> AsyncIterator[LLMStreamChunk]:
         """Yield streaming chunks for a task."""
-
         resolved_options = self._resolve_options(options, policy, stream=True)
         base_request = self._request_builder.build(
             task,

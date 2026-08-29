@@ -50,8 +50,12 @@ class TestBootstrapErrorHandling:
                 "local_coding_assistant.core.bootstrap._initialize_runtime_manager",
                 return_value=Mock(),
             ):
-                # Call bootstrap
-                ctx = bootstrap()
+                with patch(
+                        "local_coding_assistant.core.bootstrap._initialize_repository_context_service",
+                        return_value=Mock(),
+                ):
+                    # Call bootstrap
+                    ctx = bootstrap()
 
         # Verify it still returns a context
         assert isinstance(ctx, AppContext)
@@ -79,8 +83,12 @@ class TestBootstrapErrorHandling:
             "local_coding_assistant.core.bootstrap._initialize_runtime_manager",
             return_value=Mock(),
         ):
-            # Call bootstrap
-            ctx = bootstrap()
+            with patch(
+                    "local_coding_assistant.core.bootstrap._initialize_repository_context_service",
+                    return_value=Mock(),
+            ):
+                # Call bootstrap
+                ctx = bootstrap()
 
         # Verify it still returns a context
         assert isinstance(ctx, AppContext)
@@ -92,8 +100,10 @@ class TestBootstrapErrorHandling:
     @patch("local_coding_assistant.core.bootstrap._initialize_llm_service")
     @patch("local_coding_assistant.core.bootstrap._initialize_tool_manager")
     @patch("local_coding_assistant.core.bootstrap._initialize_runtime_manager")
+    @patch("local_coding_assistant.core.bootstrap._initialize_repository_context_service")
     def test_runtime_manager_initialization_failure(
         self,
+        mock_init_repo,
         mock_init_runtime,
         mock_init_tools,
         mock_init_llm,
@@ -103,9 +113,11 @@ class TestBootstrapErrorHandling:
         """Test handling of runtime manager initialization failure."""
         # Setup mocks
         mock_config = {"logging": {"level": "INFO"}}
+        mock_repo_service = Mock()
         mock_config_manager = Mock()
         mock_llm_service = Mock()
         mock_tool_manager = Mock()
+        mock_init_repo.return_value = mock_repo_service
         mock_init_config.return_value = mock_config_manager
         mock_init_llm.return_value = mock_llm_service
         mock_init_tools.return_value = mock_tool_manager

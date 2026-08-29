@@ -6,6 +6,8 @@ from local_coding_assistant.core.telemetry_types import (
     ResourceMetric,
     ResourceType,
     ToolCallTrace,
+    FileChange,
+    FileChangeType,
 )
 from local_coding_assistant.runtime.execution_types import (
     ActionKind,
@@ -106,21 +108,22 @@ class TestExecutionResult:
         assert result.status == ExecutionStatus.SUCCESS
         assert result.final_answer == "Test answer"
         assert result.total_latency_ms is None
-        assert result.files_created == []
-        assert result.files_modified == []
+        assert result.agent_file_changes == []
 
     def test_execution_result_with_file_operations(self):
         """Test ExecutionResult with file operations."""
+        file_change_created = FileChange(path="/path/to/new_file.txt", change_type=FileChangeType.CREATED)
+        file_change_modified = FileChange(path="/path/to/modified_file.txt", change_type=FileChangeType.MODIFIED)
         result = ExecutionResult(
             status=ExecutionStatus.SUCCESS,
-            files_created=["/path/to/new_file.txt"],
-            files_modified=["/path/to/modified_file.txt"],
+            agent_file_changes=[file_change_created, file_change_modified],
         )
 
-        assert len(result.files_created) == 1
-        assert "/path/to/new_file.txt" in result.files_created
-        assert len(result.files_modified) == 1
-        assert "/path/to/modified_file.txt" in result.files_modified
+        assert len(result.agent_file_changes) == 2
+        assert "/path/to/new_file.txt" in result.agent_file_changes[0].path
+        assert result.agent_file_changes[0].change_type == FileChangeType.CREATED
+        assert "/path/to/modified_file.txt" in result.agent_file_changes[1].path
+        assert result.agent_file_changes[1].change_type == FileChangeType.MODIFIED
 
 
 class TestExecutionFrame:

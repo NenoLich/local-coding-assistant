@@ -19,6 +19,7 @@ from local_coding_assistant.agent.llm import (
 )
 from local_coding_assistant.core.protocols import IConfigManager, IToolManager
 from local_coding_assistant.prompt import PromptComposer
+from local_coding_assistant.repository import RepositoryContextService
 from local_coding_assistant.runtime.agent_types import AgentRequest
 from local_coding_assistant.runtime.context_manager import ContextManager
 from local_coding_assistant.runtime.events import EventType, ExecutionEvent
@@ -54,6 +55,7 @@ class RuntimeManager:
         config_manager: IConfigManager,
         llm_service: LLMService | None = None,
         tool_manager: IToolManager | ToolManager | None = None,
+        repository_context_service: RepositoryContextService | None = None,
     ) -> None:
         """Initialize the runtime manager.
 
@@ -61,16 +63,19 @@ class RuntimeManager:
             config_manager: The config manager to use for configuration (required)
             llm_service: The LLM service to use for generating responses
             tool_manager: The tool manager to use for executing tools
+            repository_context_service: The repository context service for code analysis
         """
         if config_manager is None:
             raise ValueError("config_manager is required")
 
         self._llm_service = llm_service
         self._tool_manager = tool_manager
+        self._repository_context_service = repository_context_service
         self.config_manager = config_manager
         self._context_manager = ContextManager(
             config_manager=config_manager,
             tool_manager=tool_manager,
+            repository_context_service=repository_context_service,
         )
         self._prompt_composer = PromptComposer(config_manager=config_manager)
 
@@ -166,6 +171,10 @@ class RuntimeManager:
             )
 
         if self.config_manager.global_config.runtime.agent_mode != "no_agent":
+            # Lazy initialize repository service if needed
+            if self._repository_context_service:
+                self._repository_context_service.ensure_initialized()
+
             async for event in self._run_agent_mode(request):
                 await collect_event_for_dashboard(event)
                 yield event
@@ -175,6 +184,7 @@ class RuntimeManager:
         async for event in self._run_regular_mode(request):
             await collect_event_for_dashboard(event)
             yield event
+        return
 
     def _setup_session(self) -> SessionState:
         """Setup and configure the session for the current request."""
@@ -277,6 +287,7 @@ class RuntimeManager:
             tool_call_mode=mode,
             agent_mode=False,
             handler_context=session.metadata.get("handler_context", None),
+            agent_file_changes=session.metadata.get("agent_file_changes", None),
         )
         rendered_prompt = self._prompt_composer.render(prompt_context)
         system_prompt = self._combine_sections(rendered_prompt.system_messages)
@@ -492,8 +503,6 @@ class RuntimeManager:
             request.user_input, session
         )
 
-        session.add_user_message(user_message)
-
         attempts = 0
         max_attempts = 2
         llm_request = None
@@ -592,6 +601,7 @@ class RuntimeManager:
 
         # Record assistant message
         assert response is not None, "Response should be set after LLM call"
+        session.add_user_message(request.user_input)
         session.add_assistant_message(response.content)
 
         # Handle LLM-initiated tool calls and build report

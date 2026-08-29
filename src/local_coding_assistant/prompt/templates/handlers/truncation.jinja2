@@ -7,7 +7,19 @@ Previous <Reasoning>
 </Reasoning>
 {% endif %}
 
-It appears you reached the maximum token limit. 
+{% if ctx["raw_response"] %}
+Previous response content:
+{{ ctx["raw_response"] }}
+{% endif %}
+
+{% if ctx["raw_tool_calls"] %}
+Previous tool calls (may be incomplete):
+{% for tool_call in ctx["raw_tool_calls"] %}
+- {{ tool_call.function.name }}: {{ tool_call.function.arguments }}
+{% endfor %}
+{% endif %}
+
+It appears you reached the maximum token limit.
 {% if ctx["finish_reason"] == 'length' %}
 Please continue your response from where you left off, maintaining the same reasoning approach.
 {% else %}

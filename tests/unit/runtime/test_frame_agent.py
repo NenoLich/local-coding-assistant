@@ -153,6 +153,7 @@ class TestFrameAgent:
                 tool_call_mode="classic",
                 agent_mode=True,
                 handler_context=None,
+                agent_file_changes=[],
             )
 
     @pytest.mark.asyncio

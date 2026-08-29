@@ -107,6 +107,17 @@ class IConfigManager(Protocol):
         """
         ...
 
+    def unregister_capability(self, capabilities: list[str]) -> dict[str, Any]:
+        """Unregister system capabilities and revalidate affected settings.
+
+        Args:
+            capabilities: List of capability names to unregister
+
+        Returns:
+            Dictionary of affected setting names to their current values
+        """
+        ...
+
     def reload_tools(self) -> None:
         """Reload tools configuration from the source.
 

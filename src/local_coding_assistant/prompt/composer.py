@@ -3,7 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader, TemplateNotFound, select_autoescape
+from jinja2 import (
+    Environment,
+    FileSystemLoader,
+    TemplateError,
+    TemplateNotFound,
+    UndefinedError,
+    select_autoescape,
+)
 
 from local_coding_assistant.core.protocols import IConfigManager
 from local_coding_assistant.runtime.runtime_types import (
@@ -55,7 +62,15 @@ class PromptComposer:
 
     def get_template_path(self, template_name: str) -> str:
         """Get the path for a template from config."""
-        return self.config.templates.get(template_name, template_name)
+        template_path = self.config.templates.get(template_name, template_name)
+        if not isinstance(template_path, str):
+            log.warning(
+                "Template path for %s is not a string (got %s), using fallback",
+                template_name,
+                type(template_path).__name__,
+            )
+            return template_name
+        return template_path
 
     def render(self, context: PromptContext) -> RenderedPrompt:
         """Render the given context into discrete system/user messages."""
@@ -63,19 +78,27 @@ class PromptComposer:
 
         system_messages = self._render_system_messages(payload)
         user_messages = self._render_user_messages(payload)
+        ctx_history = context.history
 
         # If we have handler_context with template_path, render that as user message
         if context.handler_context and "template_path" in context.handler_context:
             handler_template = context.handler_context["template_path"]
-            handler_message = self._render_template(handler_template, payload)
-            user_messages.append(handler_message)
+            if not isinstance(handler_template, str):
+                log.warning(
+                    "Handler template_path is not a string (got %s), skipping",
+                    type(handler_template).__name__,
+                )
+            else:
+                handler_message = self._render_template(handler_template, payload)
+                user_messages.append(handler_message)
 
         tool_schemas = self._render_tool_schemas(payload)
 
         log.debug(
-            "Rendered prompt for session=%s system=%d user=%d",
+            "Rendered prompt for session=%s system=%d history=%d user=%d",
             context.session_id,
             len(system_messages),
+            len(ctx_history),
             len(user_messages),
         )
 
@@ -83,7 +106,7 @@ class PromptComposer:
             system_messages=system_messages,
             user_messages=user_messages,
             tool_schemas=tool_schemas,
-            history=context.history,
+            history=ctx_history,
             metadata=context.metadata,
         )
 
@@ -106,6 +129,10 @@ class PromptComposer:
             (self.get_template_path("memories"), bool(context.memories)),
             (self.get_template_path("tools_prompt"), bool(context.tools_prompt)),
             (self.get_template_path("examples"), bool(context.examples)),
+            (
+                self.get_template_path("repo_context"),
+                bool(context.project_info) or bool(context.repo_map_data),
+            ),
             (self.get_template_path("constraints"), True),  # Always include constraints
         ]
 
@@ -119,6 +146,8 @@ class PromptComposer:
     def _render_user_messages(self, payload: dict[str, Any]) -> list[str]:
         """Render just the user's input as the user message."""
         context: PromptContext = payload["context"]
+        # If we have a handler template, user_input may be empty on retry
+        # The original user input should be in history, so we still render current user_input if present
         return [context.user_input] if context.user_input.strip() else []
 
     def _render_tool_schemas(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -144,6 +173,20 @@ class PromptComposer:
             return template.render(**payload).strip()
         except TemplateNotFound:
             log.warning("Prompt template %s not found", template_name)
+            return ""
+        except UndefinedError as e:
+            log.warning("Undefined variable in template %s: %s", template_name, str(e))
+            return ""
+        except TemplateError as e:
+            log.error("Template error in %s: %s", template_name, str(e), exc_info=True)
+            return ""
+        except Exception as e:
+            log.error(
+                "Unexpected error rendering template %s: %s",
+                template_name,
+                str(e),
+                exc_info=True,
+            )
             return ""
 
     def _resolve_template_root(self, override: Path | None) -> Path:

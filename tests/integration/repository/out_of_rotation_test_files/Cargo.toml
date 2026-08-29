@@ -1,0 +1,56 @@
+[package]
+name = "loci"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ahash = "0.8.12"
+anyhow = "1.0.102"
+axum = "0.8.9"
+byteorder = "1.5.0"
+candle-core = { version = "0.10.2" }
+candle-nn = "0.10.2"
+candle-transformers = "0.10.2"
+clap = { version = "4.6.0", features = ["derive"] }
+colored = "3.1.1"
+futures = "0.3.32"
+memmap2 = "0.9.10"
+minijinja = { version = "2.19.0", features = ["loader", "builtins", "json"] }
+num-derive = "0.4.2"
+num-traits = "0.2.19"
+nvtx = { version = "1.3.0", optional = true }
+once_cell = "1.21.4"
+rand = "0.10.1"
+rayon = "1.12.0"
+regex = "1.12.3"
+safetensors = "0.7.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.149", features = ["preserve_order"] }
+smart-default = "0.7.1"
+thiserror = "2.0.18"
+tokenizers = "0.22.2"
+tokio = { version = "1.52.3", features = ["full"] }
+tokio-stream = "0.1.18"
+tokio-util = { version = "0.7.13", features = ["rt"] }
+toml = "1.1.2"
+tower-http = { version = "0.6.10", features = ["cors", "trace"] }
+tracing = "0.1.44"
+tracing-flame = { version = "0.2.0", optional = true }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "registry"] }
+uuid = { version = "1.23.1", features = ["v4", "fast-rng"] }
+candle-flash-attn = { version = "0.10.2", optional = true }
+mockall = { version = "0.15.0", optional = true }
+
+[dev-dependencies]
+axum-test = "21.0.0"
+insta = { version = "1.48.0", features = ["json"] }
+mockall = "0.15.0"
+proptest = "1.11.0"
+rstest = "0.26.1"
+tempfile = "3.27.0"
+tokio-test = "0.4.5"
+
+[features]
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda", "candle-flash-attn"]
+profiling = ["nvtx", "tracing-flame"]
+mock = ["dep:mockall"]

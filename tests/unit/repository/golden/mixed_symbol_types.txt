@@ -1,0 +1,8 @@
+The Repo Map below is a high - level architectural guide. It may be slightly out of sync with recent edits.
+Note: Showing top 5 symbols by usage frequency. Not all symbols are shown.
+test.py
+  - [class] class MyClass [line: 5-25]
+  - [method] def my_method(self, x: int) -> str [line: 10-15]
+  - [function] def standalone_func() -> None [line: 20-22]
+  - [class] class AnotherClass [line: 30-40]
+  - [method] def another_method(self) -> bool [line: 35-38]

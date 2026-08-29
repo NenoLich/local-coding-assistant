@@ -9,7 +9,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from local_coding_assistant.agent.llm import LLMToolCall
-from local_coding_assistant.core.telemetry_types import ToolCallTrace
+from local_coding_assistant.core.telemetry_types import FileChange, ToolCallTrace
 from local_coding_assistant.runtime.runtime_types import (
     AgentProfile,
     ExecutionMode,
@@ -92,6 +92,11 @@ class ContinuationStrategy(str, Enum):
         "restart_reasoning"  # Restart reasoning with accumulated context
     )
     EXTEND_AND_CONTINUE = "extend_and_continue"  # Increase max_tokens and continue
+    CONTINUE_CONTENT = "continue_content"  # Continue from truncated content
+    CONTINUE_TOOL_CALLS = "continue_tool_calls"  # Continue incomplete tool calls
+    CONTINUE_WITH_HISTORY = (
+        "continue_with_history"  # Update session history and use simple continuation
+    )
 
 
 class ExecutionResult(BaseModel):
@@ -105,8 +110,7 @@ class ExecutionResult(BaseModel):
     error_message: str | None = None
     handler_context: dict[str, Any] | None = Field(default=None)
     # File operation fields - populated from execution envelope
-    files_created: list[str] = Field(default_factory=list)
-    files_modified: list[str] = Field(default_factory=list)
+    agent_file_changes: list[FileChange] = Field(default_factory=list)
 
 
 class ExecutionFrame(BaseModel):

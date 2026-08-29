@@ -9,6 +9,7 @@ from local_coding_assistant.config.env_manager import EnvManager, get_env_manage
 from local_coding_assistant.core.app_context import AppContext
 from local_coding_assistant.core.dependencies import AppDependencies
 from local_coding_assistant.core.protocols import IConfigManager, IToolManager
+from local_coding_assistant.repository import RepositoryContextService
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 from local_coding_assistant.sandbox.manager import SandboxManager
 from local_coding_assistant.utils.logging import get_logger, setup_logging
@@ -65,6 +66,9 @@ def bootstrap(
         deps.config_manager = config_manager
         deps.sandbox_manager = _initialize_sandbox_manager(config_manager)
         deps.llm_service = _initialize_llm_service(config_manager)
+        deps.repository_context_service = _initialize_repository_context_service(
+            config_manager
+        )
 
         # Initialize langgraph capabilities after LLM service
         _initialize_langgraph_capabilities(config_manager)
@@ -72,11 +76,13 @@ def bootstrap(
         deps.tool_manager = _initialize_tool_manager(
             config_manager=config_manager,
             sandbox_manager=deps.sandbox_manager,
+            repository_context_service=deps.repository_context_service,
         )
         deps.runtime_manager = _initialize_runtime_manager(
             config_manager=config_manager,
             llm_service=deps.llm_service,
             tool_manager=deps.tool_manager,
+            repository_context_service=deps.repository_context_service,
         )
 
         # 7. Initialize dashboard if enabled
@@ -89,6 +95,8 @@ def bootstrap(
             ctx.register("tools", deps.tool_manager)
         if deps.runtime_manager:
             ctx.register("runtime", deps.runtime_manager)
+        if deps.repository_context_service:
+            ctx.register("repository_context", deps.repository_context_service)
         if deps.sandbox_manager:
             ctx.register("sandbox", deps.sandbox_manager)
         if deps.config_manager:
@@ -378,15 +386,63 @@ def _initialize_sandbox_manager(
         return None
 
 
+def _initialize_repository_context_service(
+    config_manager: IConfigManager,
+) -> "RepositoryContextService | None":
+    """Initialize the repository context service.
+
+    Args:
+        config_manager: The config manager implementing IConfigManager
+
+    Returns:
+        Initialized RepositoryContextService instance or None if initialization fails
+    """
+    try:
+        from local_coding_assistant.repository.service import RepositoryContextService
+
+        # Get repository configuration
+        repo_config = config_manager.global_config.repository
+
+        if not repo_config.enabled:
+            return None
+
+        # Get project root from config or use current directory
+        target_project_root = config_manager.path_manager.get_target_project_root()
+
+        # Initialize repository service
+        repository_service = RepositoryContextService(
+            target_project_root=target_project_root,
+            config_manager=config_manager,
+        )
+
+        # Register repository capabilities through ConfigManager
+        repo_capabilities = {
+            "repository_available": True,
+            "storage_mode": repo_config.storage.mode,
+        }
+        config_manager.register_module("repository_context_service", repo_capabilities)
+
+        logger.info("Repository context service initialized successfully")
+        return repository_service
+
+    except Exception as e:
+        logger.error(
+            "Failed to initialize repository context service", str(e), exc_info=True
+        )
+        return None
+
+
 def _initialize_tool_manager(
     config_manager: IConfigManager,
     sandbox_manager: Any | None = None,
+    repository_context_service: "RepositoryContextService | None" = None,
 ) -> IToolManager | None:
     """Initialize the tool manager.
 
     Args:
         config_manager: The config manager implementing IConfigManager
         sandbox_manager: Optional SandboxManager instance
+        repository_context_service: Optional repository context service instance
 
     Returns:
         Initialized ToolManager instance or None if initialization fails
@@ -397,7 +453,9 @@ def _initialize_tool_manager(
         )
 
         tool_manager: IToolManager = ToolManager(
-            config_manager=config_manager, sandbox_manager=sandbox_manager
+            config_manager=config_manager,
+            sandbox_manager=sandbox_manager,
+            repository_context_service=repository_context_service,
         )
 
         # Register tool manager capabilities through ConfigManager
@@ -419,6 +477,7 @@ def _initialize_runtime_manager(
     config_manager: IConfigManager,
     llm_service: LLMService | None = None,
     tool_manager: IToolManager | None = None,
+    repository_context_service: "RepositoryContextService | None" = None,
 ) -> RuntimeManager | None:
     """Initialize the runtime manager.
 
@@ -426,6 +485,7 @@ def _initialize_runtime_manager(
         config_manager: The config manager instance (required)
         llm_service: Optional LLM service instance
         tool_manager: Optional tool manager instance
+        repository_context_service: Optional repository context service instance
 
     Returns:
         Initialized RuntimeManager instance or None if initialization fails
@@ -441,6 +501,7 @@ def _initialize_runtime_manager(
             config_manager=config_manager,
             llm_service=llm_service,
             tool_manager=tool_manager,
+            repository_context_service=repository_context_service,
         )
 
         logger.info("Runtime manager initialized successfully")

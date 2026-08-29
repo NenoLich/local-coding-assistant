@@ -9,6 +9,8 @@ repos:
         files: \.py$
         exclude: |
           (?x)^(
+            benchmark/|
+            scripts/|
             tests/|
             build/|
             dist/|
@@ -23,6 +25,8 @@ repos:
         files: \.py$
         exclude: |
           (?x)^(
+            benchmark/|
+            scripts/|
             tests/|
             build/|
             dist/|
@@ -36,6 +40,8 @@ repos:
         files: \.py$
         exclude: |
           (?x)^(
+            benchmark/|
+            scripts/|
             tests/|
             build/|
             dist/|
@@ -54,6 +60,8 @@ repos:
         stages: [ pre-commit ]
         exclude: |
           (?x)^(
+            benchmark/|
+            scripts/|
             tests/|
             build/|
             dist/|
@@ -70,6 +78,8 @@ repos:
         always_run: true
         exclude: |
           (?x)^(
+            benchmark/|
+            scripts/|
             tests/|
             build/|
             dist/|

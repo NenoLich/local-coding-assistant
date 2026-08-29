@@ -1069,3 +1069,210 @@ class LocalDriver(BaseDriver):
     async def health_check(self) -> bool:
         """Check if local model is available"""
         return False
+
+
+class MockDriver(BaseDriver):
+    """Driver for testing with pregenerated LLM responses from files.
+
+    This driver loads pre-canned responses from JSON files instead of making
+    real API calls, enabling manual testing without LLM costs or latency.
+
+    Response files should be JSON files with the following structure:
+    {
+        "request_pattern": "optional pattern to match requests",
+        "response": {
+            "content": "pre-generated response text",
+            "model": "model-name",
+            "tokens_used": 100,
+            "finish_reason": "stop",
+            "tool_calls": null,
+            "usage": {...},
+            "reasoning": null,
+            "metadata": {...}
+        },
+        "streaming_chunks": [
+            {"content": "chunk1", "finish_reason": null},
+            {"content": "chunk2", "finish_reason": "stop"}
+        ]
+    }
+    """
+
+    def __init__(self, api_key: str | None, base_url: str, **kwargs):
+        super().__init__(api_key, base_url, **kwargs)
+        responses_dir = kwargs.get("responses_dir") or kwargs.get("mock_responses_dir")
+        self.default_response = kwargs.get("default_response")
+        self._response_cache: dict[str, dict] = {}
+
+        logger.debug(
+            "MockDriver initialized",
+            kwargs_keys=list(kwargs.keys()),
+            responses_dir=responses_dir,
+        )
+
+        # Resolve path alias if present
+        if (
+            responses_dir
+            and isinstance(responses_dir, str)
+            and responses_dir.startswith("@")
+        ):
+            try:
+                from local_coding_assistant.config.env_manager import get_env_manager
+
+                env_manager = get_env_manager()
+                path_manager = getattr(env_manager, "path_manager", None)
+                if not path_manager:
+                    raise ValueError("Path manager not found in env manager")
+                else:
+                    self.responses_dir = str(path_manager.resolve_path(responses_dir))
+                    logger.debug(
+                        f"Resolved mock_responses_dir to: {self.responses_dir}"
+                    )
+            except Exception as e:
+                logger.debug(f"Failed to resolve path alias {responses_dir}: {e}")
+                self.responses_dir = responses_dir
+        else:
+            self.responses_dir = responses_dir
+
+    def _load_responses(self) -> dict[str, dict]:
+        """Load all response JSON files from the responses directory."""
+        if self._response_cache:
+            return self._response_cache
+
+        if not self.responses_dir:
+            logger.debug("No responses_dir configured for MockDriver")
+            return {}
+
+        from pathlib import Path
+
+        responses_path = Path(self.responses_dir)
+        if not responses_path.exists():
+            logger.debug(f"Responses directory does not exist: {self.responses_dir}")
+            return {}
+
+        responses = {}
+        for json_file in responses_path.glob("*.json"):
+            try:
+                with open(json_file, encoding="utf-8") as f:
+                    data = json.load(f)
+                    # Use filename as key if no pattern specified
+                    key = data.get("request_pattern", json_file.stem)
+                    responses[key] = data
+            except Exception as e:
+                logger.debug(f"Failed to load response file {json_file}: {e}")
+
+        self._response_cache = responses
+        return responses
+
+    def _generate_request_key(self, request: ProviderLLMRequest) -> str:
+        """Generate a key for matching the request to a pregenerated response."""
+        # Simple hash based on model and last user message content
+        import hashlib
+
+        user_messages = [msg for msg in request.messages if msg.get("role") == "user"]
+        if user_messages:
+            content = user_messages[-1].get("content", "")
+        else:
+            content = ""
+
+        key_data = f"{request.model}:{content[:200]}"  # First 200 chars
+        return hashlib.md5(key_data.encode()).hexdigest()  # noqa S324
+
+    def _find_matching_response(
+        self, request: ProviderLLMRequest, responses: dict[str, dict]
+    ) -> dict | None:
+        """Find a matching pregenerated response for the request."""
+        request_key = self._generate_request_key(request)
+
+        # Try exact match by hash
+        if request_key in responses:
+            return responses[request_key]
+
+        # Try pattern matching on request content
+        user_messages = [msg for msg in request.messages if msg.get("role") == "user"]
+        if user_messages:
+            content = user_messages[-1].get("content", "")
+            for pattern, response_data in responses.items():
+                if pattern and pattern.lower() in content.lower():
+                    logger.debug(f"Matched response by pattern: {pattern}")
+                    return response_data
+
+        # Try model-based fallback
+        model_key = request.model
+        if model_key in responses:
+            return responses[model_key]
+
+        # Use default if available
+        if self.default_response:
+            return {"response": self.default_response}
+
+        return None
+
+    async def generate(self, request: ProviderLLMRequest) -> ProviderLLMResponse:
+        """Generate a response using preloaded mock data."""
+        logger.info("Request messages", messages=request.messages)
+        responses = self._load_responses()
+        response_data = self._find_matching_response(request, responses)
+
+        if not response_data:
+            logger.debug(
+                "No matching pregenerated response found, using fallback",
+                request_model=request.model,
+            )
+            # Return a generic fallback response
+            return ProviderLLMResponse(
+                content="[Mock response: No pregenerated response found for this request]",
+                model=request.model,
+                tokens_used=0,
+                finish_reason="stop",
+                metadata={"mock": True, "fallback": True},
+            )
+
+        response_obj = response_data.get("response", {})
+        logger.debug(
+            "Returning pregenerated response",
+            response_keys=list(response_obj.keys()),
+        )
+
+        return ProviderLLMResponse(
+            content=response_obj.get("content", ""),
+            model=response_obj.get("model", request.model),
+            tokens_used=response_obj.get("tokens_used"),
+            finish_reason=response_obj.get("finish_reason"),
+            tool_calls=response_obj.get("tool_calls"),
+            usage=response_obj.get("usage"),
+            reasoning=response_obj.get("reasoning"),
+            metadata={**response_obj.get("metadata", {}), "mock": True},
+        )
+
+    async def stream(
+        self, request: ProviderLLMRequest
+    ) -> AsyncGenerator[ProviderLLMResponseDelta, None]:
+        """Generate a streaming response using preloaded mock data."""
+        logger.debug("Request messages", messages=request.messages)
+        responses = self._load_responses()
+        response_data = self._find_matching_response(request, responses)
+
+        if not response_data or "streaming_chunks" not in response_data:
+            # Fallback to non-streaming response as single delta
+            response = await self.generate(request)
+            yield ProviderLLMResponseDelta(
+                content=response.content,
+                finish_reason=response.finish_reason,
+                metadata=response.metadata,
+            )
+            return
+
+        chunks = response_data.get("streaming_chunks", [])
+        for chunk in chunks:
+            yield ProviderLLMResponseDelta(
+                content=chunk.get("content", ""),
+                finish_reason=chunk.get("finish_reason"),
+                reasoning=chunk.get("reasoning"),
+                tool_calls=chunk.get("tool_calls"),
+                metadata={**chunk.get("metadata", {}), "mock": True},
+            )
+
+    async def health_check(self) -> bool:
+        """Check if mock responses are available."""
+        responses = self._load_responses()
+        return bool(responses)

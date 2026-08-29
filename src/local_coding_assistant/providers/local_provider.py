@@ -81,6 +81,8 @@ class LocalProvider(BaseProvider):
         Returns:
             bool: True if the local model server is healthy, False otherwise
         """
+        if self.driver_instance is None:
+            self.driver_instance = self._create_driver_instance()
         try:
             return await self.driver_instance.health_check()
         except Exception as e:

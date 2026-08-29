@@ -141,6 +141,8 @@ class PromptContext(BaseModel):
     is_sandbox_enabled: bool = False
     examples: list[dict[str, str]] = Field(default_factory=list)
     handler_context: dict[str, Any] | None = None  # For partial response handling
+    project_info: Any = None  # Repository project information
+    repo_map_data: Any = None  # Repository map data
 
 
 class RenderedPrompt(BaseModel):

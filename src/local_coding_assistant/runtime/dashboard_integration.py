@@ -84,7 +84,6 @@ class DashboardIntegration:
                     f"Dashboard event POST failed: {response.status_code} - {response.text}"
                 )
             else:
-                log.debug(f"Event {event.type.value} sent to dashboard successfully")
                 self._consecutive_failures = 0  # Reset on success
 
         except (httpx.ConnectError, httpx.TimeoutException) as e:

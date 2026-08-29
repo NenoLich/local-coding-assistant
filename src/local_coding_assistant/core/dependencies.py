@@ -8,6 +8,7 @@ from local_coding_assistant.core.protocols import IConfigManager, IToolManager
 from local_coding_assistant.runtime.runtime_manager import RuntimeManager
 
 if TYPE_CHECKING:
+    from local_coding_assistant.repository.service import RepositoryContextService
     from local_coding_assistant.sandbox.manager import SandboxManager
 
 
@@ -25,6 +26,9 @@ class AppDependencies:
     tool_manager: Optional["IToolManager"] = field(default=None)
     runtime_manager: RuntimeManager | None = field(default=None)
     sandbox_manager: Optional["SandboxManager"] = field(default=None)
+    repository_context_service: Optional["RepositoryContextService"] = field(
+        default=None
+    )
     _initialized: bool = field(default=False, init=False, repr=False)
 
     def mark_initialized(self) -> None:

@@ -768,6 +768,7 @@ class PromptTemplateConfig(ConfigModel, section="prompt"):
             "memories": "blocks/memories.jinja2",
             "tools_prompt": "blocks/tools_prompt.jinja2",
             "examples": "blocks/examples.jinja2",
+            "repo_context": "blocks/repo_context.jinja2",
             "constraints": "blocks/constraints.jinja2",
         },
         description="Template paths for different prompt sections",
@@ -901,6 +902,237 @@ class DashboardConfig(ConfigModel, section="dashboard"):
     )
 
 
+class StorageConfig(ConfigModel, section="storage"):
+    """Configuration for repository database storage."""
+
+    mode: str = config_field(
+        default="temporary",
+        description="Storage mode: 'temporary' or 'persistent'",
+    )
+    persistent_db_path: str = config_field(
+        default=".locca/repo_context.db",
+        description="Path for persistent database (relative to repo root)",
+    )
+    temp_db_dir: str = config_field(
+        default="@data/temp",
+        description="Directory for temporary databases (supports @ aliases)",
+    )
+    temp_db_naming_strategy: str = config_field(
+        default="path_hash",
+        description="Naming strategy for temporary databases: 'path_hash' (folder_name_hash) or 'uuid'",
+    )
+    max_cum_file_size: int = config_field(
+        default=25000000,
+        gt=0,
+        description="Maximum cumulative file size in bytes to index in temporary storage (25MB)",
+    )
+
+
+class FileFilterConfig(ConfigModel, section="file_filter"):
+    """Configuration for file filtering during re-indexing."""
+
+    supported_extensions: list[str] = config_field(
+        default_factory=lambda: [
+            ".py",
+            ".js",
+            ".jsx",
+            ".ts",
+            ".tsx",
+            ".rs",
+            ".go",
+            ".c",
+            ".cpp",
+            ".h",
+            ".hpp",
+        ],
+        description="File extensions to include in re-indexing",
+    )
+    max_file_size_kb: int = config_field(
+        default=500,
+        gt=0,
+        description="Maximum file size in kilobytes for re-indexing",
+    )
+
+
+class FileMonitoringConfig(ConfigModel, section="file_monitoring"):
+    """Configuration for background file monitoring."""
+
+    enabled: bool = config_field(
+        default=True,
+        description="Whether to enable background file monitoring",
+    )
+    use_git_tracking: bool = config_field(
+        default=True,
+        description="Use git for tracking files",
+    )
+    notify_on_changes: bool = config_field(
+        default=True,
+        description="Emit system notifications for file changes",
+    )
+    notification_types: list[str] = config_field(
+        default_factory=lambda: ["modified", "created", "deleted"],
+        description="Types of file changes to notify about",
+    )
+
+
+class ASTParserConfig(ConfigModel, section="ast_parser"):
+    """Configuration for AST parsing."""
+
+    language_pack: str = config_field(
+        default="tree-sitter-language-pack",
+        description="Language pack to use for AST parsing",
+    )
+
+
+class RepoMapConfig(ConfigModel, section="repo_map"):
+    """Configuration for repository map generation."""
+
+    max_symbols: int = config_field(
+        default=100,
+        gt=0,
+        description="Maximum number of symbols to include in repo map (pageranked)",
+    )
+    include_docstrings: bool = config_field(
+        default=True,
+        description="Whether to include docstrings in repo map",
+    )
+    include_imports: bool = config_field(
+        default=False,
+        description="Whether to include imports in repo map",
+    )
+    included_symbol_types: list[str] = config_field(
+        default_factory=lambda: [
+            "function",
+            "method",
+            "class",
+            "interface",
+            "type_alias",
+        ],
+        description="Symbol types to include in repo map (for pageranking)",
+    )
+
+
+class CallGraphConfig(ConfigModel, section="call_graph"):
+    """Configuration for call graph analysis."""
+
+    relationship_weights: dict[str, dict[str, float]] = config_field(
+        default_factory=lambda: {
+            "python": {
+                "call": 1.5,
+                "type_reference": 1.2,
+                "inherits": 1.0,
+                "belongs_to": 0.2,
+                "contains": 0.0,
+            },
+            "javascript": {
+                "call": 1.5,
+                "type_reference": 1.2,
+                "inherits": 1.0,
+                "belongs_to": 0.2,
+                "contains": 0.0,
+            },
+            "typescript": {
+                "call": 1.5,
+                "type_reference": 1.2,
+                "inherits": 1.0,
+                "belongs_to": 0.2,
+                "contains": 0.0,
+            },
+            "rust": {
+                "call": 1.5,
+                "type_reference": 1.2,
+                "inherits": 1.0,
+                "belongs_to": 0.2,
+                "contains": 0.0,
+            },
+            "go": {
+                "call": 1.5,
+                "type_reference": 1.2,
+                "inherits": 1.0,
+                "belongs_to": 0.2,
+                "contains": 0.0,
+            },
+            "default": {
+                "call": 1.5,
+                "type_reference": 1.2,
+                "inherits": 1.0,
+                "belongs_to": 0.2,
+                "contains": 0.0,
+            },
+        },
+        description="Per-language relationship weights for PageRank computation",
+    )
+
+
+class IndexingConfig(ConfigModel, section="indexing"):
+    """Configuration for indexing operations."""
+
+    startup_enabled: bool = config_field(
+        default=True,
+        description="Whether to enable startup re-indexing",
+    )
+    startup_parallel_workers: int = config_field(
+        default=4,
+        gt=0,
+        description="Number of parallel workers for startup re-indexing",
+    )
+    agent_edit_enabled: bool = config_field(
+        default=True,
+        description="Whether to enable agent edit re-indexing",
+    )
+    user_edit_enabled: bool = config_field(
+        default=True,
+        description="Whether to enable user edit re-indexing",
+    )
+    debounce_window: float = config_field(
+        default=2.0,
+        gt=0.0,
+        description="Debounce window in seconds for user edit re-indexing",
+    )
+    max_cumulative_file_size_kb: int = config_field(
+        default=10000,
+        gt=0,
+        description="Max cumulative file size for batch indexing (default 10MB)",
+    )
+
+
+class RepositoryConfig(ConfigModel, section="repository"):
+    """Configuration for repository context service."""
+
+    enabled: bool = config_field(
+        default=True,
+        description="Whether the repository context service is enabled",
+    )
+    storage: StorageConfig = config_field(
+        default_factory=StorageConfig,
+        description="Storage configuration for repository database",
+    )
+    file_filter: FileFilterConfig = config_field(
+        default_factory=FileFilterConfig,
+        description="File filtering configuration for re-indexing",
+    )
+    file_monitoring: FileMonitoringConfig = config_field(
+        default_factory=FileMonitoringConfig,
+        description="File monitoring configuration",
+    )
+    ast_parser: ASTParserConfig = config_field(
+        default_factory=ASTParserConfig,
+        description="AST parser configuration",
+    )
+    repo_map: RepoMapConfig = config_field(
+        default_factory=RepoMapConfig,
+        description="Repository map configuration",
+    )
+    call_graph: CallGraphConfig = config_field(
+        default_factory=CallGraphConfig,
+        description="Call graph configuration",
+    )
+    indexing: IndexingConfig = config_field(
+        default_factory=IndexingConfig,
+        description="Indexing configuration",
+    )
+
+
 class AppConfig(ConfigModel, section="app"):
     """Top-level application configuration."""
 
@@ -933,6 +1165,10 @@ class AppConfig(ConfigModel, section="app"):
         default_factory=DashboardConfig,
         description="Dashboard configuration",
     )
+    repository: RepositoryConfig = config_field(
+        default_factory=RepositoryConfig,
+        description="Repository context service configuration",
+    )
 
     @classmethod
     def from_dict(cls, config_dict: dict[str, Any]) -> AppConfig:
@@ -949,6 +1185,7 @@ class AppConfig(ConfigModel, section="app"):
         prompt_config = PromptTemplateConfig(**config_dict.get("prompt", {}))
         sandbox_config = SandboxConfig(**config_dict.get("sandbox", {}))
         dashboard_config = DashboardConfig(**config_dict.get("dashboard", {}))
+        repository_config = RepositoryConfig(**config_dict.get("repository", {}))
 
         return cls(
             llm=llm_config,
@@ -959,6 +1196,7 @@ class AppConfig(ConfigModel, section="app"):
             prompt=prompt_config,
             sandbox=sandbox_config,
             dashboard=dashboard_config,
+            repository=repository_config,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -975,4 +1213,5 @@ class AppConfig(ConfigModel, section="app"):
             "prompt": self.prompt.model_dump(exclude_unset=True),
             "sandbox": self.sandbox.model_dump(exclude_unset=True),
             "dashboard": self.dashboard.model_dump(exclude_unset=True),
+            "repository": self.repository.model_dump(exclude_unset=True),
         }

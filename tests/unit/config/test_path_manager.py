@@ -71,9 +71,9 @@ class TestPathManager:
 
         assert manager.is_production is True
         assert manager.get_config_dir() == tmp_path / "config"
-        assert manager.get_data_dir() == tmp_path / "data" / "local-coding-assistant"
-        assert manager.get_cache_dir() == tmp_path / "cache" / "local-coding-assistant"
-        assert manager.get_log_dir() == tmp_path / "logs" / "local-coding-assistant"
+        assert manager.get_data_dir() == tmp_path / "data" / "LOCCA"
+        assert manager.get_cache_dir() == tmp_path / "cache" / "LOCCA"
+        assert manager.get_log_dir() == tmp_path / "logs" / "LOCCA"
 
         for directory in (
             manager.get_config_dir(),
@@ -161,7 +161,7 @@ class TestPathManager:
         module_dir = manager.get_module_dir()
 
         assert module_dir == (
-            tmp_path / "site-packages" / "local_coding_assistant" / "modules"
+            tmp_path / "site-packages" / "LOCCA" / "modules"
         )
 
     def test_module_dir_production_fallback(
@@ -186,5 +186,5 @@ class TestPathManager:
 
         assert (
             module_dir
-            == Path("lib") / "site-packages" / "local_coding_assistant" / "modules"
+            == Path("lib") / "site-packages" / "LOCCA" / "modules"
         )

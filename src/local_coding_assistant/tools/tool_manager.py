@@ -20,6 +20,8 @@ from local_coding_assistant.core.exceptions import ToolRegistryError
 from local_coding_assistant.core.protocols import IToolManager
 from local_coding_assistant.core.telemetry_types import (
     ExecutionEnvelope,
+    FileChange,
+    FileChangeType,
     PresentationOutput,
     ResourceMetric,
     ResourceType,
@@ -39,6 +41,7 @@ from local_coding_assistant.tools.types import (
 
 if TYPE_CHECKING:
     from local_coding_assistant.core.protocols import IConfigManager
+    from local_coding_assistant.repository import RepositoryContextService
     from local_coding_assistant.sandbox.manager import SandboxManager
 
 from local_coding_assistant.utils.logging import get_logger
@@ -60,6 +63,7 @@ class ToolManager(IToolManager, Iterable[Any]):
         self,
         config_manager: "IConfigManager",
         sandbox_manager: "SandboxManager | None" = None,
+        repository_context_service: "RepositoryContextService | None" = None,
         auto_load: bool = True,
         *,
         auto_load_registry: bool | None = None,
@@ -70,6 +74,7 @@ class ToolManager(IToolManager, Iterable[Any]):
             config_manager: IConfigManager instance for tool configurations.
                 If not provided, a default one will be created.
             sandbox_manager: Optional SandboxManager instance.
+            repository_context_service: Optional repository context service instance.
             auto_load: Whether to automatically load tools
             auto_load_registry: Legacy flag for tests/backwards compatibility
         """
@@ -79,6 +84,7 @@ class ToolManager(IToolManager, Iterable[Any]):
         self._statistics = StatisticsManager()
         self._config_manager: IConfigManager = config_manager
         self._sandbox_manager = sandbox_manager
+        self._repository_context_service = repository_context_service
 
         # Initialize the API generator with the sandbox's workspace if available
         tools_api_output_dir = None
@@ -87,6 +93,12 @@ class ToolManager(IToolManager, Iterable[Any]):
                 self._config_manager.path_manager.get_sandbox_guest_dir()
             )
         self._api_generator = ToolAPIGenerator(output_dir=tools_api_output_dir)
+
+        # If repository service is available set it for ToolExecutor
+        if repository_context_service is not None:
+            from local_coding_assistant.tools.tool_executor import ToolExecutor
+
+            ToolExecutor.set_repository_service(repository_context_service)
 
         if auto_load_registry is not None:
             auto_load = auto_load_registry
@@ -669,6 +681,18 @@ class ToolManager(IToolManager, Iterable[Any]):
         if sandbox_result.get("duration") is not None:
             duration_ms = sandbox_result.get("duration", 0.0) * 1000.0
 
+        file_changes = []
+        files_created = sandbox_result.get("files_created") or []
+        for path in files_created:
+            file_changes.append(
+                FileChange(path=path, change_type=FileChangeType.CREATED)
+            )
+        files_modified = sandbox_result.get("files_modified") or []
+        for path in files_modified:
+            file_changes.append(
+                FileChange(path=path, change_type=FileChangeType.MODIFIED)
+            )
+
         return ExecutionEnvelope(
             tool_name=tool_name,
             session_id=session_id,
@@ -679,8 +703,7 @@ class ToolManager(IToolManager, Iterable[Any]):
             stdout=sandbox_result.get("stdout"),
             stderr=sandbox_result.get("stderr"),
             error=sandbox_result.get("error"),
-            files_created=sandbox_result.get("files_created") or [],
-            files_modified=sandbox_result.get("files_modified") or [],
+            file_changes=file_changes,
             return_code=sandbox_result.get("return_code"),
             system_metrics=system_metrics,
         )

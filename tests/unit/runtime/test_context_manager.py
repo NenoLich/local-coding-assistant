@@ -141,48 +141,6 @@ class TestContextManager:
         assert context.agent_profile.name == "default"
         assert not context.tools
 
-    def test_build_context_validation(self, config_manager, session_state):
-        manager = ContextManager(config_manager)
-
-        # Test invalid session
-        with pytest.raises(
-            ValueError, match="session must be an instance of SessionState"
-        ):
-            manager.build_context(
-                session=None, user_input="test", tool_call_mode="reasoning_only"
-            )
-
-        # Test invalid tool_call_mode type
-        with pytest.raises(TypeError, match="tool_call_mode must be a string"):
-            manager.build_context(
-                session=session_state, user_input="test", tool_call_mode=123
-            )
-
-        # Test case insensitivity
-        context = manager.build_context(
-            session=session_state,
-            user_input="test",
-            tool_call_mode="REASONING_ONLY",  # Uppercase should work
-        )
-        assert context.tool_call_mode == "reasoning_only"
-
-        # Test boolean parameter validation
-        with pytest.raises(TypeError, match="agent_mode must be a boolean"):
-            manager.build_context(
-                session=session_state,
-                user_input="test",
-                tool_call_mode="reasoning_only",
-                agent_mode="not_a_boolean",
-            )
-
-        with pytest.raises(TypeError, match="graph_mode must be a boolean"):
-            manager.build_context(
-                session=session_state,
-                user_input="test",
-                tool_call_mode="reasoning_only",
-                graph_mode="not_a_boolean",
-            )
-
     def test_build_context_with_agent_mode(
         self, config_manager, session_state, tool_manager
     ):

@@ -1,0 +1,8 @@
+The Repo Map below is a high - level architectural guide. It may be slightly out of sync with recent edits.
+Note: Showing top 3 symbols by usage frequency. Not all symbols are shown.
+src/core/config.py
+  - [function] def load_config(path: str) -> Config [line: 15-25]
+
+src/core/error_handler.py
+  - [class] class CustomException [line: 10-15]
+  - [function] def handle_error(error: Exception) -> None [line: 20-30]

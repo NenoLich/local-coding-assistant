@@ -12,14 +12,15 @@ class MockPromptComposer:
 
     def compose(
         self,
-        system_core: str,
-        agent_identity: str,
+        system_core: str | None = None,
+        agent_identity: str | None = None,
         execution_rules: str | None = None,
         constraints: list[str] | None = None,
         skills: list[str] | None = None,
         tools: list[str] | None = None,
         examples: list[str] | None = None,
         memories: list[str] | None = None,
+        context: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> str:
         """Mock compose method that stores arguments and returns a simple string."""
@@ -32,8 +33,15 @@ class MockPromptComposer:
             "tools": tools or [],
             "examples": examples or [],
             "memories": memories or [],
+            "context": context,
             **kwargs,
         }
+
+        if context is not None:
+            if self.template_env is None:
+                raise ValueError("template_env is required when composing repo context")
+            template = self.template_env.get_template("blocks/repo_context.jinja2")
+            return template.render(context=context)
 
         # Simple string representation of the prompt
         parts = [

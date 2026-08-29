@@ -1,6 +1,6 @@
 providers:
   openrouter:
-    driver: "openai_responses"
+    driver: "openai_chat"
     base_url: "https://openrouter.ai/api/v1"
     api_key_env: "OPENROUTER_API_KEY"
     health_check_endpoint: "https://openrouter.ai/api/v1/key"
@@ -47,3 +47,11 @@ providers:
         supported_parameters: ["max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format"]
       groq/compound-mini:
         supported_parameters: ["max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format" ]
+  nvidia:
+    driver: "openai_chat"
+    base_url: "https://integrate.api.nvidia.com/v1"
+    api_key_env: "NVIDIA_API_KEY"
+    health_check_endpoint: "https://integrate.api.nvidia.com/v1/models"
+    models:
+      minimaxai/minimax-m3:
+        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty", "include_usage"]

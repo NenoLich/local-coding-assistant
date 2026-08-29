@@ -86,6 +86,10 @@ class SessionState(BaseModel):
             )
         )
 
+    def add_system_message(self, content: str) -> None:
+        """Add a system message to the history."""
+        self.history.append(Message(role="system", content=content))
+
     # ── accessors ───────────────────────────────────────────────────────────
     @property
     def last_user_message(self) -> str | None:

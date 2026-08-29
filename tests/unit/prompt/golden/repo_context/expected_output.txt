@@ -1,0 +1,18 @@
+Project Metadata:
+- Name: local-coding-assistant
+- Description: A local coding assistant for developers
+- Languages: Python (85.5%), YAML (10.0%), Markdown (4.5%)
+- Language version: 3.11
+- Package Manager: uv
+- Core Frameworks: pytest, jinja2
+- Build Backend: hatchling
+- Formatter: ruff, mypy
+- Test Frameworks: pytest
+- License: MIT
+- Dependencies: jinja2, pytest, hatchling, ruff
+- Manifest files: pyproject.toml
+The Repo Map below is a high-level architectural guide. It may be slightly out of sync with recent edits.
+Note: Showing top 2 symbols by usage frequency. Not all symbols are shown.
+src/local_coding_assistant/repository/service.py
+- [class] class RepositoryContextService [line: 23-130]
+- [method] get_repo_context(self) -> tuple[ProjectInfo, RepoMapData] [line: 132-149]

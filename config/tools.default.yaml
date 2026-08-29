@@ -42,6 +42,16 @@ tools:
     enabled: true
     category: ptc
 
+  - id: search_symbols
+    source: builtin
+    path: '@tools/builtin_tools/repository.py'
+    tool_class: SearchSymbolsTool
+    description: "Search for symbols (functions, classes, methods) across the codebase"
+    permissions: [ compute ]
+    tags: [ code, filesystem, retrieval ]
+    enabled: true
+    category: search
+
   - id: doc_classifier
     source: mcp
     endpoint: https://example-mcp.com/tools/doc_classifier

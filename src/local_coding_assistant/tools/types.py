@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from local_coding_assistant.core.telemetry_types import (
     ExecutionEnvelope,
+    FileChange,
     PresentationOutput,
     ToolCallTrace,
 )
@@ -65,6 +66,7 @@ class ToolTag(str, Enum):
     SECURITY = "security"
     UTILITY = "utility"
     FILESYSTEM = "filesystem"
+    CODE = "code"
 
 
 class ToolExecutionMode(str, Enum):
@@ -194,6 +196,7 @@ class ToolExecutionResponse(BaseModel):
         envelope: Wrapper execution metadata (sandbox runs)
         tool_calls: Normalized tool call traces (sandbox inner calls)
         output: Presentation output (final answer format/metadata)
+        file_changes: List of file changes made by this tool execution
     """
 
     tool_name: str
@@ -206,6 +209,7 @@ class ToolExecutionResponse(BaseModel):
     envelope: ExecutionEnvelope | None = None
     tool_calls: list[ToolCallTrace] | None = None
     output: PresentationOutput | None = None
+    file_changes: list[FileChange] = Field(default_factory=list)
 
     def dried_out(self) -> dict[str, Any]:
         output = {}

@@ -1,0 +1,6 @@
+The Repo Map below is a high - level architectural guide. It may be slightly out of sync with recent edits.
+Note: Showing top 3 symbols by usage frequency. Not all symbols are shown.
+src/local_coding_assistant/agent/llm/service.py
+  - [class] class LLMService [line: 10-50]
+  - [method] def generate_completion(prompt: str) -> str [line: 20-30]
+  - [function] def helper() -> None [line: 35-37]

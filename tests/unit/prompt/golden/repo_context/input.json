@@ -1,0 +1,56 @@
+{
+  "context": {
+    "project_info": {
+      "name": "local-coding-assistant",
+      "description": "A local coding assistant for developers",
+      "language_version": "3.11",
+      "language_version_edition": null,
+      "package_manager": "uv",
+      "core_frameworks": ["pytest", "jinja2"],
+      "build_backend": "hatchling",
+      "linter_formatter": ["ruff", "mypy"],
+      "test_frameworks": ["pytest"],
+      "license": "MIT",
+      "ts_config_target": null,
+      "ts_config_module": null,
+      "ts_config_module_resolution": null,
+      "ts_config_jsx_mode": null,
+      "ts_config_strict_mode": null,
+      "ts_config_path_aliases": null,
+      "is_workspace": null,
+      "workspace_members": null,
+      "clean_dependencies": ["jinja2", "pytest", "hatchling", "ruff"],
+      "manifest_files": ["pyproject.toml"],
+      "available_scripts": null
+    },
+    "repo_map_data": {
+      "project_name": null,
+      "language_distribution": {
+        "Python": 85.5,
+        "YAML": 10.0,
+        "Markdown": 4.5
+      },
+      "num_symbols": 2,
+      "grouped_symbols": {
+        "src/local_coding_assistant/repository/service.py": [
+          {
+            "name": "RepositoryContextService",
+            "symbol_type": "class",
+            "line_number": 23,
+            "end_line_number": 130,
+            "signature": "class RepositoryContextService",
+            "parent_scope": null
+          },
+          {
+            "name": "get_repo_context",
+            "symbol_type": "method",
+            "line_number": 132,
+            "end_line_number": 149,
+            "signature": "get_repo_context(self) -> tuple[ProjectInfo, RepoMapData]",
+            "parent_scope": "RepositoryContextService"
+          }
+        ]
+      }
+    }
+  }
+}

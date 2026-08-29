@@ -186,7 +186,8 @@ def _camel_to_snake(name: str) -> str:
 # This must be at the end to avoid circular imports
 try:
     from .builtin_tools import *  # noqa
-    from .mcp_tools import *  # noqa
+    from .sandbox_tools import *  # noqa
+    from .external_tools import *  # noqa
 except ImportError:
     # Some modules might not be available
     pass

@@ -114,7 +114,15 @@ class DockerSandbox(ISandbox):
             max_sessions=max_sessions,
         )
         self.security_manager = security_manager or SecurityManager()
-        self._path_manager = path_manager or PathManager()
+        if path_manager:
+            self._path_manager = path_manager
+        else:
+            from local_coding_assistant.config.env_manager import get_env_manager
+
+            env_manager = get_env_manager()
+            path_manager = getattr(env_manager, "path_manager", None)
+            self._path_manager = path_manager or PathManager()
+
         self.config = config  # Store the config for downstream consumers
         self._state = SandboxRuntimeState()
 

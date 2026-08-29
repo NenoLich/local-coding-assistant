@@ -23,7 +23,11 @@ from local_coding_assistant.agent.llm import (
 from local_coding_assistant.agent.llm.models import LLMStreamChunk
 from local_coding_assistant.cli.commands import sandbox as sandbox_cli
 from local_coding_assistant.config.path_manager import PathManager
-from local_coding_assistant.config.schemas import AppConfig, SandboxConfig
+from local_coding_assistant.config.schemas import (
+    AppConfig,
+    RepositoryConfig,
+    SandboxConfig,
+)
 from local_coding_assistant.core.bootstrap import bootstrap
 from local_coding_assistant.core.protocols import IConfigManager
 from local_coding_assistant.providers import (
@@ -79,6 +83,59 @@ def sandbox_config_manager(tmp_path: Path):
         @property
         def global_config(self) -> AppConfig:
             return self._global_config
+
+    return StubConfigManager(app_config, path_manager, project_root)
+
+
+@pytest.fixture
+def repository_config_manager(tmp_path: Path):
+    """Provide a stub config manager wired with a PathManager and repository config."""
+
+    project_root = tmp_path / "sandbox-project"
+    project_root.mkdir(parents=True, exist_ok=True)
+
+    path_manager = PathManager(is_testing=True, project_root=project_root)
+
+    from local_coding_assistant.config.schemas import (
+        ASTParserConfig,
+        CallGraphConfig,
+        FileFilterConfig,
+        FileMonitoringConfig,
+        IndexingConfig,
+        RepoMapConfig,
+        StorageConfig,
+    )
+
+    repository_config = RepositoryConfig(
+        enabled=True,
+        storage=StorageConfig(mode="temporary"),
+        file_filter=FileFilterConfig(),
+        file_monitoring=FileMonitoringConfig(enabled=False),
+        ast_parser=ASTParserConfig(),
+        repo_map=RepoMapConfig(),
+        call_graph=CallGraphConfig(),
+        indexing=IndexingConfig(startup_enabled=False, agent_edit_enabled=False),
+    )
+
+    app_config = AppConfig(repository=repository_config)
+
+    class StubConfigManager:
+        def __init__(
+            self, config: AppConfig, path_manager: PathManager, project_root: Path
+        ):
+            self._global_config = config
+            self.path_manager = path_manager
+            self.project_root = project_root
+
+        @property
+        def global_config(self) -> AppConfig:
+            return self._global_config
+
+        def register_capability(self, capabilities: list[str]):
+            pass
+
+        def unregister_capability(self, capabilities: list[str]):
+            pass
 
     return StubConfigManager(app_config, path_manager, project_root)
 

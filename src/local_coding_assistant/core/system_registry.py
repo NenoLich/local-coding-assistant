@@ -152,7 +152,7 @@ class SystemCapabilityRegistry:
         log.debug(
             "Module '%s' registered with capabilities: %s",
             module_name,
-            capabilities_list,
+            capabilities,
         )
 
         # Resolve any pending validations that were waiting for this module
