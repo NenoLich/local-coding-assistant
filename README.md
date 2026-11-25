@@ -1,3 +1,4 @@
+![Project Screenshot](LoCCa_stone_letters_cosmic_digits_202607211135.jpeg)
 # Local Coding Assistant (LOCCA)
 
 An AI-powered coding assistant that runs locally with support for LLMs, tools, and advanced agent patterns including observe-plan-act-reflect loops, Frame Agent implementation, and sophisticated runtime architecture.
