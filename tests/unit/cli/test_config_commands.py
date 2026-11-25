@@ -118,7 +118,7 @@ class TestConfigCommands:
 
         # Verify the save method was called correctly
         self.test_env_manager.save_to_env_file.assert_called_once()
-        args, kwargs = self.test_env_manager.save_to_env_file.call_args
+        args, _kwargs = self.test_env_manager.save_to_env_file.call_args
         # The key should be passed with the prefix
         assert args[0] == TEST_ENV_VAR
         assert args[1] == TEST_VALUE
@@ -145,7 +145,7 @@ class TestConfigCommands:
         )
         # Verify the remove method was called correctly
         self.test_env_manager.remove_from_env_file.assert_called_once()
-        args, kwargs = self.test_env_manager.remove_from_env_file.call_args
+        args, _kwargs = self.test_env_manager.remove_from_env_file.call_args
         # The key should be passed with the prefix
         assert args[0] == TEST_ENV_VAR
 
@@ -329,7 +329,6 @@ class TestConfigCommands:
         self.test_env_manager.remove_from_env_file.reset_mock()
 
         # Configure get_env to return None (key doesn't exist)
-        original_get_env = self.test_env_manager.get_env
         self.test_env_manager.get_env = MagicMock(return_value=None)
         self.test_env_manager.remove_from_env_file.return_value = None
 

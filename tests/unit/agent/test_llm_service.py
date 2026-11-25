@@ -1,13 +1,16 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from local_coding_assistant.agent.llm import (
+    LLMOptions,
     LLMResult,
-    LLMService,
     LLMTask,
     LLMToolCall,
 )
+from local_coding_assistant.agent.llm.models import ResolvedLLMOptions
+from local_coding_assistant.agent.llm.pipeline import ProviderRequestBuilder
+from local_coding_assistant.agent.llm.service import LLMService
 from local_coding_assistant.config.schemas import AppConfig, LLMConfig, ProviderConfig
 
 
@@ -254,16 +257,15 @@ class TestLLMService:
     @pytest.fixture
     def service_with_mocks(self, mock_provider_manager, mock_config_manager):
         """Create LLMService with mocked dependencies."""
-        service = LLMService(
-            config_manager=mock_config_manager, provider_manager=mock_provider_manager
-        )
+        service = LLMService(config_manager=mock_config_manager)
+        service._provider_manager = mock_provider_manager
+
         return service
 
     def test_initialization(self, mock_provider_manager, mock_config_manager):
         """LLMService wires provider components on init."""
-        service = LLMService(
-            config_manager=mock_config_manager, provider_manager=mock_provider_manager
-        )
+        service = LLMService(config_manager=mock_config_manager)
+        service._provider_manager = mock_provider_manager
 
         assert service._config_manager == mock_config_manager
         assert service._provider_manager == mock_provider_manager
@@ -297,3 +299,159 @@ class TestLLMService:
         service._provider_manager.reload.reset_mock()
         service.reload_providers()
         service._provider_manager.reload.assert_called_once()
+
+
+class TestLLMConfigTimeout:
+    """Test LLMConfig timeout field."""
+
+    def test_timeout_default(self):
+        config = LLMConfig()
+        assert config.timeout == 120.0
+
+    def test_timeout_valid_values(self):
+        LLMConfig(timeout=1.0)
+        LLMConfig(timeout=60.0)
+        LLMConfig(timeout=300.0)
+
+    def test_timeout_invalid_values(self):
+        with pytest.raises(ValueError, match="greater than 0"):
+            LLMConfig(timeout=0)
+        with pytest.raises(ValueError, match="greater than 0"):
+            LLMConfig(timeout=-1.0)
+
+
+class TestLLMOptionsTimeout:
+    """Test timeout resolution in LLMOptions."""
+
+    def test_timeout_from_defaults(self):
+        options = LLMOptions()
+        defaults = LLMConfig(timeout=45.0)
+        resolved = options.resolved(defaults=defaults, runtime_stream=False)
+        assert resolved.timeout == 45.0
+
+    def test_timeout_override(self):
+        options = LLMOptions(timeout=10.0)
+        defaults = LLMConfig(timeout=45.0)
+        resolved = options.resolved(defaults=defaults, runtime_stream=False)
+        assert resolved.timeout == 10.0
+
+    def test_timeout_is_float(self):
+        options = LLMOptions(timeout=30)
+        defaults = LLMConfig()
+        resolved = options.resolved(defaults=defaults, runtime_stream=False)
+        assert isinstance(resolved.timeout, float)
+        assert resolved.timeout == 30.0
+
+
+class TestProviderRequestBuilderTimeout:
+    """Test that ProviderRequestBuilder wires timeout into the request."""
+
+    def test_timeout_wired_to_request(self):
+        builder = ProviderRequestBuilder()
+        task = LLMTask(prompt="hi")
+        options = ResolvedLLMOptions(
+            provider_hint=None,
+            model="m",
+            temperature=0.7,
+            max_tokens=None,
+            timeout=33.0,
+            retry_attempts=1,
+            retry_delay=1.0,
+            stream=False,
+            response_format=None,
+            tool_choice=None,
+            policy_name=None,
+            metadata={},
+            max_failovers=1,
+        )
+        request = builder.build(task, options=options, stream=False)
+        assert request.timeout == 33.0
+
+
+class TestLLMServiceTimeout:
+    """Test that LLMService wraps calls with asyncio.timeout."""
+
+    def _make_service(self):
+        config_manager = MagicMock()
+        config_manager.global_config = AppConfig(llm=LLMConfig(timeout=120.0))
+        service = LLMService(config_manager=config_manager)
+        service._provider_selector = MagicMock()
+        service._response_normalizer.to_result = MagicMock(
+            return_value=LLMResult(content="ok", model="m", provider="p")
+        )
+        service._health_manager = MagicMock()
+        service._telemetry = MagicMock()
+        return service
+
+    def _make_decision(self):
+        provider = MagicMock()
+        provider.name = "p"
+        decision = MagicMock()
+        decision.provider = provider
+        decision.model = "m"
+        return provider, decision
+
+    @pytest.mark.asyncio
+    async def test_generate_wraps_with_timeout(self):
+        service = self._make_service()
+        provider, decision = self._make_decision()
+        provider.generate_with_retry = AsyncMock(
+            return_value=MagicMock(
+                usage=None,
+                tokens_used=None,
+                model="m",
+                finish_reason="stop",
+                tool_calls=None,
+                metadata={},
+            )
+        )
+        service._provider_selector.select = AsyncMock(return_value=(decision, []))
+
+        with patch(
+            "local_coding_assistant.agent.llm.service.asyncio.timeout"
+        ) as mock_timeout:
+            mock_cm = MagicMock()
+            mock_cm.__aenter__ = AsyncMock()
+            mock_cm.__aexit__ = AsyncMock(return_value=False)
+            mock_timeout.return_value = mock_cm
+
+            await service.generate(
+                LLMTask(prompt="hi"), options=LLMOptions(timeout=7.0)
+            )
+
+        mock_timeout.assert_called_once_with(7.0)
+        provider.generate_with_retry.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_stream_wraps_with_timeout(self):
+        service = self._make_service()
+        provider, decision = self._make_decision()
+        stream_calls = []
+
+        async def fake_stream(*args, **kwargs):
+            stream_calls.append((args, kwargs))
+            if False:  # pragma: no cover - make this an async generator
+                yield
+            return
+
+        provider.stream_with_retry = fake_stream
+        service._provider_selector.select = AsyncMock(return_value=(decision, []))
+
+        with patch(
+            "local_coding_assistant.agent.llm.service.asyncio.timeout"
+        ) as mock_timeout:
+            mock_cm = MagicMock()
+            mock_cm.__aenter__ = AsyncMock()
+            mock_cm.__aexit__ = AsyncMock(return_value=False)
+            mock_timeout.return_value = mock_cm
+
+            chunks = [
+                chunk
+                async for chunk in service.stream(
+                    LLMTask(prompt="hi"), options=LLMOptions(timeout=9.0)
+                )
+            ]
+
+        mock_timeout.assert_called_once_with(9.0)
+        assert len(stream_calls) == 1
+        assert chunks == []

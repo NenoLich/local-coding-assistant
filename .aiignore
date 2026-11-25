@@ -1,0 +1,46 @@
+# An .aiignore file follows the same syntax as a .gitignore file.
+# .gitignore documentation: https://git-scm.com/docs/gitignore
+
+# you can ignore files
+.DS_Store
+*.tmp
+
+# or folders
+dist/
+build/
+out/
+
+# Python-generated files
+__pycache__/
+*.py[oc]
+wheels/
+*.egg-info
+
+# Project specific
+.resources/
+.journal/
+tmp/
+.cache/
+tests/cache/
+
+# IDE specific
+.idea/
+vscode/
+*.swp
+*.swo
+
+
+# Local development
+.env.local
+
+# ty
+.ty_cache/
+
+# Pytest
+.pytest_cache/
+*.py[cod]
+*$py.class
+pytest-cache-files-*/
+
+# Ruff
+.ruff_cache/

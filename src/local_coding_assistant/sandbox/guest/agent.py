@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from session import SessionManager
+    from session import SessionManager  # type: ignore
 except ImportError:
     # Fallback for relative import if run as a module
     from .session import SessionManager

@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import ANY, MagicMock, Mock, patch
 
 import pytest
 
@@ -48,20 +48,25 @@ class TestBootstrapInitialization:
 
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
     @patch("local_coding_assistant.core.bootstrap._initialize_llm_service")
-    @patch("local_coding_assistant.core.bootstrap._initialize_repository_context_service")
-    @patch("local_coding_assistant.core.bootstrap._initialize_tool_manager")
+    @patch(
+        "local_coding_assistant.core.bootstrap._initialize_repository_context_service"
+    )
     @patch("local_coding_assistant.core.bootstrap._initialize_runtime_manager")
+    @patch("local_coding_assistant.core.bootstrap._initialize_sandbox_manager")
+    @patch("local_coding_assistant.core.bootstrap._initialize_tool_gateway")
+    @patch("local_coding_assistant.core.bootstrap._initialize_dashboard_integration")
     def test_bootstrap_initialization(
         self,
+        mock_init_dashboard,
+        mock_init_tool_gateway,
+        mock_init_sandbox,
         mock_init_runtime,
-        mock_init_tools,
         mock_init_repo,
         mock_init_llm,
         mock_init_config,
         mock_config_manager,
         mock_llm_service,
         mock_repo_service,
-        mock_tool_manager,
         mock_runtime_manager,
     ):
         """Test successful bootstrap initialization."""
@@ -77,8 +82,9 @@ class TestBootstrapInitialization:
         mock_init_config.return_value = mock_config_manager
         mock_init_llm.return_value = mock_llm_service
         mock_init_repo.return_value = mock_repo_service
-        mock_init_tools.return_value = mock_tool_manager
         mock_init_runtime.return_value = mock_runtime_manager
+        mock_init_sandbox.return_value = Mock()
+        mock_init_tool_gateway.return_value = Mock()
 
         # Call bootstrap
         ctx = bootstrap()
@@ -89,22 +95,17 @@ class TestBootstrapInitialization:
         # Verify component initialization
         mock_init_llm.assert_called_once_with(mock_config_manager)
         mock_init_repo.assert_called_once_with(mock_config_manager)
-
-        # Get the sandbox manager that was created during bootstrap
-        sandbox_manager = None
-        for call in mock_init_tools.call_args_list:
-            if "sandbox_manager" in call.kwargs:
-                sandbox_manager = call.kwargs["sandbox_manager"]
-                break
-
-        mock_init_tools.assert_called_once_with(
-            config_manager=mock_config_manager, sandbox_manager=sandbox_manager, repository_context_service=mock_repo_service
+        mock_init_tool_gateway.assert_called_once_with(
+            config_manager=mock_config_manager,
+            repository_context_service=mock_repo_service,
         )
         mock_init_runtime.assert_called_once_with(
             config_manager=mock_config_manager,
             llm_service=mock_llm_service,
-            tool_manager=mock_tool_manager,
+            tool_gateway=mock_init_tool_gateway.return_value,
             repository_context_service=mock_repo_service,
+            event_pipeline=ANY,
+            store=ANY,
         )
 
         # Verify _initialize_config was called with env_manager
@@ -122,7 +123,7 @@ class TestBootstrapInitialization:
         # Verify context setup
         assert ctx.get("llm") == mock_llm_service
         assert ctx.get("repository_context") == mock_repo_service
-        assert ctx.get("tools") == mock_tool_manager
+        assert ctx.get("tool_gateway") == mock_init_tool_gateway.return_value
         assert ctx.get("runtime") == mock_runtime_manager
 
         # Verify dependencies
@@ -131,19 +132,25 @@ class TestBootstrapInitialization:
         assert ctx.deps.config_manager == mock_config_manager
         assert ctx.deps.llm_service == mock_llm_service
         assert ctx.deps.repository_context_service == mock_repo_service
-        assert ctx.deps.tool_manager == mock_tool_manager
+        assert ctx.deps.tool_gateway == mock_init_tool_gateway.return_value
         assert ctx.deps.runtime_manager == mock_runtime_manager
         assert ctx.deps.is_initialized()
 
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
     @patch("local_coding_assistant.core.bootstrap._initialize_llm_service")
-    @patch("local_coding_assistant.core.bootstrap._initialize_repository_context_service")
-    @patch("local_coding_assistant.core.bootstrap._initialize_tool_manager")
+    @patch(
+        "local_coding_assistant.core.bootstrap._initialize_repository_context_service"
+    )
     @patch("local_coding_assistant.core.bootstrap._initialize_runtime_manager")
+    @patch("local_coding_assistant.core.bootstrap._initialize_sandbox_manager")
+    @patch("local_coding_assistant.core.bootstrap._initialize_tool_gateway")
+    @patch("local_coding_assistant.core.bootstrap._initialize_dashboard_integration")
     def test_bootstrap_with_custom_config_path(
         self,
+        mock_init_dashboard,
+        mock_init_tool_gateway,
+        mock_init_sandbox,
         mock_init_runtime,
-        mock_init_tools,
         mock_init_repo,
         mock_init_llm,
         mock_init_config,
@@ -162,8 +169,9 @@ class TestBootstrapInitialization:
         mock_init_config.return_value = mock_config_manager
         mock_init_llm.return_value = Mock()
         mock_init_repo.return_value = Mock()
-        mock_init_tools.return_value = Mock()
         mock_init_runtime.return_value = Mock()
+        mock_init_sandbox.return_value = Mock()
+        mock_init_tool_gateway.return_value = Mock()
 
         # Call bootstrap with custom config path
         config_path = "/path/to/custom/config.yaml"

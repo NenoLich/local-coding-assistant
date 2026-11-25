@@ -127,6 +127,8 @@ class ProviderRequestBuilder:
         if options.model:
             request.model = options.model
 
+        request.timeout = options.timeout
+
         return request
 
 

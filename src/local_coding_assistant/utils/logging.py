@@ -2,6 +2,8 @@ import datetime as dt
 import json
 import logging
 import sys
+from collections.abc import Generator
+from contextlib import contextmanager
 from decimal import Decimal
 from enum import Enum
 from logging.handlers import RotatingFileHandler, TimedRotatingFileHandler
@@ -43,7 +45,32 @@ THIRD_PARTY_LOGGERS = {
     "httpcore": logging.WARNING,
     "httpcore.connection": logging.WARNING,
     "LiteLLM": logging.INFO,
+    "aiosqlite": logging.INFO,
 }
+
+
+@contextmanager
+def temporary_log_level(levels: dict[str, int | str], /) -> Generator[None]:
+    """Temporarily set log levels for named loggers, restoring previous levels on exit.
+
+    Useful for silencing noisy third-party logging (e.g. LiteLLM registration
+    warnings) during a single function execution.
+
+    Args:
+        levels: Mapping of logger name to the temporary level to apply.
+    """
+    loggers = {name: logging.getLogger(name) for name in levels}
+    previous = {name: logger_.level for name, logger_ in loggers.items()}
+    try:
+        for name, level in levels.items():
+            if isinstance(level, str):
+                level = getattr(logging, level.upper(), logging.INFO)
+            loggers[name].setLevel(level)
+        yield
+    finally:
+        for name, logger_ in loggers.items():
+            logger_.setLevel(previous[name])
+
 
 LEVEL_EMOJI_MAP = {
     "debug": "🐞",
@@ -566,9 +593,7 @@ def setup_logging(
             if not isinstance(file_handler, logging.NullHandler):
                 root_logger.addHandler(file_handler)
 
-        third_party_levels: dict[str, int | str] = dict(
-            third_party_levels or THIRD_PARTY_LOGGERS
-        )
+        third_party_levels = dict(third_party_levels or THIRD_PARTY_LOGGERS)
         for logger_name, logger_level in third_party_levels.items():
             if isinstance(logger_level, str):
                 logger_level = getattr(logging, logger_level.upper(), logging.INFO)

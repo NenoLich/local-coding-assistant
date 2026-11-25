@@ -1,372 +1,240 @@
 """
 Unit tests for CLI run commands.
+
+The refactored ``run query`` command delegates execution to
+``run_flow.execute_query`` and renders the resulting ``RunReport`` via the
+rendering registry, instead of calling ``runtime.orchestrate`` directly.
 """
 
-import asyncio
 import logging
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import typer
 from typer.testing import CliRunner
 
 from local_coding_assistant.cli.commands.run import query
-from local_coding_assistant.runtime.events import EventType, ExecutionEvent
 
-# Initialize test runner
 runner = CliRunner()
 
-# Test data
 TEST_QUERY = "What is the meaning of life?"
 TEST_MODEL = "test-model"
-TEST_RESPONSE = {"message": "42"}
+TEST_ANSWER = "42"
+
+
+class _MockAsyncContextManager:
+    """Async context manager that yields a fixed context dict."""
+
+    def __init__(self, ctx):
+        self.ctx = ctx
+
+    async def __aenter__(self):
+        return self.ctx
+
+    async def __aexit__(self, *args):
+        return False
+
+
+def _make_report(final_answer=TEST_ANSWER, status="success"):
+    report = MagicMock()
+    report.final_answer = final_answer
+    report.status = status
+    return report
+
+
+def _make_session(session_id="sess-1"):
+    session = MagicMock()
+    session.id = session_id
+    return session
+
+
+def _run_query(**kwargs):
+    """Call query directly, capturing the typer.Exit exit code."""
+    try:
+        query(**kwargs)
+        return 0
+    except typer.Exit as exc:
+        return exc.exit_code
+
+
+@pytest.fixture
+def setup_mocks():
+    """Patch bootstrap, execute_query and typer.echo for run query tests."""
+    mock_runtime = MagicMock()
+    mock_runtime.event_pipeline = MagicMock()
+    mock_ctx = {"runtime": mock_runtime}
+
+    mock_bootstrap = MagicMock()
+    mock_bootstrap.return_value = _MockAsyncContextManager(mock_ctx)
+
+    mock_execute_query = AsyncMock(return_value=(_make_report(), _make_session()))
+
+    mock_echo = MagicMock()
+
+    with (
+        patch("local_coding_assistant.cli.commands.run.bootstrap", mock_bootstrap),
+        patch(
+            "local_coding_assistant.cli.commands.run.execute_query",
+            mock_execute_query,
+        ),
+        patch("local_coding_assistant.cli.commands.run.typer.echo", mock_echo),
+    ):
+        yield {
+            "runtime": mock_runtime,
+            "ctx": mock_ctx,
+            "bootstrap": mock_bootstrap,
+            "execute_query": mock_execute_query,
+            "echo": mock_echo,
+        }
+
+
+def _kw(**overrides):
+    """Build query kwargs from non-overridden defaults plus overrides."""
+    base = dict(
+        verbose=False,
+        model=None,
+        agent_mode="no_agent",
+        tool_call_mode=None,
+        sandbox_session=None,
+        target_project_root=None,
+        log_level="INFO",
+        output_format="plain",
+        session_id=None,
+        trace=None,
+        auto_approve=None,
+    )
+    base.update(overrides)
+    return base
 
 
 class TestRunCommands:
     """Test run command functionality."""
 
-    @pytest.fixture(autouse=True)
-    def setup_mocks(self):
-        """Setup mocks for each test."""
-        # Create a mock runtime
-        self.mock_runtime = AsyncMock()
-        self.mock_runtime.orchestrate = Mock(return_value=self._mock_orchestrate())
+    def test_query_basic(self, setup_mocks):
+        """Basic query prints the response and returns success."""
+        mocks = setup_mocks
+        mocks["execute_query"].return_value = (_make_report(), _make_session())
 
-        # Create a mock context
-        self.mock_ctx = {"runtime": self.mock_runtime}
+        exit_code = _run_query(text=TEST_QUERY, **_kw())
 
-        # Patch the bootstrap function
-        self.bootstrap_patcher = patch(
-            "local_coding_assistant.cli.commands.run.bootstrap"
+        assert exit_code == 0
+        mocks["echo"].assert_any_call("\nResponse:")
+        mocks["echo"].assert_any_call(TEST_ANSWER)
+        mocks["bootstrap"].assert_called_once_with(
+            log_level=logging.INFO, target_project_root=None
         )
-        self.mock_bootstrap = self.bootstrap_patcher.start()
-        self.mock_bootstrap.return_value = self.mock_ctx
+        mocks["execute_query"].assert_called_once()
+        call_args = mocks["execute_query"].call_args
+        assert call_args[0][0] is mocks["runtime"]
+        assert call_args[0][1] == TEST_QUERY
+        options = call_args[0][2]
+        assert options.model is None
+        assert options.agent_mode == "no_agent"
+        assert options.tool_call_mode is None
+        assert options.session_id is None
+        assert options.verbose is False
 
-        # Patch asyncio.run to actually run the coroutine
-        self.asyncio_patcher = patch(
-            "local_coding_assistant.cli.commands.run.asyncio.run",
-            side_effect=asyncio.run,
-        )
-        self.mock_asyncio_run = self.asyncio_patcher.start()
+    def test_query_with_model(self, setup_mocks):
+        """Query forwards the model override to RunOptions."""
+        _run_query(text=TEST_QUERY, **_kw(model=TEST_MODEL))
 
-        # Patch typer.echo to capture output
-        self.echo_patcher = patch("local_coding_assistant.cli.commands.run.typer.echo")
-        self.mock_echo = self.echo_patcher.start()
+        options = setup_mocks["execute_query"].call_args[0][2]
+        assert options.model == TEST_MODEL
 
-        yield
-
-        # Cleanup
-        self.bootstrap_patcher.stop()
-        self.asyncio_patcher.stop()
-        self.echo_patcher.stop()
-
-    def _mock_orchestrate(self):
-        """Mock async generator for orchestrate method."""
-
-        async def gen():
-            yield ExecutionEvent(
-                type=EventType.TURN_COMPLETE,
-                session_id="test_session",
-                data={"report": TEST_RESPONSE},
-            )
-
-        return gen()
-
-    def test_query_basic(self):
-        """Test basic query execution."""
-        # Reset the echo mock to track only new calls
-        self.mock_echo.reset_mock()
-
-        # Call the query function directly with test parameters
-        # We need to pass the default values explicitly since we're calling it directly
-        query(
-            text=TEST_QUERY,
-            verbose=False,  # Explicitly set to False to match test expectations
-            model=None,
-            agent_mode="no_agent",  # Pass the default value explicitly
-            tool_call_mode="reasoning",  # Pass the default value explicitly
-            sandbox_session=None,  # Pass the default value explicitly
-            log_level="INFO",
-            output_format="plain",  # Pass the default value explicitly
-            trace=None,  # Pass the default value explicitly
+    def test_verbose_mode_prints_session(self, setup_mocks):
+        """Verbose mode prints the session id."""
+        mocks = setup_mocks
+        mocks["execute_query"].return_value = (
+            _make_report(),
+            _make_session("sess-42"),
         )
 
-        # Verify the expected output
-        self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}", err=True)
-        self.mock_echo.assert_any_call("Using agent mode: no_agent", err=True)
+        exit_code = _run_query(text=TEST_QUERY, **_kw(verbose=True))
 
-        # Verify the response was printed
-        self.mock_echo.assert_any_call("\nResponse:")
-        self.mock_echo.assert_any_call(TEST_RESPONSE["message"])
+        assert exit_code == 0
+        mocks["echo"].assert_any_call("session=sess-42")
 
-        from unittest.mock import ANY
+    def test_log_level_parameter(self, setup_mocks):
+        """Log level is forwarded to bootstrap."""
+        _run_query(text=TEST_QUERY, **_kw(log_level="DEBUG"))
 
-        self.mock_runtime.orchestrate.assert_called_once_with(
-            TEST_QUERY,
-            agent_mode="no_agent",
-            model=None,
-            tool_call_mode="reasoning",
-            sandbox_session=ANY,  # Typer OptionInfo object
+        setup_mocks["bootstrap"].assert_called_once_with(
+            log_level=logging.DEBUG, target_project_root=None
         )
 
-    def test_query_with_model(self):
-        """Test query execution with a specific model."""
-        # Reset the echo mock to track only new calls
-        self.mock_echo.reset_mock()
+    def test_runtime_unavailable_reports_error(self, setup_mocks):
+        """Missing runtime produces an error exit code."""
+        mocks = setup_mocks
+        mocks["ctx"]["runtime"] = None
 
-        # Call the query function directly with test parameters
-        query(
-            text=TEST_QUERY,
-            verbose=False,
-            model=TEST_MODEL,  # Pass the test model
-            agent_mode="no_agent",  # Pass the default value explicitly
-            tool_call_mode="reasoning",  # Pass the default value explicitly
-            sandbox_session=None,  # Pass the default value explicitly
-            log_level="INFO",
-            output_format="plain",  # Pass the default value explicitly
-            trace=None,  # Pass the default value explicitly
-        )
-
-        # Verify the expected output
-        self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}", err=True)
-        self.mock_echo.assert_any_call("Using agent mode: no_agent", err=True)
-
-        # Verify the response was printed
-        self.mock_echo.assert_any_call("\nResponse:")
-        self.mock_echo.assert_any_call(TEST_RESPONSE["message"])
-
-        # Verify the runtime was called with the correct model and default parameters
-        from unittest.mock import ANY
-
-        self.mock_runtime.orchestrate.assert_called_once_with(
-            TEST_QUERY,
-            agent_mode="no_agent",
-            model=TEST_MODEL,
-            tool_call_mode="reasoning",
-            sandbox_session=ANY,  # Typer OptionInfo object
-        )
-
-    def test_verbose_mode(self):
-        """Test verbose mode output."""
-        # Reset the echo mock to track only new calls
-        self.mock_echo.reset_mock()
-
-        # Call the query function directly with verbose=True
-        query(
-            text=TEST_QUERY,
-            verbose=True,  # Enable verbose mode
-            model=None,
-            agent_mode="no_agent",  # Pass the default value explicitly
-            tool_call_mode="reasoning",  # Pass the default value explicitly
-            sandbox_session=None,  # Pass the default value explicitly
-            log_level="INFO",
-            output_format="plain",  # Pass the default value explicitly
-            trace=None,  # Pass the default value explicitly
-        )
-
-        # Verify the expected output
-        self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}", err=True)
-        self.mock_echo.assert_any_call("Using agent mode: no_agent", err=True)
-
-        # Verify the response was printed
-        self.mock_echo.assert_any_call("\nResponse:")
-        self.mock_echo.assert_any_call(TEST_RESPONSE["message"])
-
-        # Verify the runtime was called with the correct parameters
-        from unittest.mock import ANY
-
-        self.mock_runtime.orchestrate.assert_called_once_with(
-            TEST_QUERY,
-            agent_mode="no_agent",
-            model=None,
-            tool_call_mode="reasoning",
-            sandbox_session=ANY,  # Typer OptionInfo object
-        )
-
-    def test_log_level_parameter(self):
-        """Test that log level parameter is passed to bootstrap."""
-        # Reset the bootstrap mock to track only new calls
-        self.mock_bootstrap.reset_mock()
-
-        # Call the query function directly with a specific log level
-        test_log_level = "DEBUG"
-        query(
-            text=TEST_QUERY,
-            verbose=False,
-            model=None,
-            agent_mode="no_agent",  # Pass the default value explicitly
-            tool_call_mode="reasoning",  # Pass the default value explicitly
-            sandbox_session=None,  # Pass the default value explicitly
-            log_level=test_log_level,
-            output_format="plain",  # Pass the default value explicitly
-            trace=None,  # Pass the default value explicitly
-        )
-
-        # Verify bootstrap was called with the correct log level
-        self.mock_bootstrap.assert_called_once_with(log_level=logging.DEBUG)
-
-    def test_runtime_unavailable(self):
-        """Test behavior when runtime is not available."""
-        # Setup the test
-        self.mock_ctx["runtime"] = None
-
-        # Call the query function directly and expect it to raise typer.Exit
         with patch("local_coding_assistant.cli.commands.run.typer.echo") as mock_echo:
-            try:
-                query(
-                    text=TEST_QUERY,
-                    verbose=False,
-                    model=None,
-                    agent_mode="no_agent",  # Pass the default value explicitly
-                    tool_call_mode="reasoning",  # Pass the default value explicitly
-                    sandbox_session=None,  # Pass the default value explicitly
-                    log_level="INFO",
-                    output_format="plain",  # Pass the default value explicitly
-                    trace=None,  # Pass the default value explicitly
-                )
-                # If we get here, the test should fail
-                assert False, "Expected typer.Exit to be raised"
-            except typer.Exit as e:
-                # Verify the exit code is 1
-                assert e.exit_code == 1
+            exit_code = _run_query(text=TEST_QUERY, **_kw())
 
-                # Verify the error message was shown
-                mock_echo.assert_any_call(
-                    "Error: Runtime manager not available (LLM initialization failed)"
-                )
-
-        # Verify orchestrate was not called
-        self.mock_runtime.orchestrate.assert_not_called()
-
-    def test_query_output_format(self):
-        """Test the format of the query output."""
-        # Reset the echo mock to track only new calls
-        self.mock_echo.reset_mock()
-
-        # Call the query function directly
-        query(
-            text=TEST_QUERY,
-            verbose=False,
-            model=None,
-            agent_mode="no_agent",  # Pass the default value explicitly
-            tool_call_mode="reasoning",  # Pass the default value explicitly
-            sandbox_session=None,  # Pass the default value explicitly
-            log_level="INFO",
-            output_format="plain",  # Pass the default value explicitly
-            trace=None,  # Pass the default value explicitly
+        assert exit_code == 1
+        mock_echo.assert_any_call(
+            "Error: Runtime manager not available (LLM initialization failed)",
+            err=True,
         )
+        mocks["execute_query"].assert_not_called()
 
-        # Verify the expected output format
-        self.mock_echo.assert_any_call(f"Running query: {TEST_QUERY}", err=True)
-        self.mock_echo.assert_any_call("Using agent mode: no_agent", err=True)
-        self.mock_echo.assert_any_call("\nResponse:")
-        self.mock_echo.assert_any_call(TEST_RESPONSE["message"])
+    def test_no_terminal_report_reports_error(self, setup_mocks):
+        """None report produces an error exit code."""
+        mocks = setup_mocks
+        mocks["execute_query"].return_value = (None, _make_session())
 
-    def test_asyncio_run_usage(self):
-        """Test that asyncio.run is used correctly."""
-        # Reset the mock to track calls
-        self.mock_asyncio_run.reset_mock()
+        exit_code = _run_query(text=TEST_QUERY, **_kw())
 
-        # Call the query function directly
-        query(
-            text=TEST_QUERY,
-            verbose=False,
-            model=None,
-            agent_mode="no_agent",  # Pass the default value explicitly
-            tool_call_mode="reasoning",  # Pass the default value explicitly
-            sandbox_session=None,  # Pass the default value explicitly
-            log_level="INFO",
-            output_format="plain",  # Pass the default value explicitly
-            trace=None,  # Pass the default value explicitly
+        assert exit_code == 1
+        mocks["echo"].assert_any_call(
+            "Error: No terminal report received from runtime", err=True
         )
-
-        # Verify asyncio.run was called once
-        assert self.mock_asyncio_run.call_count == 1
-
-        # Verify the runtime's orchestrate method was called within asyncio.run
-        self.mock_runtime.orchestrate.assert_called_once()
-
-    @patch("local_coding_assistant.core.error_handler.logger")
-    def test_error_handling(self, mock_log):
-        """Test error handling in the query function."""
-        # Make orchestrate raise an exception
-        test_error = RuntimeError("Test error")
-        self.mock_runtime.orchestrate.side_effect = test_error
-
-        # Reset mocks
-        self.mock_echo.reset_mock()
-        mock_log.error.reset_mock()
-        mock_log.critical.reset_mock()
-
-        # Call the query function directly and verify it doesn't raise
-        try:
-            query(
-                text=TEST_QUERY,
-                verbose=False,
-                model=None,
-                agent_mode="no_agent",  # Pass the default value explicitly
-                tool_call_mode="reasoning",  # Pass the default value explicitly
-                sandbox_session=None,  # Pass the default value explicitly
-                log_level="INFO",
-                output_format="plain",  # Pass the default value explicitly
-                trace=None,  # Pass the default value explicitly
-            )
-        except Exception as e:
-            pytest.fail(f"Query raised {type(e).__name__} unexpectedly: {e!s}")
-
-        # Verify the error was logged (check both error and critical logs)
-        error_logged = False
-        for log_method in [mock_log.error, mock_log.critical]:
-            for call in log_method.call_args_list:
-                if "Test error" in str(call[0]):
-                    error_logged = True
-                    break
-            if error_logged:
-                break
-
-        assert error_logged, "Expected error message not found in logs"
 
     def test_safe_entrypoint_decorator(self):
-        """Test that the safe_entrypoint decorator is applied."""
+        """safe_entrypoint is applied to the query function."""
         import inspect
 
-        # The @safe_entrypoint decorator should be applied to the query function
         original_func = inspect.unwrap(query)
-        assert original_func is not query, (
-            "Function should be wrapped by @safe_entrypoint"
-        )
-        # Check that it's the correct function by checking its module
-        assert original_func.__module__ == "local_coding_assistant.cli.commands.run", (
-            "Function should be from the correct module"
-        )
+        assert original_func is not query
+        assert original_func.__module__ == "local_coding_assistant.cli.commands.run"
 
     @pytest.mark.parametrize(
-        "log_level,expected_level",
+        ("log_level", "expected_level"),
         [
             ("DEBUG", logging.DEBUG),
             ("INFO", logging.INFO),
             ("WARNING", logging.WARNING),
             ("ERROR", logging.ERROR),
-            ("invalid", logging.INFO),  # Default to INFO for invalid levels
+            ("invalid", logging.INFO),
         ],
     )
-    def test_log_level_handling(self, log_level, expected_level):
-        """Test handling of different log levels."""
-        # Reset the bootstrap mock to track calls
-        self.mock_bootstrap.reset_mock()
+    def test_log_level_handling(self, log_level, expected_level, setup_mocks):
+        """Different log level strings resolve to logging constants."""
+        _run_query(text=TEST_QUERY, **_kw(log_level=log_level))
 
-        # Call the query function directly with the test log level
-        query(
-            text=TEST_QUERY,
-            verbose=False,
-            model=None,
-            agent_mode="no_agent",  # Pass the default value explicitly
-            tool_call_mode="reasoning",  # Pass the default value explicitly
-            sandbox_session=None,  # Pass the default value explicitly
-            log_level=log_level,
-            output_format="plain",  # Pass the default value explicitly
-            trace=None,  # Pass the default value explicitly
+        setup_mocks["bootstrap"].assert_called_once_with(
+            log_level=expected_level, target_project_root=None
         )
 
-        # Verify bootstrap was called with the expected log level
-        self.mock_bootstrap.assert_called_once_with(log_level=expected_level)
+    def test_json_format_calls_render_report(self, setup_mocks):
+        """Non-plain formats delegate to render_report."""
+        mocks = setup_mocks
+        mock_report = _make_report()
+        with (
+            patch(
+                "local_coding_assistant.cli.commands.run.render_report"
+            ) as mock_render,
+            patch(
+                "local_coding_assistant.cli.commands.run.coerce_report"
+            ) as mock_coerce,
+        ):
+            mock_coerce.return_value = mock_report
+            mocks["execute_query"].return_value = (mock_report, _make_session())
+
+            kws = _kw()
+            kws["output_format"] = "json"
+            exit_code = _run_query(text=TEST_QUERY, **kws)
+
+            assert exit_code == 0
+            mock_render.assert_called_once()
+            assert mock_render.call_args[0][0] is mock_report
+            assert mock_render.call_args[1]["_format"] == "json"

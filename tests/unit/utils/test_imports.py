@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 def test_circular_imports():
     """Test that circular imports are resolved."""
     # Test that LLMService imports successfully
-    from local_coding_assistant.agent.llm import LLMService
+    from local_coding_assistant.agent.llm.service import LLMService
 
     assert LLMService is not None
 
@@ -25,7 +25,7 @@ def test_circular_imports():
         ctx = bootstrap()
 
         # Check that we get the expected components
-        tools = ctx.get("tools")
+        tools = ctx.get("tool_gateway")
         runtime = ctx.get("runtime")
         llm = ctx.get("llm")
 

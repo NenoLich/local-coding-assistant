@@ -3,7 +3,7 @@ from __future__ import annotations
 from rich.console import Console
 from rich.table import Table
 
-from local_coding_assistant.runtime.reporting import RunReport
+from local_coding_assistant.runtime import RunReport
 
 
 def render_summary(report: RunReport, console: Console, verbose: bool) -> None:
@@ -18,7 +18,8 @@ def render_summary(report: RunReport, console: Console, verbose: bool) -> None:
     table.add_row(
         "Models", ", ".join(report.models_used) if report.models_used else "-"
     )
-    table.add_row("Tokens", str(report.tokens_used or "-"))
+    tokens_used = (report.input_tokens_used or 0) + (report.output_tokens_used or 0)
+    table.add_row("Tokens", str(tokens_used) if tokens_used else "-")
     table.add_row("Iterations", str(report.iterations or "-"))
     table.add_row("Final Answer", report.final_answer or "-")
 

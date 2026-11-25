@@ -26,19 +26,25 @@ def serve(
         "INFO", "--log-level", help="Logging level (e.g., DEBUG, INFO, WARNING)"
     ),
     detach: bool = typer.Option(False, help="Run server in background (detached)"),
+    store_db_path: str = typer.Option(
+        None,
+        help="Path to the execution store database (default: None)",
+    ),
 ) -> None:
     """Start the dashboard web server."""
     if detach:
-        _start_detached_server(host, port, reload, log_level)
+        _start_detached_server(host, port, reload, log_level, store_db_path)
     else:
-        _start_foreground_server(host, port, reload, log_level)
+        _start_foreground_server(host, port, reload, log_level, store_db_path)
 
 
-def _start_detached_server(host: str, port: int, reload: bool, log_level: str) -> None:
+def _start_detached_server(
+    host: str, port: int, reload: bool, log_level: str, store_db_path: str | None = None
+) -> None:
     """Start the dashboard server in detached/background mode."""
     typer.echo(f"Starting dashboard on {host}:{port} in background...")
 
-    cmd = _build_server_command(host, port, reload, log_level)
+    cmd = _build_server_command(host, port, reload, log_level, store_db_path)
     process = _launch_subprocess(cmd)
 
     # Give it a moment to start and verify
@@ -55,7 +61,7 @@ def _start_detached_server(host: str, port: int, reload: bool, log_level: str) -
 
 
 def _start_foreground_server(
-    host: str, port: int, reload: bool, log_level: str
+    host: str, port: int, reload: bool, log_level: str, store_db_path: str | None = None
 ) -> None:
     """Start the dashboard server in foreground mode."""
     typer.echo(f"Starting dashboard on {host}:{port}")
@@ -67,7 +73,7 @@ def _start_foreground_server(
 
     from local_coding_assistant.dashboard.app import create_app
 
-    app_instance = create_app()
+    app_instance = create_app(store_db_path=store_db_path)
 
     uvicorn.run(
         app_instance,
@@ -79,7 +85,7 @@ def _start_foreground_server(
 
 
 def _build_server_command(
-    host: str, port: int, reload: bool, log_level: str
+    host: str, port: int, reload: bool, log_level: str, store_db_path: str | None = None
 ) -> list[str]:
     """Build the command list for starting the dashboard server."""
     runner_path = Path(__file__).parent.parent.parent / "dashboard" / "run_dashboard.py"
@@ -93,6 +99,9 @@ def _build_server_command(
         "--log-level",
         log_level.lower(),
     ]
+
+    if store_db_path is not None:
+        cmd.extend(["--store-db-path", store_db_path])
 
     if reload:
         typer.echo("Auto-reload enabled")

@@ -1,6 +1,5 @@
 """Benchmarks for call graph computation and PageRank ranking."""
 
-
 from local_coding_assistant.repository.call_graph import CallGraph
 from local_coding_assistant.repository.models import CallRelationship
 

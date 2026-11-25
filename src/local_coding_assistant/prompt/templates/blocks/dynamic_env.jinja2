@@ -1,0 +1,6 @@
+{% set ctx = context %}
+<dynamic_env>
+Working directory: {{ ctx.cwd }}
+Turn: {{ ctx.turn_number }}
+{% if ctx.sandbox_enabled %}Sandbox: enabled{% endif %}
+</dynamic_env>

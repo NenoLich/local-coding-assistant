@@ -7,9 +7,9 @@ from typing import Any
 import pytest
 
 from local_coding_assistant.agent.llm import LLMResult
-from local_coding_assistant.runtime.execution_types import ExecutionStatus
-from local_coding_assistant.runtime.handlers.handler_types import HandlerOutput
+from local_coding_assistant.runtime.engine.frame import ExecutionStatus
 from local_coding_assistant.runtime.session import SessionState
+from tests.integration.runtime.mock_tool_responses import MockToolResponse
 
 
 class MockLLMDriver:
@@ -79,7 +79,7 @@ def create_test_session() -> SessionState:
 
 
 def assert_handler_output(
-    output: HandlerOutput,
+    output: Any,
     expected_status: ExecutionStatus,
     should_retry: bool | None = None,
     has_continuation: bool | None = None,
@@ -188,10 +188,6 @@ def verify_llm_options_adjustment(
         ), "Expected no max_tokens adjustment"
 
 
-# Import mock response factories
-from tests.integration.runtime.mock_tool_responses import MockToolResponse
-
-
 @pytest.fixture
 def mock_llm_driver():
     """Mock LLM driver for handler integration tests."""
@@ -201,14 +197,10 @@ def mock_llm_driver():
 @pytest.fixture
 def mock_tool_manager():
     """Mock tool manager for handler integration tests."""
-    from tests.integration.runtime.conftest import MockToolManager
-
     return MockToolManager({})
 
 
 @pytest.fixture
 def test_session():
     """Test session for handler integration tests."""
-    from tests.integration.runtime.conftest import create_test_session
-
     return create_test_session()

@@ -1,0 +1,727 @@
+{% extends "base.html" %}
+
+{% block title %}Turn {{ turn_id[:8] }} - LOCCA Dashboard{% endblock %}
+
+{% block content %}
+<div class="col-12">
+    <div class="row mt-4">
+        <div class="col-12">
+            <nav aria-label="breadcrumb">
+                <ol class="breadcrumb">
+                    <li class="breadcrumb-item"><a href="/">Dashboard</a></li>
+                    <li class="breadcrumb-item"><a href="/sessions">Sessions</a></li>
+                    <li class="breadcrumb-item active">{{ turn_id }}</li>
+                </ol>
+            </nav>
+            <h1>Turn Details</h1>
+            <p class="text-muted">Historical view of turn: <code>{{ turn_id }}</code></p>
+        </div>
+    </div>
+
+    <!-- Turn Info -->
+    <div class="row mt-4" id="turn-info-container">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body" id="turn-info">
+                    <div class="text-center text-muted">
+                        <div class="spinner-border" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <p class="mt-2">Loading turn...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Frames Table -->
+    <div class="row mt-4" id="frames-section" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Frames</h5>
+                </div>
+                <div class="card-body">
+                    <div id="frames-container">
+                        <div class="text-center text-muted">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading frames...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Event Timeline / Messages Tabs -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex align-items-center gap-2">
+                    <button class="btn btn-outline-primary btn-sm flex-fill" id="tab-events" onclick="switchTab('events')">
+                        <i class="bi bi-list-ul me-1"></i>Event Timeline
+                    </button>
+                    <button class="btn btn-outline-secondary btn-sm flex-fill" id="tab-messages" onclick="switchTab('messages')">
+                        <i class="bi bi-chat-text me-1"></i>Transcript Messages
+                    </button>
+                </div>
+                <div class="card-body">
+                    <!-- Event Timeline Section -->
+                    <div id="timeline-section" style="display: block;">
+                        <div class="timeline-header mb-2">
+                            <h5 class="mb-0">Event Timeline</h5>
+                            <div id="event-filters" class="d-flex align-items-center gap-2 flex-wrap w-100">
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="">
+                                    All
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="session_start" checked>
+                                        Session Start
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="session_resume" checked>
+                                        Session Resume
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="session_branch" checked>
+                                        Session Branch
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="session_interrupt" checked>
+                                        Session Interrupt
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="turn_start" checked>
+                                        Turn Start
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="turn_complete" checked>
+                                        Turn Complete
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="frame_start" checked>
+                                        Frame Start
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="frame_complete" checked>
+                                        Frame Complete
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="llm_start">
+                                        LLM Start
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="llm_chunk">
+                                        LLM Chunk
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="llm_complete" checked>
+                                        LLM Complete
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="tool_start" checked>
+                                        Tool Start
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="tool_result" checked>
+                                        Tool Result
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="approval_required" checked>
+                                        Approval Required
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="approval_granted" checked>
+                                        Approval Granted
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="approval_denied" checked>
+                                        Approval Denied
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="error" checked>
+                                        Error
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="partial_response" checked>
+                                        Partial Response
+                                    </label>
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-check form-check-inline mb-0 small">
+                                        <input class="form-check-input event-type-checkbox" type="checkbox" value="continuation_decision" checked>
+                                        Continuation
+                                    </label>
+                                </div>
+                                <div class="event-filter-actions">
+                                    <button class="btn btn-sm btn-outline-primary" id="event-apply-filters">Apply</button>
+                                    <button class="btn btn-sm btn-outline-secondary" id="event-clear-filters">Clear</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="events-timeline">
+                            <div class="text-center text-muted">
+                                <div class="spinner-border" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="mt-2">Loading events...</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Messages Section -->
+                    <div id="messages-section" style="display: none;">
+                        <div class="d-flex justify-content-between align-items-start gap-2 mb-3">
+                            <h5 class="mb-0 flex-fill">Transcript Messages</h5>
+                            <div id="message-filters" class="d-flex align-items-center gap-2 flex-wrap">
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-label mb-0 small">Turn:</label>
+                                    <input type="number" id="msg-turn-from" class="form-control form-control-sm" placeholder="from">
+                                    <span class="small text-muted">to</span>
+                                    <input type="number" id="msg-turn-to" class="form-control form-control-sm" placeholder="to">
+                                </div>
+                                <div class="d-flex align-items-center gap-1">
+                                    <label class="form-label mb-0 small">Time:</label>
+                                    <input type="datetime-local" id="msg-time-from" class="form-control form-control-sm">
+                                    <span class="small text-muted">to</span>
+                                    <input type="datetime-local" id="msg-time-to" class="form-control form-control-sm">
+                                </div>
+                                <div class="message-filter-actions">
+                                    <div class="d-flex align-items-center gap-1 border-start border-end ps-2 pe-2">
+                                        <input type="checkbox" id="ctx-show-system" checked class="form-check-input context-checkbox">
+                                        <label class="form-label mb-0 small ms-1" for="ctx-show-system">Show system message</label>
+                                    </div>
+                                    <div class="d-flex align-items-center gap-1 ps-2">
+                                        <input type="checkbox" id="ctx-show-tools" checked class="form-check-input context-checkbox">
+                                        <label class="form-label mb-0 small ms-1" for="ctx-show-tools">Show tool specs</label>
+                                    </div>
+                                    <button class="btn btn-sm btn-outline-primary" id="msg-apply-filters">Apply</button>
+                                    <button class="btn btn-sm btn-outline-secondary" id="msg-clear-filters">Clear</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="context-blocks-container"></div>
+                        <div id="messages-container">
+                            <div class="text-center text-muted">
+                                <div class="spinner-border" role="status">
+                                    <span class="visually-hidden">Loading...</span>
+                                </div>
+                                <p class="mt-2">Loading messages...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script type="module">
+import {
+        getSelectedEventTypes,
+        getEventColor,
+        getEventIcon,
+        escapeHtml,
+        formatEventPreview,
+        renderTimelineHtml,
+        renderPreviewHtml,
+        setupEventFilterHandlers,
+        toggleEventJson,
+        toggleText,
+        truncateText,
+        renderTruncatedText,
+    } from "/static/js/shared/events.js";
+
+    const turnId = '{{ turn_id }}';
+    let sessionId = null;
+    let turnIndex = null;
+    let turnContext = null;
+
+    async function loadTurnDetail() {
+        try {
+            const response = await fetch(`/api/turns/${turnId}`);
+            const data = await response.json();
+            sessionId = data.turn.session_id;
+            turnIndex = data.turn.turn_index;
+            turnContext = data.context;
+            displayTurnInfo(data.turn);
+            displayFrames(data.frames);
+            displayTimeline(data.turn.turn_id);
+            if (data.context) displayContextBlock(data.context);
+        } catch (e) {
+            console.error('Error loading turn:', e);
+            document.getElementById('turn-info').innerHTML = `<div class="alert alert-danger">Error: ${e.message}</div>`;
+        }
+    }
+
+    function displayTurnInfo(turn) {
+        sessionId = turn.session_id;
+        turnIndex = turn.turn_index;
+        const container = document.getElementById('turn-info');
+        container.innerHTML = `
+            <div class="row">
+                <div class="col-md-6">
+                    <table class="table table-borderless">
+                        <tr><td><strong>Turn ID:</strong></td><td><code>${turn.turn_id}</code></td></tr>
+                        <tr><td><strong>Session ID:</strong></td><td><code>${turn.session_id}</code></td></tr>
+                        <tr><td><strong>Turn Index:</strong></td><td><code>#${turn.turn_index}</code></td></tr>
+                        <tr><td><strong>User Input:</strong></td><td>${renderTruncatedText(turn.user_input, 100)}</td></tr>
+                        <tr><td><strong>Trace ID:</strong></td><td><code>${turn.trace_id}</code></td></tr>
+                        <tr><td><strong>Status:</strong></td><td><span class="badge bg-${getStatusColor(turn.status)}">${turn.status}</span></td></tr>
+                        ${turn.final_answer ? `<tr><td><strong>Final Answer:</strong></td><td>${renderTruncatedText(turn.final_answer, 100)}</td></tr>` : ''}
+                    </table>
+                </div>
+                <div class="col-md-6">
+                    <table class="table table-borderless">
+                        <tr><td><strong>Started:</strong></td><td>${formatDateTime(turn.started_at)}</td></tr>
+                        <tr><td><strong>Finished:</strong></td><td>${formatDateTime(turn.finished_at)}</td></tr>
+                        <tr><td><strong>Duration:</strong></td><td>${turn.duration_ms ? (turn.duration_ms / 1000).toFixed(1) + 's' : '-'}</td></tr>
+                        <tr><td><strong>Input Tokens:</strong></td><td><span class="tokens-badge">${turn.input_tokens.toLocaleString()}</span></td></tr>
+                        <tr><td><strong>Output Tokens:</strong></td><td><span class="tokens-badge">${turn.output_tokens.toLocaleString()}</span></td></tr>
+                        <tr><td><strong>Cache Tokens:</strong></td><td><span class="tokens-badge">${turn.cache_tokens.toLocaleString()}</span></td></tr>
+                        <tr><td><strong>Frames:</strong></td><td>${turn.total_frames}</td></tr>
+                        ${turn.pause_reason ? `<tr><td><strong>Pause Reason:</strong></td><td><code>${turn.pause_reason}</code></td></tr>` : ''}
+                    </table>
+                </div>
+            </div>
+        `;
+    }
+
+    function displayFrames(frames) {
+        const section = document.getElementById('frames-section');
+        const container = document.getElementById('frames-container');
+        section.style.display = 'block';
+
+        if (!frames || frames.length === 0) {
+            container.innerHTML = '<div class="text-center text-muted">No frames</div>';
+            return;
+        }
+
+        const html = `
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Iteration</th>
+                            <th>Frame ID</th>
+                            <th>Status</th>
+                            <th>Duration</th>
+                            <th>Model</th>
+                            <th>Finish Reason</th>
+                            <th class="text-end">Input Tokens</th>
+                            <th class="text-end">Output Tokens</th>
+                            <th>Error</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${frames.map(frame => `
+                            <tr onclick="window.location='/frames/${frame.frame_id}'" class="clickable-row">
+                                <td><code>${frame.iteration}</code></td>
+                                <td><code>${frame.frame_id.substring(0, 12)}...</code></td>
+                                <td><span class="badge bg-${getStatusColor(frame.status)}">${frame.status}</span></td>
+                                <td>${frame.duration_ms ? (frame.duration_ms / 1000).toFixed(2) + 's' : '-'}</td>
+                                <td><code>${frame.model_name || '-'}</code></td>
+                                <td><code>${frame.finish_reason || '-'}</code></td>
+                                <td class="text-end"><span class="tokens-badge">${frame.input_tokens.toLocaleString()}</span></td>
+                                <td class="text-end"><span class="tokens-badge">${frame.output_tokens.toLocaleString()}</span></td>
+                                <td>${frame.error_message ? frame.error_message.substring(0, 60) + '...' : '-'}</td>
+                                <td>
+                                    <a href="/frames/${frame.frame_id}" class="btn btn-sm btn-outline-primary">View</a>
+                                </td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+        container.innerHTML = html;
+    }
+
+    function displayContextBlock(context) {
+        const container = document.getElementById('context-blocks-container');
+        container.innerHTML = '';
+
+        if (!context) return;
+
+        let html = '';
+
+        const showSystem = document.getElementById('ctx-show-system')?.checked !== false;
+        const showTools = document.getElementById('ctx-show-tools')?.checked !== false;
+
+        if (showSystem && context.system_messages && context.system_messages.length > 0) {
+            context.system_messages.forEach((msg) => {
+                html += '<div class="message-item message-system context-system">';
+                html += '<div class="d-flex justify-content-between align-items-start"><span class="badge bg-dark message-role">system</span><span class="badge bg-secondary">context</span></div>';
+                html += '<div class="message-content"><pre class="mb-0 small text-break">' + escapeHtml(msg) + '</pre></div>';
+                html += '</div>';
+            });
+        }
+
+        if (showTools && context.tool_schemas && context.tool_schemas.length > 0) {
+            html += '<div class="message-item message-tool-spec context-tools">';
+            html += '<div class="d-flex justify-content-between align-items-start"><span class="badge message-role message-role-tool-spec">Tool Specs</span><span class="badge bg-secondary">context</span></div>';
+            html += '<div class="message-content">';
+            context.tool_schemas.forEach((tool) => {
+                const spec = tool.function || tool;
+                const name = spec.name || tool.name || 'unknown';
+                const parameters = spec.parameters || tool.parameters || {};
+                html += '<div class="tool-spec-entry">';
+                html += '<div class="fw-bold small">' + escapeHtml(name) + '</div>';
+                html += '<pre class="mb-0 small text-break">' + escapeHtml(JSON.stringify(parameters, null, 2)) + '</pre>';
+                html += '</div>';
+            });
+            html += '</div></div>';
+        }
+
+        if (context.warnings && context.warnings.length > 0) {
+            html += '<div class="alert alert-warning small"><strong>Context warnings:</strong> ' + escapeHtml(context.warnings.join(', ')) + '</div>';
+        }
+
+        container.innerHTML = html;
+    }
+
+    function toggleContextVisibility() {
+        const showSystem = document.getElementById('ctx-show-system')?.checked;
+        const showTools = document.getElementById('ctx-show-tools')?.checked;
+        document.querySelectorAll('.context-system').forEach((el) => {
+            el.style.display = showSystem ? '' : 'none';
+        });
+        document.querySelectorAll('.context-tools').forEach((el) => {
+            el.style.display = showTools ? '' : 'none';
+        });
+    }
+
+    async function displayTimeline(turnId) {
+        const section = document.getElementById('timeline-section');
+        const container = document.getElementById('events-timeline');
+        section.style.display = 'block';
+
+        try {
+            const types = getSelectedEventTypes();
+            const params = new URLSearchParams();
+            types.forEach((t) => params.append('event_type', t));
+
+            const url =
+                `/api/events/turn/${turnId}` + (params.toString() ? '?' + params.toString() : '');
+            const response = await fetch(url);
+            const events = await response.json();
+            container.innerHTML = renderTimelineHtml(events, toggleEventJson);
+        } catch (e) {
+            console.error('Error loading events:', e);
+            container.innerHTML = `<div class="alert alert-danger">Error: ${e.message}</div>`;
+        }
+    }
+
+    function switchTab(tab) {
+        if (tab === 'events') {
+            document.getElementById('tab-events').classList.remove('btn-outline-secondary');
+            document.getElementById('tab-events').classList.add('btn-outline-primary');
+            document.getElementById('tab-messages').classList.remove('btn-outline-primary');
+            document.getElementById('tab-messages').classList.add('btn-outline-secondary');
+            document.getElementById('timeline-section').style.display = 'block';
+            document.getElementById('messages-section').style.display = 'none';
+            if (document.getElementById('events-timeline').innerHTML.trim() === '' || document.getElementById('events-timeline').querySelector('.spinner-border')) {
+                displayTimeline(turnId);
+            }
+        } else {
+            document.getElementById('tab-messages').classList.remove('btn-outline-secondary');
+            document.getElementById('tab-messages').classList.add('btn-outline-primary');
+            document.getElementById('tab-events').classList.remove('btn-outline-primary');
+            document.getElementById('tab-events').classList.add('btn-outline-secondary');
+            document.getElementById('timeline-section').style.display = 'none';
+            document.getElementById('messages-section').style.display = 'block';
+            // Set turn filter to current turn index when switching to messages tab
+            if (turnIndex !== null) {
+                document.getElementById('msg-turn-from').value = turnIndex;
+                document.getElementById('msg-turn-to').value = turnIndex;
+            }
+            if (document.getElementById('messages-container').innerHTML.trim() === '' || document.getElementById('messages-container').querySelector('.spinner-border')) {
+                loadMessages();
+            } else {
+                // Reload messages with the new filter
+                loadMessages();
+            }
+        }
+    }
+
+    async function loadMessages() {
+        if (!sessionId || turnIndex === null) return;
+        try {
+            const params = new URLSearchParams();
+            const turnFrom = document.getElementById('msg-turn-from').value;
+            const turnTo = document.getElementById('msg-turn-to').value;
+            const timeFrom = document.getElementById('msg-time-from').value;
+            const timeTo = document.getElementById('msg-time-to').value;
+            if (turnFrom !== '') params.append('turn_from', turnFrom);
+            if (turnTo !== '') params.append('turn_to', turnTo);
+            if (timeFrom !== '') params.append('created_from', timeFrom);
+            if (timeTo !== '') params.append('created_to', timeTo);
+            const response = await fetch(`/api/messages/session/${sessionId}?${params}`);
+            const messages = await response.json();
+            displayMessages(messages);
+            if (turnContext?.system_reminder) {
+                appendSystemReminderMessage(turnContext.system_reminder);
+            }
+        } catch (e) {
+            console.error('Error loading messages:', e);
+        }
+    }
+
+    function appendSystemReminderMessage(reminder) {
+        const container = document.getElementById('messages-container');
+        const timeStr = new Date().toLocaleString();
+        const html =
+            '<div class="message-item message-system">' +
+            '<div class="d-flex justify-content-between align-items-start">' +
+            '<span class="badge bg-danger message-role">system</span>' +
+            '<div class="text-end small text-muted">' +
+            '<div>-</div>' +
+            '<div>' + timeStr + '</div>' +
+            '<div>Turn: -</div>' +
+            '</div>' +
+            '</div>' +
+            '<div class="message-content">' + escapeHtml(reminder) + '</div>' +
+            '</div>';
+        container.insertAdjacentHTML('beforeend', html);
+    }
+
+    function displayMessages(messages) {
+        const section = document.getElementById('messages-section');
+        const container = document.getElementById('messages-container');
+        section.style.display = 'block';
+
+        if (!messages || messages.length === 0) {
+            container.innerHTML = '<div class="text-center text-muted">No messages</div>';
+            return;
+        }
+
+        const html = messages.map((msg) => {
+            const turnLabel = msg.turn_index !== null ? '#' + msg.turn_index : '-';
+            const timeStr = msg.created_at ? new Date(msg.created_at).toLocaleString() : '-';
+
+            let roleBadgeClass = 'bg-secondary';
+            if (msg.role === 'assistant') roleBadgeClass = 'bg-primary';
+            else if (msg.role === 'user') roleBadgeClass = 'bg-info';
+            else if (msg.role === 'tool') roleBadgeClass = 'bg-warning';
+            else if (msg.role === 'system') roleBadgeClass = 'bg-dark';
+
+            const toolInfo = msg.tool_name
+                ? '<div class="text-muted small">Tool: ' +
+                  msg.tool_name +
+                  (msg.tool_call_id ? ' (' + msg.tool_call_id.substring(0, 8) + ')' : '') +
+                  '</div>'
+                : '';
+
+            let contentHtml;
+            if (msg.role === 'tool') {
+                contentHtml = formatToolPreview(msg.content, msg.seq);
+            } else {
+                contentHtml = '<div class="message-content">' + escapeHtml(msg.content) + '</div>';
+            }
+
+            const metadataHtml =
+                msg.metadata && Object.keys(msg.metadata).length > 0
+                    ? '<div class="expandable-json" onclick="toggleJson(this, \'msg-json-' +
+                      msg.seq +
+                      '\')">Show metadata</div><div id="msg-json-' +
+                      msg.seq +
+                      '" class="event-json" style="display: none;">' +
+                      escapeHtml(JSON.stringify(msg.metadata, null, 2)) +
+                      '</div>'
+                    : '';
+
+            return (
+                '<div class="message-item message-' +
+                msg.role +
+                '">' +
+                '<div class="d-flex justify-content-between align-items-start">' +
+                '<span class="badge ' +
+                roleBadgeClass +
+                ' message-role">' +
+                msg.role +
+                '</span>' +
+                '<div class="text-end small text-muted">' +
+                '<div>#' +
+                msg.seq +
+                '</div>' +
+                '<div>' +
+                timeStr +
+                '</div>' +
+                '<div>Turn: ' +
+                turnLabel +
+                '</div>' +
+                '</div>' +
+                '</div>' +
+                toolInfo +
+                contentHtml +
+                metadataHtml +
+                '</div>'
+            );
+        }).join('');
+        container.innerHTML = html;
+    }
+
+    function formatToolPreview(content, msgSeq) {
+        if (!content) return '<span class="text-muted">(empty)</span>';
+        const isJson = tryParseJson(content);
+        const preview = content.length > 300 ? content.substring(0, 300) + '...' : content;
+        const expanded = isJson ? JSON.stringify(isJson, null, 2) : content;
+        const expandedHtml = isJson
+            ? '<pre class="json-preview">' + escapeHtml(expanded) + '</pre>'
+            : escapeHtml(expanded);
+        let showDataBtn = '';
+        if (content.length > 300) {
+            showDataBtn =
+                '<div class="expandable-json" onclick="toggleToolData(this, \'tool-data-\' + ' +
+                msgSeq +
+                ')">Show data</div>';
+        }
+        return (
+            '<div class="message-content tool-preview">' +
+            '<div class="tool-preview-short">' +
+            escapeHtml(preview) +
+            '</div>' +
+            showDataBtn +
+            '<div id="tool-data-' +
+            msgSeq +
+            '" class="event-json" style="display: none;">' +
+            expandedHtml +
+            '</div>' +
+            '</div>'
+        );
+    }
+
+    function tryParseJson(content) {
+        try {
+            return JSON.parse(content);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function toggleToolData(elem, id) {
+        const el = document.getElementById(id);
+        if (el.style.display === 'none') {
+            el.style.display = 'block';
+            elem.textContent = 'Hide data';
+        } else {
+            el.style.display = 'none';
+            elem.textContent = 'Show data';
+        }
+    }
+
+    function toggleJson(elem, id) {
+        const el = document.getElementById(id);
+        if (el.style.display === 'none') {
+            el.style.display = 'block';
+            elem.textContent = 'Hide metadata';
+        } else {
+            el.style.display = 'none';
+            elem.textContent = 'Show metadata';
+        }
+    }
+
+    function getStatusColor(status) {
+        switch (status) {
+            case 'completed':
+                return 'success';
+            case 'running':
+                return 'primary';
+            case 'error':
+                return 'danger';
+            case 'idle':
+                return 'secondary';
+            case 'paused':
+                return 'warning';
+            case 'paused_approval':
+                return 'warning';
+            default:
+                return 'secondary';
+        }
+    }
+
+    function formatDateTime(ms) {
+        if (!ms) return '-';
+        return new Date(ms).toLocaleString();
+    }
+
+    setupEventFilterHandlers(
+        () => displayTimeline(turnId),
+        () => {
+            const allCheckbox = document.querySelector('.event-type-checkbox[value=""]');
+            const specificCheckboxes = document.querySelectorAll(
+                '.event-type-checkbox:not([value=""])'
+            );
+            if (allCheckbox) allCheckbox.checked = false;
+            specificCheckboxes.forEach((cb) => {
+                if (cb.value === 'llm_chunk' || cb.value === 'llm_start') {
+                    cb.checked = false;
+                } else {
+                    cb.checked = true;
+                }
+            });
+            displayTimeline(turnId);
+        }
+    );
+
+    // Make switchTab globally available for inline onclick handlers
+    window.switchTab = switchTab;
+
+    document.getElementById('msg-apply-filters')?.addEventListener('click', loadMessages);
+    document.getElementById('msg-clear-filters')?.addEventListener('click', function() {
+        document.getElementById('msg-turn-from').value = '';
+        document.getElementById('msg-turn-to').value = '';
+        document.getElementById('msg-time-from').value = '';
+        document.getElementById('msg-time-to').value = '';
+        loadMessages();
+    });
+    document.querySelectorAll('.context-checkbox').forEach(function(cb) {
+        cb.addEventListener('change', toggleContextVisibility);
+    });
+
+    loadTurnDetail();
+</script>
+{% endblock %}

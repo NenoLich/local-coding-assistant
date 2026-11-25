@@ -1,3 +1,4 @@
+# pyrefly: ignore-errors
 """Docker-based sandbox implementation."""
 
 import asyncio

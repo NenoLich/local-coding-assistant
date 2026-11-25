@@ -160,9 +160,7 @@ class TestPathManager:
         manager = PathManager(project_root=tmp_path)
         module_dir = manager.get_module_dir()
 
-        assert module_dir == (
-            tmp_path / "site-packages" / "LOCCA" / "modules"
-        )
+        assert module_dir == (tmp_path / "site-packages" / "LOCCA" / "modules")
 
     def test_module_dir_production_fallback(
         self, tmp_path: Path, monkeypatch: MonkeyPatch
@@ -184,7 +182,4 @@ class TestPathManager:
         manager = PathManager(project_root=tmp_path)
         module_dir = manager.get_module_dir()
 
-        assert (
-            module_dir
-            == Path("lib") / "site-packages" / "LOCCA" / "modules"
-        )
+        assert module_dir == Path("lib") / "site-packages" / "LOCCA" / "modules"

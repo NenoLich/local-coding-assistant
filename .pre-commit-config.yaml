@@ -27,6 +27,7 @@ repos:
           (?x)^(
             benchmark/|
             scripts/|
+            fixtures/|
             tests/|
             build/|
             dist/|
@@ -42,6 +43,7 @@ repos:
           (?x)^(
             benchmark/|
             scripts/|
+            fixtures/|
             tests/|
             build/|
             dist/|
@@ -62,6 +64,7 @@ repos:
           (?x)^(
             benchmark/|
             scripts/|
+            fixtures/|
             tests/|
             build/|
             dist/|
@@ -71,15 +74,16 @@ repos:
           ).*$
   - repo: local
     hooks:
-      - id: ty
-        name: ty type check
-        entry: uvx ty check --ignore unresolved-import src/
+      - id: pyrefly
+        name: pyrefly type check
+        entry: pyrefly check src/*
         pass_filenames: false
         always_run: true
         exclude: |
           (?x)^(
             benchmark/|
             scripts/|
+            fixtures/|
             tests/|
             build/|
             dist/|
@@ -87,7 +91,7 @@ repos:
             \.temp/|
             .*Dockerfile$
           ).*$
-        language: python
+        language: system
         stages: [pre-commit]
       - id: pytest-unit
         name: pytest unit (fast)

@@ -1,9 +1,6 @@
 """E2E tests for RepositoryContextService full workflow."""
 
-import time
 from pathlib import Path
-
-import pytest
 
 from local_coding_assistant.repository.models import ProjectInfo, SymbolType
 from local_coding_assistant.repository.service import RepositoryContextService

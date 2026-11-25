@@ -1,0 +1,6 @@
+{% set ctx = context %}
+<static_env>
+Workspace root: {{ ctx.workspace_root }}
+Git repository: {{ "yes" if ctx.is_git_repo else "no" }}
+Platform: {{ ctx.platform }}
+</static_env>

@@ -1,7 +1,10 @@
 """Symbol indexing and search functionality for repository context."""
 
 from local_coding_assistant.repository.ast_parser import ASTNode
-from local_coding_assistant.repository.database import RepositoryDatabase
+from local_coding_assistant.repository.database import (
+    RepositoryDatabase,
+    _parent_scope_from_storage,
+)
 from local_coding_assistant.repository.models import (
     CallRelationship,
     FileMetadata,
@@ -192,7 +195,7 @@ class SymbolSearcher:
                         file_path=row["file_path"],
                         line_number=row["line_number"],
                         end_line_number=row["end_line_number"],
-                        parent_scope=row["parent_scope"],
+                        parent_scope=_parent_scope_from_storage(row["parent_scope"]),
                         docstring=row["docstring"],
                         signature=row["signature"],
                         rank=0.0,  # FTS5 rank is not exposed in this query
@@ -210,46 +213,48 @@ class SymbolSearcher:
         Returns:
             SymbolDetail if found, None otherwise.
         """
-        with self.database.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT
-                    sm.symbol_id,
-                    sm.file_id,
-                    sm.name,
-                    sm.symbol_type,
-                    sm.line_number,
-                    sm.end_line_number,
-                    sm.parent_scope,
-                    sm.docstring,
-                    sm.content,
-                    sm.signature,
-                    f.path as file_path
-                FROM symbol_metadata sm
-                JOIN files f ON sm.file_id = f.id
-                WHERE sm.symbol_id = ?
-                """,
-                (symbol_id,),
-            )
+        return self.database.get_symbol_by_id(symbol_id)
 
-            row = cursor.fetchone()
-            if row:
-                symbol_type = SymbolType(row["symbol_type"])
-                return SymbolDetail(
-                    symbol_id=row["symbol_id"],
-                    file_id=row["file_id"],
-                    name=row["name"],
-                    symbol_type=symbol_type,
-                    line_number=row["line_number"],
-                    end_line_number=row["end_line_number"],
-                    parent_scope=row["parent_scope"],
-                    docstring=row["docstring"],
-                    content=row["content"],
-                    signature=row["signature"],
-                    file_path=row["file_path"],
-                )
-            return None
+    def get_symbol_by_name(self, name: str) -> SymbolDetail | None:
+        """Get detailed information about a symbol by its name.
+
+        Args:
+            name: Symbol name.
+
+        Returns:
+            SymbolDetail if found, None otherwise.
+        """
+        symbols = self.get_symbol(name=name, limit=1)
+        return symbols[0] if symbols else None
+
+    def get_symbol(
+        self,
+        name: str,
+        symbol_type: str | None = None,
+        file_path: str | None = None,
+        limit: int = 20,
+    ) -> list[SymbolDetail]:
+        """Get detailed information about symbols matching the name.
+
+        Supports multiple symbol returns when several symbols share a name
+        (e.g. methods on different classes). Optional ``symbol_type`` and
+        ``file_path`` filters narrow the result set.
+
+        Args:
+            name: Symbol name to look up.
+            symbol_type: Optional symbol type filter.
+            file_path: Optional file path filter.
+            limit: Maximum number of symbols to return.
+
+        Returns:
+            List of SymbolDetail objects (possibly empty).
+        """
+        return self.database.get_symbols(
+            name=name,
+            symbol_type=symbol_type,
+            file_path=file_path,
+            limit=limit,
+        )
 
     def get_symbols_in_file(self, file_path: str) -> list[SymbolDetail]:
         """Get all symbols in a specific file.
@@ -305,7 +310,7 @@ class SymbolSearcher:
                         symbol_type=symbol_type,
                         line_number=row["line_number"],
                         end_line_number=row["end_line_number"],
-                        parent_scope=row["parent_scope"],
+                        parent_scope=_parent_scope_from_storage(row["parent_scope"]),
                         docstring=row["docstring"],
                         content=row["content"],
                         signature=row["signature"],

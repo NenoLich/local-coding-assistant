@@ -1,0 +1,31 @@
+# System Core
+Core system instructions
+
+# Agent Identity
+Agent identity details
+
+# Execution Rules
+Execution rules here
+
+# Constraints
+- Constraint 1
+- Constraint 2
+
+# Skills
+- Skill 1
+- Skill 2
+
+# Tools
+- Tool 1
+- Tool 2
+
+# Examples
+- Example 1
+- Example 2
+
+# Memories
+- Memory 1
+- Memory 2
+
+# Repo Context
+[rendered via repo_metadata.jinja2 + repo_map.jinja2]

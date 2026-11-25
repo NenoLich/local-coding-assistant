@@ -8,10 +8,11 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from local_coding_assistant.core.exceptions import (
-    LLMError,
+    LLMInfrastructureError,
 )
 from local_coding_assistant.core.protocols import IConfigManager
 from local_coding_assistant.providers import ProviderManager
+from local_coding_assistant.providers.error_classification import classify_llm_error
 from local_coding_assistant.providers.health import ProviderHealthManager
 from local_coding_assistant.utils.logging import get_logger
 
@@ -34,13 +35,12 @@ class LLMService:
     def __init__(
         self,
         config_manager: IConfigManager,
-        provider_manager: ProviderManager | None = None,
         *,
         health_manager: ProviderHealthManager | None = None,
     ) -> None:
         self._logger = get_logger("agent.llm.service")
         self._config_manager = config_manager
-        self._provider_manager = provider_manager or ProviderManager()
+        self._provider_manager = ProviderManager()
         self._provider_manager.reload(config_manager)
 
         self._health_manager = health_manager or ProviderHealthManager(config_manager)
@@ -164,11 +164,12 @@ class LLMService:
             )
 
             try:
-                response = await decision.provider.generate_with_retry(
-                    cloned_request,
-                    max_retries=max(0, context.resolved_options.retry_attempts - 1),
-                    retry_delay=context.resolved_options.retry_delay,
-                )
+                async with asyncio.timeout(context.resolved_options.timeout):
+                    response = await decision.provider.generate_with_retry(
+                        cloned_request,
+                        max_retries=max(0, context.resolved_options.retry_attempts - 1),
+                        retry_delay=context.resolved_options.retry_delay,
+                    )
                 self._health_manager.mark_provider_success(provider_name)
                 _, _, total_tokens = _extract_usage_metrics(
                     response.usage, response.tokens_used
@@ -213,8 +214,11 @@ class LLMService:
             attempts=attempts,
             error=last_error,
         )
-        raise LLMError(
-            "LLM generation failed after exhausting failover attempts"
+        raise LLMInfrastructureError(
+            "LLM generation failed after exhausting failover attempts",
+            classification=classify_llm_error(last_error)
+            if last_error is not None
+            else None,
         ) from last_error
 
     async def _run_stream(
@@ -273,23 +277,24 @@ class LLMService:
 
             last_usage: dict[str, Any] | None = None
             try:
-                async for delta in decision.provider.stream_with_retry(
-                    cloned_request,
-                    max_retries=max(0, context.resolved_options.retry_attempts - 1),
-                    retry_delay=context.resolved_options.retry_delay,
-                ):
-                    if delta.metadata and "usage" in delta.metadata:
-                        last_usage = delta.metadata["usage"]
-                    yield self._streaming_normalizer.to_chunk(
-                        delta,
-                        provider_name=provider_name,
-                        model_name=cloned_request.model,
-                    )
-                    # self._telemetry.stream_chunk(
-                    #     provider=provider_name,
-                    #     model=cloned_request.model,
-                    #     is_final=delta.finish_reason is not None,
-                    # )
+                async with asyncio.timeout(context.resolved_options.timeout):
+                    async for delta in decision.provider.stream_with_retry(
+                        cloned_request,
+                        max_retries=max(0, context.resolved_options.retry_attempts - 1),
+                        retry_delay=context.resolved_options.retry_delay,
+                    ):
+                        if delta.metadata and "usage" in delta.metadata:
+                            last_usage = delta.metadata["usage"]
+                        yield self._streaming_normalizer.to_chunk(
+                            delta,
+                            provider_name=provider_name,
+                            model_name=cloned_request.model,
+                        )
+                        # self._telemetry.stream_chunk(
+                        #     provider=provider_name,
+                        #     model=cloned_request.model,
+                        #     is_final=delta.finish_reason is not None,
+                        # )
                 self._health_manager.mark_provider_success(provider_name)
                 _, _, total_tokens = _extract_usage_metrics(last_usage, None)
                 self._telemetry.attempt_success(
@@ -327,8 +332,11 @@ class LLMService:
             attempts=attempts,
             error=last_error,
         )
-        raise LLMError(
-            "LLM streaming failed after exhausting failover attempts"
+        raise LLMInfrastructureError(
+            "LLM streaming failed after exhausting failover attempts",
+            classification=classify_llm_error(last_error)
+            if last_error is not None
+            else None,
         ) from last_error
 
     def _resolve_options(
@@ -379,9 +387,6 @@ class LLMService:
         status_list = []
         for provider_name in provider_names:
             # Always get the current source directly from the provider manager
-            source = (
-                self._provider_manager.get_provider_source(provider_name) or "unknown"
-            )
 
             # Get the cached status if it exists
             cached_status = self._provider_status_cache.get(provider_name, {})
@@ -404,7 +409,6 @@ class LLMService:
             status_list.append(
                 {
                     "name": provider_name,
-                    "source": source,
                     "status": status,
                     "models": models,
                     "error": error,

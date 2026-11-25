@@ -75,12 +75,6 @@ Once started, access the dashboard at:
 - Error information (if applicable)
 - Links to individual frames
 
-### Frame Detail (`/frames/{frame_id}`)
-- Prompt context and LLM response
-- Tool calls made during the frame
-- Action timeline with timestamps
-- Resource usage metrics
-
 ### Analytics (`/analytics`)
 - Success rates and trends
 - Performance charts and graphs
@@ -154,7 +148,6 @@ The dashboard can be configured through:
 
 #### Frames
 - `GET /api/frames`: List frames with filtering
-- `GET /api/frames/{frame_id}`: Get detailed frame information
 
 #### Analytics
 - `GET /api/stats`: Dashboard statistics

@@ -465,7 +465,7 @@ class TestEdgeCases:
 
         child = Mock()
         child.type = "identifier"
-        child.text = "MyClass".encode("utf-8")
+        child.text = b"MyClass"
 
         arg_list.children = [child]
         node.child_by_field_name = Mock(return_value=arg_list)
@@ -482,7 +482,7 @@ class TestEdgeCases:
         for i in range(10):
             child = Mock()
             child.type = "identifier"
-            child.text = f"BaseClass{i}".encode("utf-8")
+            child.text = f"BaseClass{i}".encode()
             children.append(child)
 
         arg_list.children = children

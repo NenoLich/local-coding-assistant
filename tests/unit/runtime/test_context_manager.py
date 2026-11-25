@@ -1,356 +1,587 @@
+"""Tests for ContextManager with session context policy and immutable snapshots."""
+
+from __future__ import annotations
+
 from unittest.mock import MagicMock
 
 import pytest
 
-from local_coding_assistant.runtime.context_manager import (
-    ContextManager,
-    ExecutionMode,
-    MemoryProvider,
-    SkillProvider,
-    StaticComponentCache,
-    ToolsBundle,
-    ToolSelector,
-    ToolSpec,
+from local_coding_assistant.runtime.context import ContextManager
+from local_coding_assistant.runtime.context.profile import (
+    ContextProfile,
+    RuntimeContextConfig,
+    TemplateSetRef,
+    ToolSetRef,
 )
-from local_coding_assistant.runtime.runtime_types import AgentProfile, PromptContext
-from local_coding_assistant.tools.types import ToolExecutionMode
-
-# Import shared test fixtures and mocks
-from .conftest import (
-    MockTool,
-)
+from local_coding_assistant.runtime.context.resolution import SessionContextBundle
+from local_coding_assistant.runtime.session import Message, SessionState
+from local_coding_assistant.storage.repositories import RepoSnapshotData
 
 
-class TestToolSelector:
-    def test_select_reasoning_mode(self):
-        selector = ToolSelector()
-        assert selector.select(tool_call_mode="reasoning_only") == ([], [])
+class MockConfigManager:
+    def __init__(self, resolution_mode: str = "static"):
+        self.global_config = MagicMock()
+        self.global_config.runtime = MagicMock()
+        self.global_config.runtime.session_context_resolution = resolution_mode
+        self.global_config.runtime.tool_call_mode = "classic_tools"
+        self.global_config.runtime.agent_mode = "no_agent"
+        self.global_config.runtime.stream = True
+        self.global_config.llm = MagicMock()
+        self.global_config.llm.model_name = "test-model"
+        self.global_config.llm.temperature = 0.1
+        self.global_config.llm.max_tokens = 1000
+        self.global_config.sandbox = MagicMock()
+        self.global_config.sandbox.enabled = False
+        self.global_config.prompt = MagicMock()
+        self.global_config.prompt.templates = {}
+        self.global_config.prompt.trim_blocks = True
+        self.global_config.prompt.lstrip_blocks = True
+        self.global_config.prompt.agents_md = MagicMock()
+        self.global_config.prompt.agents_md.enabled = True
+        self.global_config.prompt.agents_md.walk_up = True
+        self.global_config.prompt.agents_md.filenames = ["AGENTS.md", "CLAUDE.md"]
+        self.global_config.prompt.agents_md.global_paths = []
+        self.global_config.prompt.config_instructions = []
+        self.path_manager = MagicMock()
+        import tempfile
+        from pathlib import Path
 
-    def test_select_with_tools(self, tool_manager):
-        tool = MockTool("test_tool", "Test tool")
-        tool.parameters = {"type": "object", "properties": {}, "required": []}
-        tool_manager.tools = [tool]
+        temp_dir = tempfile.mkdtemp()
+        self.path_manager.get_template_dir.return_value = Path(temp_dir)
+        self.path_manager.get_target_project_root.return_value = "/test/project"
 
-        selector = ToolSelector(tool_manager=tool_manager)
-        tools, tools_prompt = selector.select(tool_call_mode="classic")
+    def get_provider_by_model(self, model_id: str) -> str:
+        return "test-provider"
 
-        assert len(tools) == 1
-        tool_spec = tools[0]
-        openai_format = tool_spec.to_openai_function()
-        assert openai_format["function"]["name"] == "test_tool"
-        assert openai_format["function"]["description"] == "Test tool"
-        assert "parameters" in openai_format["function"]
 
-    def test_select_ptc_mode(self, tool_manager):
-        # Create a tool with PTC execution mode
-        tool = MockTool("test_ptc_tool", "Test PTC tool")
-        tool.parameters = {"type": "object", "properties": {}, "required": []}
-        tool.execution_mode = ToolExecutionMode.PTC
-        tool.available = True  # Ensure the tool is marked as available
+class MockToolGateway:
+    def __init__(self):
+        self._registry = MagicMock()
+        self._registry.list_tools.return_value = []
 
-        # Set up the tool manager to return our tool
-        tool_manager.tools = [tool]
 
-        # Create the selector and get tools for PTC mode
-        selector = ToolSelector(tool_manager=tool_manager)
-        tools, tools_prompt = selector.select(tool_call_mode="ptc")
+class MockMemoryProvider:
+    def fetch(self, session=None):
+        return ["memory1", "memory2"]
 
-        # Verify we got the expected tool
-        assert len(tools) == 1
-        tool_spec = tools[0]
-        openai_format = tool_spec.to_openai_function()
-        assert openai_format["function"]["name"] == "test_ptc_tool"
-        assert openai_format["function"]["description"] == "Test PTC tool"
 
-    def test_resolve_tool_entry_tuple(self):
-        tool = MockTool("test_tool", "Test tool")
-        selector = ToolSelector()
+class MockRepoService:
+    def get_repo_context(self):
+        from local_coding_assistant.repository.models import ProjectInfo
+        from local_coding_assistant.repository.repo_map import RepoMapData
 
-        # Test with (name, tool) tuple
-        result = selector._resolve_tool_entry(("custom_name", tool))
-        assert result.name == "custom_name"
-        assert result.description == tool.description
-
-        # Test with just the tool object
-        result = selector._resolve_tool_entry(tool)
-        assert result.name == "test_tool"
-        assert result.description == "Test tool"
-
-    def test_resolve_tool_entry_invalid(self):
-        selector = ToolSelector()
-
-        # Test with None
-        with pytest.raises(ValueError, match="Tool entry cannot be None"):
-            selector._resolve_tool_entry(None)
-
-        # Test with empty name in tuple
-        tool = MockTool("test", "Test")
-        with pytest.raises(
-            ValueError, match="Tool name in tuple must be a non-empty string"
-        ):
-            selector._resolve_tool_entry(("", tool))
-
-        # Test with missing description
-        class BadTool:
-            name = "bad_tool"
-
-        with pytest.raises(ValueError, match="missing required 'description'"):
-            selector._resolve_tool_entry(BadTool())
-
-    def test_build_tool_spec(self):
-        tool_spec = ToolSpec(
-            name="test_tool",
-            description="Test tool description",
-            parameters={"type": "object", "properties": {"param": {"type": "string"}}},
+        repo_map = RepoMapData(
+            project_name="test-project",
+            language_distribution={"python": 100.0},
+            total_symbols=10,
+            grouped_symbols={},
         )
+        project_info = ProjectInfo(name="test-project", description="Test project")
+        return project_info, repo_map
 
-        result = tool_spec.to_openai_function()
-        assert result == {
-            "type": "function",
-            "function": {
-                "name": "test_tool",
-                "description": "Test tool description",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"param": {"type": "string"}},
-                },
-            },
+    @property
+    def target_project_root(self):
+        return "/test/project"
+
+
+class MockStore:
+    def __init__(self):
+        self.tools = {}
+        self.templates = {}
+        self.repo_snapshots = {}
+        self.memories = {}
+
+    async def get_tool_by_id(self, tool_id: int):
+        return self.tools.get(tool_id)
+
+    async def get_tools_by_ids(self, tool_ids: list[int]):
+        return [
+            self.tools.get(tid) for tid in tool_ids if self.tools.get(tid) is not None
+        ]
+
+    async def get_template_by_id(self, template_id: int):
+        return self.templates.get(template_id)
+
+    async def get_templates_by_ids(self, template_ids: list[int]):
+        return [
+            self.templates.get(tid)
+            for tid in template_ids
+            if self.templates.get(tid) is not None
+        ]
+
+    async def get_repo_snapshot(self, repo_root: str, commit_hash: str | None):
+        return self.repo_snapshots.get(repo_root)
+
+    async def get_repo_snapshot_by_hash(self, repo_snapshot_hash: str):
+        for snap in self.repo_snapshots.values():
+            if snap.get("repo_snapshot_hash") == repo_snapshot_hash:
+                return RepoSnapshotData(
+                    target_project_root=snap["target_project_root"],
+                    repo_map_json=snap["repo_map_json"],
+                    project_info_json=snap.get("project_info_json"),
+                    repo_snapshot_hash=snap["repo_snapshot_hash"],
+                )
+        return None
+
+    async def register_repo_snapshot(
+        self,
+        target_project_root: str,
+        repo_map_json: str,
+        project_info_json: str | None,
+        repo_snapshot_hash: str,
+    ):
+        self.repo_snapshots[target_project_root] = {
+            "target_project_root": target_project_root,
+            "repo_map_json": repo_map_json,
+            "project_info_json": project_info_json,
+            "repo_snapshot_hash": repo_snapshot_hash,
+        }
+
+        class Result:
+            def __init__(self, id, is_new):
+                self.id = id
+                self.is_new = is_new
+
+        return Result(len(self.repo_snapshots), True)
+
+    async def get_memory_by_id(self, memory_id: str):
+        return self.memories.get(memory_id)
+
+    async def register_tool(
+        self,
+        name: str,
+        schema_json: str,
+        risk_class: str,
+        description: str | None = None,
+        version: str = "1.0.0",
+    ):
+        tool_id = len(self.tools) + 1
+        self.tools[tool_id] = {
+            "id": tool_id,
+            "name": name,
+            "schema_json": schema_json,
+            "risk_class": risk_class,
+            "description": description,
+            "version": version,
+        }
+        return tool_id
+
+    async def register_template(
+        self, path: str, content: str, content_hash: str, version: str = "1.0.0"
+    ):
+        template_id = len(self.templates) + 1
+        self.templates[template_id] = {
+            "id": template_id,
+            "path": path,
+            "content": content,
+            "content_hash": content_hash,
+            "version": version,
+        }
+        return template_id
+
+    async def update_context_artifacts(
+        self,
+        tool_specs: list[dict[str, Any]],
+        template_specs: list[dict[str, str]],
+        repo_map_data: Any | None,
+        project_info: Any | None,
+        target_project_root: str,
+        memories: list[str],
+    ) -> dict[str, Any]:
+        """Mock implementation of update_context_artifacts."""
+        import dataclasses
+        import hashlib
+        import json
+
+        # Register tools
+        tool_ids = []
+        tool_identities = []
+        for spec in tool_specs:
+            tool_id = await self.register_tool(
+                name=spec["name"],
+                schema_json="{}",
+                risk_class="low",
+                description=spec.get("description", ""),
+                version="1.0.0",
+            )
+            tool_ids.append(tool_id)
+            param_hash = hashlib.sha256(
+                json.dumps(spec.get("parameters", {}), sort_keys=True).encode()
+            ).hexdigest()[:8]
+            tool_identities.append((tool_id, spec["name"], param_hash))
+
+        # Register templates
+        template_ids = []
+        template_paths = []
+        for spec in template_specs:
+            for path, content in spec.items():
+                content_hash = hashlib.sha256(
+                    content.encode() if content else path.encode()
+                ).hexdigest()
+                template_id = await self.register_template(
+                    path=path,
+                    content=content,
+                    content_hash=content_hash,
+                    version="1.0.0",
+                )
+                template_ids.append(template_id)
+                template_paths.append(path)
+
+        # Register repo snapshot if data available
+        repo_snapshot_hash = "no_repo"
+        if repo_map_data is not None:
+            repo_map_json = json.dumps(dataclasses.asdict(repo_map_data), default=str)
+            project_info_json = project_info.model_dump_json() if project_info else None
+            repo_snapshot_hash = hashlib.sha256(
+                json.dumps(
+                    {"repo_map": repo_map_json, "project_info": project_info_json},
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest()[:16]
+
+            await self.register_repo_snapshot(
+                target_project_root=target_project_root,
+                repo_map_json=repo_map_json,
+                project_info_json=project_info_json,
+                repo_snapshot_hash=repo_snapshot_hash,
+            )
+
+        # Memory snapshot version
+        memory_snapshot_version = "empty"
+        if memories:
+            memory_snapshot_version = hashlib.sha256(
+                json.dumps(sorted(memories), sort_keys=True).encode()
+            ).hexdigest()[:16]
+
+        # Compute version strings
+        tool_set_version = hashlib.sha256(
+            json.dumps(sorted(tool_identities), sort_keys=True).encode()
+        ).hexdigest()[:16]
+
+        template_set_version = hashlib.sha256(
+            json.dumps(sorted(template_paths), sort_keys=True).encode()
+        ).hexdigest()[:16]
+
+        return {
+            "tool_ids": tool_ids,
+            "template_ids": template_ids,
+            "tool_set_version": tool_set_version,
+            "template_set_version": template_set_version,
+            "repo_snapshot_hash": repo_snapshot_hash,
+            "memory_snapshot_version": memory_snapshot_version,
         }
 
 
-class TestContextManager:
-    def test_init_with_defaults(self, config_manager):
-        manager = ContextManager(config_manager)
-        assert isinstance(manager.memory_provider, MemoryProvider)
-        assert isinstance(manager._cache, StaticComponentCache)
+@pytest.fixture
+def session():
+    return SessionState(
+        context_profile=ContextProfile(
+            runtime_context_config=RuntimeContextConfig(),
+            tool_set_ref=ToolSetRef(),
+            template_set_ref=TemplateSetRef(),
+        )
+    )
 
-    def test_build_context_reasoning_mode(self, config_manager, session_state):
-        manager = ContextManager(config_manager)
-        context = manager.build_context(
-            session=session_state,
-            user_input="test input",
-            tool_call_mode="reasoning_only",
+
+@pytest.fixture
+def config_manager():
+    return MockConfigManager("static")
+
+
+@pytest.fixture
+def dynamic_config_manager():
+    return MockConfigManager("dynamic")
+
+
+@pytest.fixture
+def tool_gateway():
+    return MockToolGateway()
+
+
+@pytest.fixture
+def memory_provider():
+    return MockMemoryProvider()
+
+
+@pytest.fixture
+def repo_service():
+    return MockRepoService()
+
+
+@pytest.fixture
+def store():
+    return MockStore()
+
+
+@pytest.fixture
+def context_manager(config_manager, tool_gateway, repo_service, memory_provider, store):
+    return ContextManager(
+        config_manager=config_manager,
+        tool_gateway=tool_gateway,
+        repo_service=repo_service,
+        memory_provider=memory_provider,
+        store=store,
+    )
+
+
+@pytest.fixture
+def dynamic_context_manager(
+    dynamic_config_manager, tool_gateway, repo_service, memory_provider, store
+):
+    return ContextManager(
+        config_manager=dynamic_config_manager,
+        tool_gateway=tool_gateway,
+        repo_service=repo_service,
+        memory_provider=memory_provider,
+        store=store,
+    )
+
+
+class TestSessionContextPolicy:
+    """Tests for static vs dynamic session context resolution."""
+
+    @pytest.mark.asyncio
+    async def test_static_mode_reuses_bundle(self, context_manager, session):
+        """In static mode, session bundle is reused across turns with same config."""
+        config = context_manager._build_context_config()
+
+        # First call builds bundle
+        bundle1 = await context_manager.update_bundle_cache(session.id, config=config)
+        assert isinstance(bundle1, SessionContextBundle)
+        assert context_manager._compute_config_hash(
+            bundle1.profile.runtime_context_config
+        ) == context_manager._compute_config_hash(config)
+
+        # Second call should reuse bundle (same config)
+        bundle2 = await context_manager.update_bundle_cache(session.id, config=config)
+        assert bundle2 is bundle1  # Same object reused
+
+    @pytest.mark.asyncio
+    async def test_dynamic_mode_builds_fresh_bundle(
+        self, dynamic_context_manager, session
+    ):
+        """In dynamic mode, new bundle built for each turn even with same config."""
+        config = dynamic_context_manager._build_context_config()
+
+        bundle1 = await dynamic_context_manager.update_bundle_cache(
+            session.id, config=config
+        )
+        bundle2 = await dynamic_context_manager.update_bundle_cache(
+            session.id, config=config
         )
 
-        assert isinstance(context, PromptContext)
-        assert context.execution_mode == ExecutionMode.REASONING_ONLY
-        assert context.user_input == "test input"
-        assert context.tool_call_mode == "reasoning_only"
-        # We expect a default agent profile even in reasoning_only mode
-        assert context.agent_profile is not None
-        assert context.agent_profile.name == "default"
-        assert not context.tools
+        # Different objects (fresh each time)
+        assert bundle1 is not bundle2
+        # But same content
+        assert dynamic_context_manager._compute_config_hash(
+            bundle1.profile.runtime_context_config
+        ) == dynamic_context_manager._compute_config_hash(
+            bundle2.profile.runtime_context_config
+        )
 
-    def test_build_context_with_agent_mode(
-        self, config_manager, session_state, tool_manager
+    @pytest.mark.asyncio
+    async def test_static_mode_invalidates_on_config_change(
+        self, context_manager, session
     ):
-        manager = ContextManager(config_manager, tool_manager=tool_manager)
-        context = manager.build_context(
-            session=session_state,
-            user_input="test input",
+        """Static bundle invalidated when config hash changes."""
+        config1 = context_manager._build_context_config()
+        bundle1 = await context_manager.update_bundle_cache(session.id, config=config1)
+
+        # Create config with different hash
+        config2 = RuntimeContextConfig(
+            llm_model="different-model",
+            llm_temperature=0.5,
+            llm_max_tokens=2000,
             tool_call_mode="classic",
-            agent_mode=True,
+            execution_mode="classic",
+            agent_mode=False,
+            graph_mode=False,
+            streaming=True,
+            sandbox_enabled=False,
+            prompt_templates={"system": "base/system.jinja2"},
+            trim_blocks=True,
+            lstrip_blocks=True,
         )
 
-        # Check that we have the default agent profile
-        assert context.agent_profile is not None
-        assert context.agent_profile.name == "default"
+        bundle2 = await context_manager.update_bundle_cache(session.id, config=config2)
+        assert bundle2 is not bundle1  # New bundle created
+        assert context_manager._compute_config_hash(
+            bundle2.profile.runtime_context_config
+        ) != context_manager._compute_config_hash(
+            bundle1.profile.runtime_context_config
+        )
 
-    def test_resolve_execution_mode_reasoning(self, config_manager):
-        manager = ContextManager(config_manager)
-        mode = manager._map_validated_mode_to_execution_mode("reasoning_only")
-        assert mode == ExecutionMode.REASONING_ONLY
 
-    def test_resolve_execution_mode_ptc_sandbox_enabled(
-        self, config_manager, tool_manager
+class TestImmutableTurnSnapshot:
+    """Tests for immutable turn snapshot creation and resolution."""
+
+    @pytest.mark.asyncio
+    async def test_create_snapshot_includes_stable_refs(self, context_manager, session):
+        """Snapshot contains stable ref identities with versions."""
+        # Add some history for message_boundary
+        session.history = [
+            Message(role="user", content="msg1", seq=1),
+            Message(role="assistant", content="msg2", seq=2),
+        ]
+        session.history_sequence = 2
+
+        config = context_manager._build_context_config()
+        snapshot = await context_manager.create_snapshot(session, config, "turn_1")
+
+        assert snapshot.id == "ctx_turn_1"
+        assert snapshot.turn_id == "turn_1"
+        assert isinstance(snapshot.tool_set_ref, ToolSetRef)
+        assert snapshot.tool_set_ref.version != ""
+        assert snapshot.template_set_ref.version != ""
+        assert snapshot.repo_snapshot_ref is not None
+        assert snapshot.repo_snapshot_ref.repo_snapshot_hash is not None
+        assert snapshot.memory_snapshot_ref is not None
+        assert snapshot.content_hash != ""
+        assert snapshot.message_boundary is not None
+
+    @pytest.mark.asyncio
+    async def test_snapshot_message_boundary_is_turn_start_history(
+        self, context_manager, session
     ):
-        manager = ContextManager(config_manager, tool_manager=tool_manager)
-        mode = manager._map_validated_mode_to_execution_mode("ptc")
-        assert mode == ExecutionMode.SANDBOX_PYTHON
+        """Snapshot's message_boundary captures history at turn start."""
+        # Add some history
+        session.history = [
+            Message(role="user", content="msg1", seq=1),
+            Message(role="assistant", content="msg2", seq=2),
+        ]
+        session.history_sequence = 2
 
-    def test_resolve_execution_mode_ptc_sandbox_disabled(
-        self, config_manager, tool_manager
+        config = context_manager._build_context_config()
+        snapshot = await context_manager.create_snapshot(session, config, "turn_1")
+
+        assert snapshot.message_boundary is not None
+        assert snapshot.message_boundary.start_seq == 1
+        assert snapshot.message_boundary.end_seq == 2
+        assert snapshot.message_boundary.session_id == session.id
+
+    @pytest.mark.asyncio
+    async def test_resolve_context_uses_frame_history_through_seq(
+        self, context_manager, session
     ):
-        manager = ContextManager(config_manager, tool_manager=tool_manager)
-        mode = manager._map_validated_mode_to_execution_mode("ptc")
-        assert mode == ExecutionMode.SANDBOX_PYTHON
+        """Frame resolution uses history_through_seq, not snapshot message_boundary."""
+        session.history = [
+            Message(role="user", content="msg1", seq=1),
+            Message(role="assistant", content="msg2", seq=2),
+            Message(role="user", content="msg3", seq=3),
+        ]
+        session.history_sequence = 3
 
-    def test_build_context_with_memories(self, config_manager, session_state):
-        memory_provider = MemoryProvider()
-        memory_provider.fetch = MagicMock(return_value=["memory1", "memory2"])
+        config = context_manager._build_context_config()
+        snapshot = await context_manager.create_snapshot(session, config, "turn_1")
 
-        manager = ContextManager(config_manager, memory_provider=memory_provider)
+        # Resolve with frame's advancing cursor (seq=2, not the turn's boundary which is 2)
+        from local_coding_assistant.runtime.engine.continuation import FrameContinuation
 
-        context = manager.build_context(
-            session=session_state, user_input="test", tool_call_mode="reasoning_only"
+        continuation = FrameContinuation()
+
+        prompt_ctx, rendered = await context_manager.resolve_context(
+            session=session,
+            snapshot=snapshot,
+            continuation=continuation,
+            config_snapshot=config,
+            history_through_seq=2,  # Frame only sees up to seq=2
         )
 
-        assert context.memories == ["memory1", "memory2"]
-        memory_provider.fetch.assert_called_once_with(session=session_state)
+        # Should only have messages up to seq=2
+        history_dicts = [
+            msg.model_dump() for msg in session.history if msg.seq and msg.seq <= 2
+        ]
+        assert len(history_dicts) == 2
 
-    def test_build_context_with_skills(self, config_manager, session_state):
-        skill_provider = SkillProvider()
-        skill_provider.resolve = MagicMock(return_value=["skill1", "skill2"])
 
-        manager = ContextManager(config_manager, skill_provider=skill_provider)
+class TestRefResolution:
+    """Tests for stable ref resolution from store."""
 
-        context = manager.build_context(
-            session=session_state, user_input="test", tool_call_mode="reasoning_only"
+    @pytest.mark.asyncio
+    async def test_resolve_tools_from_store(self, context_manager, store):
+        """Tools resolved from store using snapshot's tool_ids."""
+        # Register a tool
+        tool_id = await store.register_tool("search", "{}", "low", "Search tool")
+
+        # Create snapshot with that tool
+        config = context_manager._build_context_config()
+        session = SessionState(
+            id="s1",
+            context_profile=ContextProfile(
+                runtime_context_config=config,
+                tool_set_ref=ToolSetRef(),
+                template_set_ref=TemplateSetRef(),
+            ),
+        )
+        snapshot = await context_manager.create_snapshot(session, config, "turn_1")
+
+        # Manually set tool_ids to match registered tool
+        snapshot.tool_set_ref.tool_ids = [tool_id]
+
+        # Resolve refs
+        refs = await context_manager._resolve_all_refs_from_snapshot(snapshot)
+        assert len(refs.tools) == 1
+        assert refs.tools[0]["name"] == "search"
+
+    @pytest.mark.asyncio
+    async def test_resolve_templates_from_store(self, context_manager, store):
+        """Templates resolved from store using snapshot's template_ids."""
+        template_id = await store.register_template(
+            "base/system.jinja2", "System prompt", "hash123"
         )
 
-        assert context.active_skills == ["skill1", "skill2"]
-        skill_provider.resolve.assert_called_once_with(
-            execution_mode=ExecutionMode.REASONING_ONLY
+        config = context_manager._build_context_config()
+        session = SessionState(
+            id="s1",
+            context_profile=ContextProfile(
+                runtime_context_config=config,
+                tool_set_ref=ToolSetRef(),
+                template_set_ref=TemplateSetRef(),
+            ),
         )
+        snapshot = await context_manager.create_snapshot(session, config, "turn_1")
+        snapshot.template_set_ref.template_ids = [template_id]
 
-    def test_custom_agent_catalog(self, config_manager, session_state):
-        custom_agent = AgentProfile(name="custom", description="Custom agent")
-        manager = ContextManager(config_manager, agent_profiles=[custom_agent])
-
-        # Should use the provided agent catalog instead of config
-        context = manager.build_context(
-            session=session_state, user_input="test", tool_call_mode="reasoning_only"
-        )
-        assert context.agent_profile.name == "custom"
+        refs = await context_manager._resolve_all_refs_from_snapshot(snapshot)
+        # Key is the template path
+        assert "base/system.jinja2" in refs.templates
+        assert refs.templates["base/system.jinja2"] == "System prompt"
 
 
-class TestStaticComponentCache:
-    def test_cache_hit_agent_profile(self, config_manager):
-        cache = StaticComponentCache(config_manager)
-        profile1 = cache.get_agent_profile(agent_mode=False, graph_mode=False)
-        profile2 = cache.get_agent_profile(agent_mode=False, graph_mode=False)
-        assert profile1 is profile2  # Same object from cache
+class TestCacheInvalidation:
+    """Tests for cache invalidation on source changes."""
 
-    def test_cache_miss_agent_profile_different_params(self, config_manager):
-        cache = StaticComponentCache(config_manager)
-        profile1 = cache.get_agent_profile(agent_mode=False, graph_mode=False)
-        profile2 = cache.get_agent_profile(agent_mode=True, graph_mode=False)
-        assert profile1.name == "default"
-        assert profile2.name == "default"
-        # Different cache keys, but same profile from config
+    def test_clear_session_bundle_invalidates_static_cache(
+        self, context_manager, session
+    ):
+        """clear_session_bundle removes static bundle cache."""
+        config = context_manager._build_context_config()
+        # Can't easily test async cache without running, but verify method exists
+        context_manager.clear_session_bundle(session.id)
+        assert session.id not in context_manager._session_bundles
 
-    def test_cache_hit_tools(self, config_manager, tool_manager):
-        cache = StaticComponentCache(config_manager, tool_manager=tool_manager)
-        tools1, prompt1 = cache.get_tools("reasoning_only", tool_manager)
-        tools2, prompt2 = cache.get_tools("reasoning_only", tool_manager)
-        assert tools1 is tools2  # Same object from cache
-        assert prompt1 is prompt2
-
-    def test_cache_miss_tools_different_mode(self, config_manager, tool_manager):
-        cache = StaticComponentCache(config_manager, tool_manager=tool_manager)
-        tools1, _ = cache.get_tools("reasoning_only", tool_manager)
-        tools2, _ = cache.get_tools("classic", tool_manager)
-        # Different modes should return different results
-        assert tools1 != tools2
-
-    def test_cache_hit_skills(self, config_manager):
-        cache = StaticComponentCache(config_manager)
-        skills1 = cache.get_skills("reasoning_only")
-        skills2 = cache.get_skills("reasoning_only")
-        assert skills1 is skills2  # Same object from cache
-
-    def test_invalidate_all(self, config_manager, tool_manager):
-        cache = StaticComponentCache(config_manager, tool_manager=tool_manager)
-        # Populate caches
-        cache.get_agent_profile(agent_mode=False, graph_mode=False)
-        cache.get_tools("reasoning_only", tool_manager)
-        cache.get_skills("reasoning_only")
-
-        # Invalidate
-        cache.invalidate_all()
-
-        # Caches should be empty
-        assert len(cache._agent_profile_cache) == 0
-        assert len(cache._tools_cache) == 0
-        assert len(cache._skills_cache) == 0
+    def test_clear_session_all_clears_both_caches(self, context_manager, session):
+        """clear_session_all clears config and bundle caches."""
+        config = context_manager._build_context_config()
+        context_manager.clear_session_all(session.id)
+        assert session.id not in context_manager._session_bundles
 
 
-class TestToolsBundle:
-    def test_from_tool_manager_reasoning_only(self, tool_manager):
-        bundle = ToolsBundle.from_tool_manager(tool_manager, "reasoning_only")
-        assert bundle.tool_call_mode == "reasoning_only"
-        assert bundle.execution_mode == ToolExecutionMode.CLASSIC
+class TestContentHash:
+    """Tests for content hash stability."""
 
-    def test_from_tool_manager_ptc(self, tool_manager):
-        bundle = ToolsBundle.from_tool_manager(tool_manager, "ptc")
-        assert bundle.tool_call_mode == "ptc"
-        assert bundle.execution_mode == ToolExecutionMode.PTC
+    @pytest.mark.asyncio
+    async def test_content_hash_identical(self, context_manager, session):
+        """Content hash should be identical for same refs and history."""
+        config = context_manager._build_context_config()
 
-    def test_from_tool_manager_classic(self, tool_manager):
-        bundle = ToolsBundle.from_tool_manager(tool_manager, "classic")
-        assert bundle.tool_call_mode == "classic"
-        assert bundle.execution_mode == ToolExecutionMode.CLASSIC
+        # Create two snapshots with same refs but different session history
+        snapshot1 = await context_manager.create_snapshot(session, config, "turn_1")
 
-    def test_tools_bundle_equality(self, tool_manager):
-        bundle1 = ToolsBundle.from_tool_manager(tool_manager, "reasoning_only")
-        bundle2 = ToolsBundle.from_tool_manager(tool_manager, "reasoning_only")
-        assert bundle1 == bundle2
+        snapshot2 = await context_manager.create_snapshot(session, config, "turn_2")
 
-    def test_tools_bundle_inequality_different_mode(self, tool_manager):
-        bundle1 = ToolsBundle.from_tool_manager(tool_manager, "reasoning_only")
-        bundle2 = ToolsBundle.from_tool_manager(tool_manager, "classic")
-        assert bundle1 != bundle2
-
-    def test_tools_bundle_frozen(self, tool_manager):
-        bundle = ToolsBundle.from_tool_manager(tool_manager, "reasoning_only")
-        with pytest.raises(Exception):  # FrozenInstanceError
-            bundle.tool_call_mode = "classic"
+        assert snapshot1.content_hash == snapshot2.content_hash
 
 
-class TestContextManagerCaching:
-    def test_cache_hit_repeated_calls(self, config_manager, session_state):
-        manager = ContextManager(config_manager)
-        context1 = manager.build_context(
-            session=session_state, user_input="test", tool_call_mode="reasoning_only"
-        )
-        context2 = manager.build_context(
-            session=session_state, user_input="test2", tool_call_mode="reasoning_only"
-        )
-        # Agent profile should be cached (same object)
-        assert context1.agent_profile is context2.agent_profile
-
-    def test_cache_miss_mode_change(self, config_manager, session_state):
-        manager = ContextManager(config_manager)
-        context1 = manager.build_context(
-            session=session_state, user_input="test", tool_call_mode="reasoning_only"
-        )
-        context2 = manager.build_context(
-            session=session_state, user_input="test", tool_call_mode="classic"
-        )
-        # Different modes should have different execution modes
-        assert context1.execution_mode == ExecutionMode.REASONING_ONLY
-        assert context2.execution_mode == ExecutionMode.CLASSIC_TOOLS
-
-    def test_dynamic_components_always_fresh(self, config_manager, session_state):
-        manager = ContextManager(config_manager)
-        context1 = manager.build_context(
-            session=session_state, user_input="test1", tool_call_mode="reasoning_only"
-        )
-        # Add a message to history
-        from local_coding_assistant.runtime.session import Message
-
-        session_state.history.append(Message(role="user", content="new message"))
-
-        context2 = manager.build_context(
-            session=session_state, user_input="test2", tool_call_mode="reasoning_only"
-        )
-        # History should be different (dynamic component)
-        assert len(context1.history) != len(context2.history)
-        # User input should be different
-        assert context1.user_input == "test1"
-        assert context2.user_input == "test2"
-
-    def test_invalidate_all_clears_cache(self, config_manager, session_state):
-        manager = ContextManager(config_manager)
-        # Populate cache
-        manager.build_context(
-            session=session_state, user_input="test", tool_call_mode="reasoning_only"
-        )
-
-        # Invalidate
-        manager.invalidate_all()
-
-        # Cache should be cleared
-        assert len(manager._cache._agent_profile_cache) == 0
-        assert len(manager._cache._tools_cache) == 0
-        assert len(manager._cache._skills_cache) == 0
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

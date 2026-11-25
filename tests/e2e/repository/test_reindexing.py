@@ -3,8 +3,6 @@
 import time
 from pathlib import Path
 
-import pytest
-
 from local_coding_assistant.repository.service import RepositoryContextService
 
 

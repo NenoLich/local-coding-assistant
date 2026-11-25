@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+
+{% block title %}Sessions - LOCCA Dashboard{% endblock %}
+
+{% block content %}
+<div class="col-12">
+    <div class="row mt-4">
+        <div class="col-12">
+            <h1>Sessions</h1>
+            <p class="text-muted">Historical execution sessions from the durable store</p>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-body">
+                    <form id="filter-form" class="row g-3">
+                        <div class="col-md-2">
+                            <label for="status-filter" class="form-label">Status</label>
+                            <select class="form-select" id="status-filter" name="status">
+                                <option value="">All Statuses</option>
+                                <option value="idle">Idle</option>
+                                <option value="running">Running</option>
+                                <option value="completed">Completed</option>
+                                <option value="error">Error</option>
+                                <option value="interrupted">Interrupted</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label for="date-from" class="form-label">From Date</label>
+                            <input type="datetime-local" class="form-control" id="date-from" name="date_from">
+                        </div>
+                        <div class="col-md-2">
+                            <label for="date-to" class="form-label">To Date</label>
+                            <input type="datetime-local" class="form-control" id="date-to" name="date_to">
+                        </div>
+                        <div class="col-md-2">
+                            <label for="model-filter" class="form-label">Model</label>
+                            <input type="text" class="form-control" id="model-filter" name="model" placeholder="Model name">
+                        </div>
+                        <div class="col-md-2">
+                            <label for="limit" class="form-label">Per Page</label>
+                            <select class="form-select" id="limit" name="limit">
+                                <option value="25">25</option>
+                                <option value="50" selected>50</option>
+                                <option value="100">100</option>
+                                <option value="200">200</option>
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-primary">Apply Filters</button>
+                            <button type="button" class="btn btn-outline-secondary" id="clear-filters">Clear</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sessions Table -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">Sessions (<span id="total-sessions">-</span>)</h5>
+                    <button class="btn btn-sm btn-outline-primary" id="refresh-btn">
+                        <i class="bi bi-arrow-clockwise"></i> Refresh
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div id="sessions-container">
+                        <div class="text-center text-muted">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading sessions...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pagination -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <nav id="pagination-container"></nav>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let currentPage = 0;
+let currentLimit = 50;
+
+function getStatusColor(status) {
+    switch (status) {
+        case 'completed': return 'success';
+        case 'running': return 'primary';
+        case 'error': return 'danger';
+        case 'idle': return 'secondary';
+        case 'interrupted': return 'warning';
+        default: return 'secondary';
+    }
+}
+
+function formatDateTime(ms) {
+    if (!ms) return '-';
+    return new Date(ms).toLocaleString();
+}
+
+function loadSessions() {
+    const status = document.getElementById('status-filter').value;
+    const dateFrom = document.getElementById('date-from').value;
+    const dateTo = document.getElementById('date-to').value;
+    const model = document.getElementById('model-filter').value;
+
+    const params = new URLSearchParams({
+        limit: currentLimit,
+        offset: currentPage * currentLimit
+    });
+    if (status) params.append('status', status);
+    if (dateFrom) params.append('date_from', dateFrom);
+    if (dateTo) params.append('date_to', dateTo);
+    if (model) params.append('model', model);
+
+    const container = document.getElementById('sessions-container');
+    container.innerHTML = `
+        <div class="text-center text-muted">
+            <div class="spinner-border" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">Loading sessions...</p>
+        </div>
+    `;
+
+    fetch(`/api/sessions?${params}`)
+        .then(response => response.json())
+        .then(data => {
+            displaySessions(data);
+            updatePagination(data);
+        })
+        .catch(error => {
+            console.error('Error loading sessions:', error);
+            container.innerHTML = `<div class="alert alert-danger">Error loading sessions: ${error.message}</div>`;
+        });
+}
+
+function displaySessions(data) {
+    const container = document.getElementById('sessions-container');
+    document.getElementById('total-sessions').textContent = data.total;
+
+    if (!data.items || data.items.length === 0) {
+        container.innerHTML = `
+            <div class="text-center text-muted">
+                <i class="bi bi-inbox" style="font-size: 3rem;"></i>
+                <p class="mt-2">No sessions found matching the current filters</p>
+            </div>
+        `;
+        return;
+    }
+
+    const table = `
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead>
+                    <tr>
+                        <th>Session ID</th>
+                        <th>User Input</th>
+                        <th>Status</th>
+                        <th>Started</th>
+                        <th>Last Updated</th>
+                        <th>Model</th>
+                        <th class="text-end">Input Tokens</th>
+                        <th class="text-end">Output Tokens</th>
+                        <th class="text-end">Turns</th>
+                        <th class="text-end">Frames</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.items.map(session => `
+                        <tr onclick="window.location='/sessions/${session.session_id}'" class="clickable-row">
+                            <td>
+                                <code>${session.session_id.substring(0, 12)}...</code>
+                            </td>
+                            <td>
+                                <div title="${escapeHtml(session.user_input)}">${escapeHtml(session.user_input.substring(0, 60))}${session.user_input.length > 60 ? '...' : ''}</div>
+                            </td>
+                            <td>
+                                <span class="badge bg-${getStatusColor(session.status)}">${session.status}</span>
+                            </td>
+                            <td>${formatDateTime(session.started_at)}</td>
+                            <td>${formatDateTime(session.updated_at)}</td>
+                            <td><code>${session.model_name || '-'}</code></td>
+                            <td class="text-end"><span class="tokens-badge">${session.input_tokens.toLocaleString()}</span></td>
+                            <td class="text-end"><span class="tokens-badge">${session.output_tokens.toLocaleString()}</span></td>
+                            <td class="text-end">${session.total_turns}</td>
+                            <td class="text-end">${session.total_frames}</td>
+                            <td>
+                                <a href="/sessions/${session.session_id}" class="btn btn-sm btn-outline-primary">View</a>
+                            </td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+    container.innerHTML = table;
+}
+
+function updatePagination(data) {
+    const container = document.getElementById('pagination-container');
+    if (data.total <= currentLimit) {
+        container.innerHTML = '';
+        return;
+    }
+    const totalPages = Math.ceil(data.total / currentLimit);
+    const currentPageNum = currentPage + 1;
+    let pagination = '<nav><ul class="pagination justify-content-center">';
+    if (data.has_prev) {
+        pagination += `<li class="page-item"><a class="page-link" href="#" onclick="changePage(${currentPage - 1}); return false;">Previous</a></li>`;
+    } else {
+        pagination += `<li class="page-item disabled"><span class="page-link">Previous</span></li>`;
+    }
+    const startPage = Math.max(1, currentPageNum - 2);
+    const endPage = Math.min(totalPages, currentPageNum + 2);
+    if (startPage > 1) {
+        pagination += `<li class="page-item"><a class="page-link" href="#" onclick="changePage(0); return false;">1</a></li>`;
+        if (startPage > 2) {
+            pagination += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+        }
+    }
+    for (let i = startPage; i <= endPage; i++) {
+        const isActive = i === currentPageNum;
+        pagination += `<li class="page-item ${isActive ? 'active' : ''}"><a class="page-link" href="#" onclick="changePage(${i - 1}); return false;">${i}</a></li>`;
+    }
+    if (endPage < totalPages) {
+        if (endPage < totalPages - 1) {
+            pagination += '<li class="page-item disabled"><span class="page-link">...</span></li>';
+        }
+        pagination += `<li class="page-item"><a class="page-link" href="#" onclick="changePage(${totalPages - 1}); return false;">${totalPages}</a></li>`;
+    }
+    if (data.has_next) {
+        pagination += `<li class="page-item"><a class="page-link" href="#" onclick="changePage(${currentPage + 1}); return false;">Next</a></li>`;
+    } else {
+        pagination += `<li class="page-item disabled"><span class="page-link">Next</span></li>`;
+    }
+    pagination += '</ul></nav>';
+    container.innerHTML = pagination;
+}
+
+function changePage(page) {
+    currentPage = page;
+    loadSessions();
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadSessions();
+    document.getElementById('filter-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        currentPage = 0;
+        currentLimit = parseInt(document.getElementById('limit').value);
+        loadSessions();
+    });
+    document.getElementById('clear-filters').addEventListener('click', function() {
+        document.getElementById('filter-form').reset();
+        currentPage = 0;
+        currentLimit = 50;
+        loadSessions();
+    });
+    document.getElementById('refresh-btn').addEventListener('click', loadSessions);
+});
+</script>
+{% endblock %}

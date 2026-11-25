@@ -12,13 +12,13 @@ from local_coding_assistant.providers.base import (
     ProviderLLMRequest,
     ProviderLLMResponse,
 )
-from local_coding_assistant.runtime.events import EventType, ExecutionEvent
+from local_coding_assistant.runtime.events import EventType, RuntimeEvent
 
 
 class MockStreamingDriver(BaseDriver):
     """Mock driver for testing streaming functionality."""
 
-    def __init__(self, events_to_emit: list[ExecutionEvent] | None = None, **kwargs):
+    def __init__(self, events_to_emit: list[RuntimeEvent] | None = None, **kwargs):
         super().__init__(api_key=None, base_url="mock://", **kwargs)
         self.events_to_emit = events_to_emit or []
         self.generate_called = False
@@ -33,9 +33,7 @@ class MockStreamingDriver(BaseDriver):
             tokens_used=10,
         )
 
-    async def stream(
-        self, request: ProviderLLMRequest
-    ) -> AsyncIterator[ExecutionEvent]:
+    async def stream(self, request: ProviderLLMRequest) -> AsyncIterator[RuntimeEvent]:
         """Mock stream method that yields predefined events."""
         self.stream_called = True
         for event in self.events_to_emit:
@@ -48,8 +46,8 @@ class MockStreamingDriver(BaseDriver):
 
 
 async def collect_events(
-    event_iterator: AsyncIterator[ExecutionEvent],
-) -> list[ExecutionEvent]:
+    event_iterator: AsyncIterator[RuntimeEvent],
+) -> list[RuntimeEvent]:
     """Collect all events from an async iterator into a list."""
     events = []
     async for event in event_iterator:
@@ -58,8 +56,8 @@ async def collect_events(
 
 
 async def collect_events_with_timeout(
-    event_iterator: AsyncIterator[ExecutionEvent], timeout: float = 5.0
-) -> list[ExecutionEvent]:
+    event_iterator: AsyncIterator[RuntimeEvent], timeout: float = 5.0
+) -> list[RuntimeEvent]:
     """Collect events with a timeout to prevent hanging tests."""
     events = []
 
@@ -91,48 +89,48 @@ def mock_streaming_driver_with_events(sample_events):
 def sample_events():
     """Fixture providing sample events for testing."""
     return [
-        ExecutionEvent(
+        RuntimeEvent(
             type=EventType.TURN_START,
             session_id="test_session",
             data={"user_input": "test query"},
         ),
-        ExecutionEvent(
+        RuntimeEvent(
             type=EventType.FRAME_START,
             session_id="test_session",
             frame_id="frame_1",
             data={"iteration": 1},
         ),
-        ExecutionEvent(
+        RuntimeEvent(
             type=EventType.LLM_START,
             session_id="test_session",
             frame_id="frame_1",
             data={"model": "test-model"},
         ),
-        ExecutionEvent(
+        RuntimeEvent(
             type=EventType.LLM_CHUNK,
             session_id="test_session",
             frame_id="frame_1",
             data={"content": "Hello"},
         ),
-        ExecutionEvent(
+        RuntimeEvent(
             type=EventType.LLM_CHUNK,
             session_id="test_session",
             frame_id="frame_1",
             data={"content": " world"},
         ),
-        ExecutionEvent(
+        RuntimeEvent(
             type=EventType.LLM_COMPLETE,
             session_id="test_session",
             frame_id="frame_1",
             data={"finish_reason": "stop"},
         ),
-        ExecutionEvent(
+        RuntimeEvent(
             type=EventType.FRAME_COMPLETE,
             session_id="test_session",
             frame_id="frame_1",
             data={"status": "success"},
         ),
-        ExecutionEvent(
+        RuntimeEvent(
             type=EventType.TURN_COMPLETE,
             session_id="test_session",
             data={"report": "test report"},

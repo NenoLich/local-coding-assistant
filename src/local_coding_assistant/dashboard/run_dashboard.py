@@ -15,6 +15,7 @@ def main():
     port = 8080
     log_level = "info"
     reload = False
+    store_db_path = None
 
     # Simple argument parsing
     args = sys.argv[1:]  # Skip script name
@@ -29,6 +30,9 @@ def main():
         elif args[i] == "--log-level" and i + 1 < len(args):
             log_level = args[i + 1]
             i += 2
+        elif args[i] == "--store-db-path" and i + 1 < len(args):
+            store_db_path = args[i + 1]
+            i += 2
         elif args[i] == "--reload":
             reload = True
             i += 1
@@ -40,7 +44,7 @@ def main():
 
     from local_coding_assistant.dashboard.app import create_app
 
-    app = create_app()
+    app = create_app(store_db_path=store_db_path)
     uvicorn.run(
         app,
         host=host,

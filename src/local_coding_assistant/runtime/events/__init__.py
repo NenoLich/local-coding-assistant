@@ -1,0 +1,75 @@
+"""Event pipeline and contracts."""
+
+from local_coding_assistant.runtime.events.contracts import (
+    ApprovalDeniedEvent,
+    ApprovalGrantedEvent,
+    ApprovalRequestForm,
+    ApprovalRequiredEvent,
+    ApprovalResponseForm,
+    BaseEvent,
+    ContinuationDecisionEvent,
+    ErrorEvent,
+    EventType,
+    FrameCompleteEvent,
+    FrameStartEvent,
+    LLMChunkEvent,
+    LLMCompleteEvent,
+    LLMStartEvent,
+    PartialResponseEvent,
+    RuntimeEvent,
+    SessionBranchEvent,
+    SessionResumeEvent,
+    SessionStartEvent,
+    ToolResultEvent,
+    ToolStartEvent,
+    TurnCompleteEvent,
+    TurnStartEvent,
+)
+from local_coding_assistant.runtime.events.pipeline import (
+    EventPipeline,
+    EventSubscriber,
+    create_default_pipeline,
+)
+from local_coding_assistant.runtime.events.projector import MessageService
+from local_coding_assistant.runtime.events.reporting import (
+    RunError,
+    RunMetrics,
+    RunReport,
+)
+from local_coding_assistant.runtime.events.reporting import (
+    RuntimeEvent as ReportingRuntimeEvent,
+)
+
+__all__ = [
+    "ApprovalDeniedEvent",
+    "ApprovalGrantedEvent",
+    "ApprovalRequestForm",
+    "ApprovalRequiredEvent",
+    "ApprovalResponseForm",
+    "BaseEvent",
+    "ContinuationDecisionEvent",
+    "ErrorEvent",
+    "EventPipeline",
+    "EventSubscriber",
+    "EventType",
+    "FrameCompleteEvent",
+    "FrameStartEvent",
+    "LLMChunkEvent",
+    "LLMCompleteEvent",
+    "LLMStartEvent",
+    "MessageService",
+    "PartialResponseEvent",
+    "ReportingRuntimeEvent",
+    "RunError",
+    "RunMetrics",
+    "RunReport",
+    "RuntimeEvent",
+    "SessionBranchEvent",
+    "SessionResumeEvent",
+    "SessionStartEvent",
+    "ToolResultEvent",
+    "ToolStartEvent",
+    "TurnCompleteEvent",
+    "TurnStartEvent",
+    "create_default_pipeline",
+]

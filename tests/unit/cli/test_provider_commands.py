@@ -176,7 +176,7 @@ class TestProviderAddCommand:
         mock_echo.assert_called()
 
         # Verify _save_config was called with the correct arguments
-        args, kwargs = mock_save_config.call_args
+        _args, kwargs = mock_save_config.call_args
         assert kwargs["config_path"] == self.config_path
         assert kwargs["provider_name"] == "test_provider"
 
@@ -240,7 +240,7 @@ class TestProviderAddCommand:
         mock_echo.assert_called()
 
         # Verify _save_config was called with correct parameters
-        args, kwargs = mock_save_config.call_args
+        _args, kwargs = mock_save_config.call_args
         assert kwargs["config_path"] == self.config_path
         assert kwargs["provider_name"] == "test_provider"
 
@@ -302,7 +302,7 @@ class TestProviderAddCommand:
         mock_echo.assert_called()
 
         # Get the actual arguments passed to _save_config
-        args, kwargs = mock_save_config.call_args
+        _args, kwargs = mock_save_config.call_args
 
         # Verify the arguments
         assert kwargs["config_path"] == self.config_path
@@ -381,7 +381,7 @@ class TestProviderListCommand:
         list_providers(provider="test_provider")
 
         # Verify appropriate messages are shown
-        mock_echo.assert_any_call("Provider: test_provider (test_source)")
+        mock_echo.assert_any_call("Provider: test_provider")
         mock_echo.assert_any_call("No models available")
 
 

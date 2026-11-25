@@ -1,0 +1,9 @@
+{% set ctx = context %}
+{% if ctx.agents_md_content %}
+AGENTS.md Instructions (closest first):
+{% for path, content in ctx.agents_md_content %}
+### From: {{ path }}
+{{ content }}
+---
+{% endfor %}
+{% endif %}

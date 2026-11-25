@@ -5,21 +5,11 @@ between different components of the system, helping to reduce coupling and
 improve testability.
 """
 
-from collections.abc import AsyncIterator, Iterable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from local_coding_assistant.tools.base import Tool
-from local_coding_assistant.tools.types import (
-    ToolCategory,
-    ToolExecutionMode,
-    ToolExecutionRequest,
-    ToolExecutionResponse,
-    ToolInfo,
-)
-
 if TYPE_CHECKING:
-    from local_coding_assistant.config import AppConfig
     from local_coding_assistant.config.path_manager import PathManager
+    from local_coding_assistant.config.schemas import AppConfig
     from local_coding_assistant.core.system_registry import SystemCapabilityRegistry
 
 
@@ -74,14 +64,6 @@ class IConfigManager(Protocol):
         """
         ...
 
-    def get_tools(self) -> dict[str, Any]:
-        """Get all configured tools.
-
-        Returns:
-            Dictionary mapping tool names to their configuration data.
-        """
-        ...
-
     def register_module(
         self, module_name: str, capabilities: dict[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -118,14 +100,6 @@ class IConfigManager(Protocol):
         """
         ...
 
-    def reload_tools(self) -> None:
-        """Reload tools configuration from the source.
-
-        This should refresh the internal state of the config manager
-        with the latest configuration from the source.
-        """
-        ...
-
     def set_session_overrides(self, overrides: dict[str, Any]) -> None:
         """Set session-level configuration overrides.
 
@@ -138,155 +112,31 @@ class IConfigManager(Protocol):
         """
         ...
 
-
-@runtime_checkable
-class IToolManager(Iterable[Any], Protocol):
-    """Interface for tool management functionality.
-
-    This protocol defines the interface for components that need to manage
-    and interact with tools in the system. Implements Iterable to support
-    iteration over available tools.
-    """
-
-    def get_tool(self, tool_name: str) -> Tool:
-        """Get a tool by name."""
-        ...
-
-    def list_tools(
-        self,
-        available_only: bool = True,
-        execution_mode: str | ToolExecutionMode | None = None,
-        category: str | ToolCategory | None = None,
-    ) -> list[ToolInfo]:
-        """List all registered tools, optionally filtered by execution mode and/or category.
+    def persist_tool_policies_overrides(
+        self, rule_id: str, outcome: str, description: str = ""
+    ) -> bool:
+        """Persist a project override to tool_policies.local.yaml.
 
         Args:
-            available_only: If True, only returns tools that are available.
-            execution_mode: Optional execution mode to filter tools by.
-            category: Optional category to filter tools by (can be string or ToolCategory).
-                     If the category doesn't exist, returns an empty list.
+            rule_id: The base rule ID to override
+            outcome: The new outcome (allow, deny, ask)
+            description: Optional description
 
         Returns:
-            List of ToolInfo objects.
+            True if successful, False otherwise
         """
         ...
 
-    def execute(self, request: ToolExecutionRequest) -> ToolExecutionResponse:
-        """Execute a tool using a ToolExecutionRequest.
+    def get_provider_by_model(self, model_id: str) -> str:
+        """Return the provider id for the given model id.
+
+        Searches ``global_config.providers`` for a provider whose ``models``
+        list contains an entry matching ``model_id``.
 
         Args:
-            request: ToolExecutionRequest containing tool name and payload.
+            model_id: Model identifier (e.g. ``google/gemini-2.0-flash``).
 
         Returns:
-            ToolExecutionResponse with execution results.
-        """
-        ...
-
-    async def execute_async(
-        self, request: ToolExecutionRequest
-    ) -> ToolExecutionResponse:
-        """Asynchronously execute a tool using a ToolExecutionRequest and return ToolExecutionResponse.
-
-        Args:
-            request: ToolExecutionRequest containing tool name and payload.
-
-        Returns:
-            ToolExecutionResponse with execution results.
-        """
-        ...
-
-    def run_tool(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Synchronously execute a tool.
-
-        Args:
-            tool_name: Name of the tool to execute
-            payload: Input parameters for the tool
-
-        Returns:
-            The tool's execution result as a dictionary
-
-        Raises:
-            ToolRegistryError: If the tool is not found, is async, or execution fails
-        """
-        ...
-
-    async def arun_tool(
-        self, tool_name: str, payload: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Asynchronously execute a tool.
-
-        Args:
-            tool_name: Name of the tool to execute
-            payload: Input parameters for the tool
-
-        Returns:
-            The tool's execution result as a dictionary
-
-        Raises:
-            ToolRegistryError: If the tool is not found, is not async, or execution fails
-        """
-        ...
-
-    def stream_tool(
-        self, tool_name: str, payload: dict[str, Any]
-    ) -> AsyncIterator[dict[str, Any]]:
-        """Stream results from a tool that supports streaming.
-
-        Args:
-            tool_name: Name of the tool to execute
-            payload: Input parameters for the tool
-
-        Yields:
-            Chunks of tool output as dictionaries
-
-        Raises:
-            ToolRegistryError: If the tool is not found, doesn't support streaming, or execution fails
-        """
-        ...
-
-    def get_sandbox_tools_prompt(
-        self, tools: list[ToolInfo] | None = None
-    ) -> list[str]:
-        """Generate prompt segment for sandbox tools in PTC mode.
-
-        Args:
-            tools: Optional list of tools to include in the prompt
-
-        Returns:
-            Formatted list of strings containing tool documentation and usage examples
-            for sandbox tools, or an empty list if no tools found.
-        """
-        ...
-
-    def has_runtime(self, tool_name: str) -> bool:
-        """Check if a tool with the given name has a valid runtime.
-
-        Args:
-            tool_name: Name of the tool to check
-
-        Returns:
-            bool: True if the tool exists and has a valid runtime, False otherwise
-        """
-        ...
-
-    def check_sandbox_availability(self) -> bool:
-        """
-        Check if sandbox is available
-        Returns: available
-        """
-        ...
-
-    async def run_programmatic_tool_call(
-        self, code: str, session_id: str, env_vars: dict[str, str] | None = None
-    ) -> ToolExecutionResponse:
-        """Execute code using the programmatic tool calling interface (sandbox).
-
-        Args:
-            code: The Python code to execute.
-            session_id: The session ID for context persistence.
-            env_vars: Optional environment variables.
-
-        Returns:
-            The execution response.
+            Provider id (e.g. ``google``) or empty string when not found.
         """
         ...

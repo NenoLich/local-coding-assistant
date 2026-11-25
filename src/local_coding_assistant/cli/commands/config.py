@@ -1,10 +1,16 @@
 """Configure system settings with file-based persistence."""
 
+import asyncio
+import json
+import logging
 import os
+from typing import Any
 
 import typer
+import yaml
 
 from local_coding_assistant.config.env_manager import get_env_manager
+from local_coding_assistant.core.bootstrap import bootstrap
 from local_coding_assistant.core.error_handler import safe_entrypoint
 from local_coding_assistant.utils.logging import get_logger
 
@@ -106,6 +112,114 @@ def set_config(
         prefixed_key = _env_manager.with_prefix(key)
         log.info("Temporarily set %s (not persisted)", prefixed_key)
         typer.echo(f"Temporarily set {prefixed_key} (not persisted)")
+
+
+_MISSING = object()
+
+
+def _resolve_config_key(config: Any, key: str) -> Any:
+    """Resolve a dot-notation key against a resolved config object.
+
+    Args:
+        config: Resolved AppConfig (or any nested section object)
+        key: Dot-notation key (e.g. "llm.model_name")
+
+    Returns:
+        The resolved value, or the ``_MISSING`` sentinel if the path does
+        not exist
+    """
+    current = config
+    for part in key.split("."):
+        if not hasattr(current, part):
+            return _MISSING
+        current = getattr(current, part)
+    return current
+
+
+@app.command("effective")
+@safe_entrypoint("cli.config.effective")
+def effective_config(
+    key: str = typer.Argument(
+        None,
+        help=(
+            "Dot-notation config key (e.g. llm.model_name); "
+            "dumps the full resolved config if omitted"
+        ),
+    ),
+    output_format: str = typer.Option(
+        "yaml", "--format", help="Output format for full dumps: yaml, json"
+    ),
+    log_level: str = typer.Option("INFO", "--log-level", help="Logging level"),
+) -> None:
+    """Show the effective (resolved) configuration.
+
+    Resolves the global config with all layers applied: defaults.yaml,
+    config files, environment variables, and active session overrides.
+    """
+    level = getattr(logging, log_level.upper(), logging.INFO)
+
+    async def _main() -> int:
+        async with bootstrap(log_level=level) as ctx:
+            config_manager = ctx.get("config")
+            if config_manager is None:
+                typer.echo("Error: Config manager not available", err=True)
+                return 1
+
+            resolved = config_manager.global_config
+
+            if key is not None:
+                value = _resolve_config_key(resolved, key)
+                if value is _MISSING:
+                    typer.echo(f"No configuration found for key: {key}", err=True)
+                    return 1
+                typer.echo(f"{key}={value}")
+                return 0
+
+            data = resolved.model_dump(mode="json")
+            if output_format.lower() == "json":
+                typer.echo(json.dumps(data, indent=2, default=str))
+            else:
+                typer.echo(yaml.safe_dump(data, sort_keys=False))
+            return 0
+        return 0
+
+    result = asyncio.run(_main())
+    raise typer.Exit(code=result)
+
+
+@app.command("overrides")
+@safe_entrypoint("cli.config.overrides")
+def session_overrides(
+    log_level: str = typer.Option("INFO", "--log-level", help="Logging level"),
+) -> None:
+    """Show active session-level config overrides.
+
+    Session overrides are per-process: they include capability fallbacks
+    resolved during bootstrap and any run options (``locca run --model ...``)
+    applied by the current process. A fresh CLI invocation starts with only
+    the capability fallbacks.
+    """
+    level = getattr(logging, log_level.upper(), logging.INFO)
+
+    async def _main() -> int:
+        async with bootstrap(log_level=level) as ctx:
+            config_manager = ctx.get("config")
+            if config_manager is None:
+                typer.echo("Error: Config manager not available", err=True)
+                return 1
+
+            overrides = config_manager.session_overrides
+            if not overrides:
+                typer.echo("No active session overrides")
+                return 0
+
+            for field_path, value in sorted(overrides.items()):
+                typer.echo(f"{field_path}={value}")
+            return 0
+        return 0
+
+    result = asyncio.run(_main())
+    raise typer.Exit(code=result)
 
 
 @app.command("unset")

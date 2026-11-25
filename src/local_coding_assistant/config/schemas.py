@@ -9,13 +9,6 @@ from pydantic import field_validator
 
 from local_coding_assistant.config.dependencies import SettingDependency
 from local_coding_assistant.config.field import ConfigModel, config_field
-from local_coding_assistant.tools.types import (
-    ToolCategory,
-    ToolInfo,
-    ToolPermission,
-    ToolSource,
-    ToolTag,
-)
 
 
 class ProviderStatus(ConfigModel, section="provider_status"):
@@ -45,6 +38,11 @@ class LLMConfig(ConfigModel, section="llm"):
     )
     max_tokens: int | None = config_field(
         default=None, gt=0, description="Maximum tokens to generate"
+    )
+    timeout: int | float = config_field(
+        default=120.0,
+        gt=0,
+        description="Timeout for llm requests",
     )
     max_retries: int = config_field(
         default=3,
@@ -129,6 +127,112 @@ class LLMConfig(ConfigModel, section="llm"):
         self.providers = [p for p in self.providers if p.name != provider_name]
 
 
+class LoopDetectionConfig(ConfigModel, section="loop_detection"):
+    """Configuration for loop detection."""
+
+    max_repetitions: int = config_field(
+        default=3, ge=1, description="Max times same tool signature can repeat"
+    )
+    window_size: int = config_field(
+        default=5, ge=1, description="Sliding window size for signature comparison"
+    )
+    enabled: bool = config_field(default=True, description="Enable loop detection")
+    check_consecutive: bool = config_field(
+        default=True, description="Check for identical consecutive calls"
+    )
+    check_window_repetitions: bool = config_field(
+        default=True, description="Check for repetitions within window"
+    )
+
+
+class TokenBudgetConfig(ConfigModel, section="token_budget"):
+    """Configuration for token budget."""
+
+    input_max_tokens: int = config_field(
+        default=100_000, ge=1, description="Maximum input tokens per turn"
+    )
+    output_max_tokens: int = config_field(
+        default=100_000, ge=1, description="Maximum output tokens per turn"
+    )
+    warn_threshold: float = config_field(
+        default=0.8, ge=0.0, le=1.0, description="Warning threshold as fraction of max"
+    )
+
+
+class DeadlineTrackerConfig(ConfigModel, section="deadline_tracker"):
+    """Configuration for deadline tracking."""
+
+    timeout_seconds: int = config_field(
+        default=300, ge=1, description="Turn timeout in seconds"
+    )
+    warn_threshold: float = config_field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description="Warning threshold as fraction of timeout",
+    )
+
+
+class ContinuationPolicyConfig(ConfigModel, section="continuation_policy"):
+    """Configuration for continuation policy - fully serializable for resume/replay."""
+
+    max_frames_per_turn: int = config_field(
+        default=10, ge=1, description="Maximum frames per turn"
+    )
+    max_generation_retries: int = config_field(
+        default=2, ge=0, description="Maximum LLM generation retries"
+    )
+    max_compaction_retries: int = config_field(
+        default=1, ge=0, description="Maximum context compaction retries"
+    )
+
+    respect_retry_after: bool = config_field(
+        default=True,
+        description="Honor provider Retry-After hints before retrying a transient error",
+    )
+
+    transient_retry_base_delay: float = config_field(
+        default=1.0,
+        ge=0.0,
+        description="Base delay (seconds) for exponential backoff between transient-error retries",
+    )
+
+    transient_retry_max_delay: float = config_field(
+        default=60.0,
+        ge=0.0,
+        description="Maximum backoff delay (seconds) between transient-error retries",
+    )
+    approval_timeout_seconds: int = config_field(
+        default=300, ge=1, description="Approval timeout in seconds"
+    )
+
+    # Tool retry configuration for retryable infrastructure failures
+    # (timeout, backend failure, connection error)
+    tool_retry_max_retries: int = config_field(
+        default=2, ge=0, description="Maximum retries for retryable tool failures"
+    )
+    tool_retry_base_delay: float = config_field(
+        default=1.0,
+        ge=0.0,
+        description="Base delay (seconds) for exponential backoff between tool retries",
+    )
+    tool_retry_max_delay: float = config_field(
+        default=30.0,
+        ge=0.0,
+        description="Maximum backoff delay (seconds) between tool retries",
+    )
+
+    loop_detection: LoopDetectionConfig = config_field(
+        default_factory=LoopDetectionConfig, description="Loop detection config"
+    )
+    token_budget: TokenBudgetConfig = config_field(
+        default_factory=TokenBudgetConfig, description="Token budget config"
+    )
+    deadline: DeadlineTrackerConfig = config_field(
+        default_factory=DeadlineTrackerConfig, description="Deadline config"
+    )
+
+
 class RuntimeConfig(ConfigModel, section="runtime"):
     """Configuration for runtime behavior and settings."""
 
@@ -139,6 +243,15 @@ class RuntimeConfig(ConfigModel, section="runtime"):
         default=100,
         gt=0,
         description="Maximum number of messages to keep in session history",
+    )
+    session_retention_enabled: bool = config_field(
+        default=True,
+        description="Whether in-memory session file-version retention/eviction is enabled",
+    )
+    session_retention_max_turns: int = config_field(
+        default=50,
+        gt=0,
+        description="Maximum cumulative turns before evicting the LRU session's in-memory file-version data",
     )
     enable_logging: bool = config_field(
         default=True, description="Whether to enable runtime logging"
@@ -151,11 +264,10 @@ class RuntimeConfig(ConfigModel, section="runtime"):
         description="Agent execution mode: 'default_loop' (legacy AgentLoop), 'graph' (LangGraph-based agent), 'frame' (new ExecutionFrame workflow), or 'no_agent'",
         dependencies=SettingDependency(
             value_requirements={
-                "default_loop": ["llm_service", "tool_manager"],
-                "graph": ["llm_service", "tool_manager", "langgraph_installed"],
-                "frame": ["llm_service", "tool_manager"],
+                "frame": ["llm_service", "tool_gateway"],
                 "no_agent": [],
-            }
+            },
+            fallback_order=["frame", "no_agent"],
         ),
     )
     stream: bool = config_field(
@@ -167,16 +279,31 @@ class RuntimeConfig(ConfigModel, section="runtime"):
         dependencies=SettingDependency(
             value_requirements={
                 "ptc": [
-                    "tool_manager",
+                    "tools_available",
                     "sandbox_manager",
                     "python_execution",
                     "sandbox_available",
                 ],
-                "classic": ["tool_manager"],
+                "classic": ["tools_available"],
                 "reasoning_only": [],
             },
             fallback_order=["ptc", "classic", "reasoning_only"],
         ),
+    )
+    session_context_resolution: str = config_field(
+        default="dynamic",
+        description="Context resolution mode: 'static' uses session-level config that doesn't change turn-to-turn, 'dynamic' uses config_manager to build live RuntimeContextConfig per turn",
+        dependencies=SettingDependency(
+            value_requirements={
+                "static": [],
+                "dynamic": [],
+            },
+            fallback_order=["dynamic", "static"],
+        ),
+    )
+    continuation_policy: ContinuationPolicyConfig = config_field(
+        default_factory=ContinuationPolicyConfig,
+        description="Continuation policy configuration for frame execution",
     )
 
     @field_validator("tool_call_mode")
@@ -205,12 +332,18 @@ class ModelConfig(ConfigModel, section="model"):
         default_factory=list,
         description="List of supported parameter names for this model",
     )
+    extra_body: dict[str, Any] = config_field(
+        default_factory=dict,
+        description="Provider-specific parameters passed via extra_body to litellm",
+    )
 
     @classmethod
     def from_dict(cls, name: str, config: dict) -> ModelConfig:
         """Create ModelConfig from a model name and its configuration."""
         return cls(
-            name=name, supported_parameters=config.get("supported_parameters", [])
+            name=name,
+            supported_parameters=config.get("supported_parameters", []),
+            extra_body=config.get("extra_body", {}),
         )
 
 
@@ -482,271 +615,26 @@ class AgentConfig(ConfigModel, section="agent"):
             return self.general["models"]
 
 
-class ToolConfig(ConfigModel, section="tool"):
-    """Configuration for a tool (YAML/JSON representation).
+class AgentsMdConfig(ConfigModel, section="prompt_agents_md"):
+    """Configuration for AGENTS.md / CLAUDE.md / LOCCA.md discovery."""
 
-    This is the configuration model used for loading tool definitions from
-    configuration files. It can be converted to a ToolInfo object for runtime use.
-    """
-
-    id: Annotated[str, config_field(..., description="Unique identifier for the tool")]
-    name: str | None = config_field(
-        None, description="Display name of the tool (defaults to id if not provided)"
-    )
-    description: Annotated[
-        str, config_field(..., description="Description of what the tool does")
-    ]
-    source: ToolSource | str = config_field(
-        ToolSource.EXTERNAL, description="Source of the tool implementation"
-    )
-    path: str | None = config_field(
-        None,
-        description=(
-            "Path to the Python module containing the tool implementation. "
-            "Can be relative to the config directory or absolute."
-        ),
-    )
-    module: str | None = config_field(
-        None,
-        description=(
-            "Python import path to the module containing the tool implementation. "
-            "Alternative to path, used for installed packages."
-        ),
-    )
-    tool_class: type | str | None = config_field(
-        None,
-        description=(
-            "The tool class type. This should be set by the ToolLoader "
-            "when loading the tool module. Can be a string class name or actual type."
-        ),
-    )
-
-    @field_validator("tool_class", mode="before")
-    @classmethod
-    def validate_tool_class(cls, v):
-        if v is None or isinstance(v, (type, str)):
-            return v
-        return str(v)  # Convert any non-None, non-type value to string
-
-    endpoint: str | None = config_field(
-        None,
-        description="Endpoint URL for remote tools (MCP tools)",
-    )
-    provider: str | None = config_field(
-        None,
-        description="Provider name for MCP or external tools",
-    )
-    category: ToolCategory | str | None = config_field(
-        None,
-        description="Category for organizing tools (e.g., 'math', 'network')",
-    )
-    permissions: list[ToolPermission | str] = config_field(
-        default_factory=list, description="List of permissions required by this tool"
-    )
-    tags: list[ToolTag | str] = config_field(
-        default_factory=list, description="Tags for categorizing and filtering tools"
-    )
     enabled: bool = config_field(
-        True, description="Whether this tool is enabled and should be loaded"
+        True, description="Whether AGENTS.md discovery is enabled"
     )
-    available: bool = config_field(
-        True,
-        description="Whether this tool was successfully loaded and is ready to use",
+    walk_up: bool = config_field(
+        True, description="Whether to walk up from cwd to workspace root"
     )
-    is_async: bool = config_field(
-        False, description="Whether the tool's run method is async"
+    filenames: list[str] = config_field(
+        default_factory=lambda: ["AGENTS.md", "CLAUDE.md", "LOCCA.md"],
+        description="Filenames to discover, closest to cwd first",
     )
-    supports_streaming: bool = config_field(
-        False, description="Whether the tool supports streaming output"
+    global_paths: list[str] = config_field(
+        default_factory=lambda: [
+            "~/.config/locca/AGENTS.md",
+            "~/.claude/CLAUDE.md",
+        ],
+        description="Global AGENTS.md paths",
     )
-    config: dict[str, Any] = config_field(
-        default_factory=dict, description="Tool-specific configuration options"
-    )
-    parameters: dict[str, Any] = config_field(
-        default_factory=lambda: {"type": "object", "properties": {}, "required": []},
-        description=(
-            "OpenAI-compatible parameter schema for the tool. "
-            "Defines the expected input parameters in the format: "
-            '{"type": "object", "properties": {"param": {"type": "string"}}, "required": ["param"]}'
-        ),
-    )
-
-    @field_validator("source", mode="before")
-    @classmethod
-    def validate_source(cls, v):
-        if isinstance(v, str):
-            try:
-                return ToolSource(v.lower())
-            except ValueError:
-                return v
-        return v
-
-    @field_validator("category", mode="before")
-    @classmethod
-    def validate_category(cls, v):
-        if v is None or isinstance(v, ToolCategory):
-            return v
-        try:
-            return ToolCategory(v.lower())
-        except ValueError:
-            return v
-
-    @field_validator("permissions", mode="before")
-    @classmethod
-    def validate_permissions(cls, v):
-        if v is None:
-            return []
-        if isinstance(v, str):
-            return [p.strip() for p in v.split(",") if p.strip()]
-        return v
-
-    @field_validator("tags", mode="before")
-    @classmethod
-    def validate_tags(cls, v):
-        if v is None:
-            return []
-        if isinstance(v, str):
-            return [t.strip() for t in v.split(",") if t.strip()]
-        return v
-
-    @field_validator("parameters", mode="before")
-    @classmethod
-    def validate_parameters(cls, v):
-        if v is None:
-            return {"type": "object", "properties": {}, "required": []}
-        if not isinstance(v, dict):
-            return {"type": "object", "properties": {}, "required": []}
-
-        # Ensure required fields exist
-        if "type" not in v:
-            v["type"] = "object"
-        if "properties" not in v:
-            v["properties"] = {}
-        if "required" not in v:
-            v["required"] = []
-
-        return v
-
-    @field_validator("available", mode="before")
-    @classmethod
-    def validate_available(cls, v, info):
-        # If tool is disabled, it cannot be available
-        if not info.data.get("enabled", True):
-            return False
-        return v if v is not None else True
-
-    def to_tool_info(self) -> ToolInfo:
-        """Convert this configuration to a runtime ToolInfo object.
-
-        Note: tool_class should be converted to a proper type by the ToolLoader before calling this method.
-        """
-        # Ensure available is False if tool is disabled
-        available = self.available and self.enabled
-
-        # Ensure tool_class is either a type or None
-        tool_class = self.tool_class if isinstance(self.tool_class, type) else None
-
-        # Convert category to ToolCategory enum if it's a string
-        category = (
-            ToolCategory(self.category.lower())
-            if isinstance(self.category, str)
-            else self.category
-        )
-
-        # Ensure parameters has the correct structure
-        parameters = self.parameters or {}
-        if not isinstance(parameters, dict):
-            parameters = {}
-
-        # Ensure required fields exist in parameters
-        if "type" not in parameters:
-            parameters["type"] = "object"
-        if "properties" not in parameters:
-            parameters["properties"] = {}
-        if "required" not in parameters:
-            parameters["required"] = []
-
-        return ToolInfo(
-            name=self.id,
-            tool_class=tool_class,
-            description=self.description,
-            category=category,
-            source=self.source,
-            permissions=self.permissions,
-            tags=self.tags,
-            is_async=self.is_async,
-            supports_streaming=self.supports_streaming,
-            enabled=self.enabled,
-            available=available,
-            endpoint=self.endpoint,
-            provider=self.provider,
-            config=self.config,
-            parameters=parameters,
-        )
-
-    def model_dump(self, *args, **kwargs):
-        """Custom dump to handle enums properly."""
-        data = super().model_dump(*args, **kwargs)
-
-        # Convert enums to their values
-        if "source" in data and isinstance(data["source"], ToolSource):
-            data["source"] = data["source"].value
-
-        if "category" in data and isinstance(data["category"], ToolCategory):
-            data["category"] = data["category"].value
-
-        if "permissions" in data:
-            data["permissions"] = [
-                p.value if isinstance(p, ToolPermission) else p
-                for p in data["permissions"]
-            ]
-
-        if "tags" in data:
-            data["tags"] = [
-                t.value if isinstance(t, ToolTag) else t for t in data["tags"]
-            ]
-
-        return data
-
-
-class ToolConfigList(ConfigModel, section="tools"):
-    """Wrapper for a list of tool configurations."""
-
-    tools: list[ToolConfig] = config_field(
-        default_factory=list, description="List of tool configurations"
-    )
-
-    @classmethod
-    def from_dict(cls, data: dict | list[Any]) -> ToolConfigList:
-        """Create ToolConfigList from a dictionary or a list of ToolConfig objects.
-
-        Args:
-            data: Either a dict with a 'tools' key containing a list of tool configs,
-                or a list of ToolConfig objects or dicts.
-        """
-        if isinstance(data, dict):
-            if "tools" not in data:
-                return cls(tools=[])
-            tools_data = data["tools"]
-        else:
-            tools_data = data
-
-        tools = []
-        for tool in tools_data:
-            if isinstance(tool, ToolConfig):
-                tools.append(tool)
-            elif isinstance(tool, dict):
-                tools.append(ToolConfig(**tool))
-            else:
-                raise ValueError(
-                    f"Expected ToolConfig or dict, got {type(tool).__name__}"
-                )
-
-        return cls(tools=tools)
-
-    def to_dict(self) -> dict:
-        """Convert ToolConfigList to dictionary."""
-        return {"tools": [tool.model_dump(exclude_unset=True) for tool in self.tools]}
 
 
 class PromptTemplateConfig(ConfigModel, section="prompt"):
@@ -761,17 +649,53 @@ class PromptTemplateConfig(ConfigModel, section="prompt"):
     )
     templates: dict[str, str] = config_field(
         default_factory=lambda: {
-            "system": "base/system_core.jinja2",
-            "execution_rules": "base/execution_rules.jinja2",
-            "agent_identity": "base/agent_identity.jinja2",
+            "identity_base": "base/identity.jinja2",
+            "personality": "base/personality.jinja2",
+            "model_default": "base/model_default.jinja2",
+            "model_gemini": "base/model_gemini.jinja2",
+            "static_env": "blocks/static_env.jinja2",
+            "agents_md": "blocks/agents_md.jinja2",
+            "global_rules": "blocks/global_rules.jinja2",
+            "config_overrides": "blocks/config_rules.jinja2",
             "skills": "blocks/skills.jinja2",
             "memories": "blocks/memories.jinja2",
-            "tools_prompt": "blocks/tools_prompt.jinja2",
             "examples": "blocks/examples.jinja2",
-            "repo_context": "blocks/repo_context.jinja2",
+            "repo_metadata": "blocks/repo_metadata.jinja2",
+            "repo_map": "blocks/repo_map.jinja2",
             "constraints": "blocks/constraints.jinja2",
+            "safety": "blocks/safety.jinja2",
+            "output_format": "blocks/output_format.jinja2",
+            "classic_tools_mode": "modes/classic_tools.jinja2",
+            "sandbox_python_mode": "modes/sandbox_python.jinja2",
+            "sandbox_shell_mode": "modes/sandbox_shell.jinja2",
+            "reasoning_only_mode": "modes/reasoning_only.jinja2",
+            "default_agent": "agents/default.jinja2",
+            "planner_agent": "agents/planner.jinja2",
+            "executor_agent": "agents/executor.jinja2",
+            "compaction_agent": "agents/compaction.jinja2",
+            "subagent_agent": "agents/subagent.jinja2",
+            "planner_extra": "agents/planner_extra.jinja2",
+            "executor_extra": "agents/executor_extra.jinja2",
         },
         description="Template paths for different prompt sections",
+    )
+    presets: dict[str, str] = config_field(
+        default_factory=lambda: {
+            "default": "default",
+            "compaction": "compaction",
+            "subagent": "subagent",
+            "planner": "planner",
+            "executor": "executor",
+        },
+        description="Agent preset registry names",
+    )
+    agents_md: AgentsMdConfig = config_field(
+        default_factory=AgentsMdConfig,
+        description="AGENTS.md discovery configuration",
+    )
+    config_instructions: list[str] = config_field(
+        default_factory=list,
+        description="Array of instruction strings or URLs",
     )
     enable_jinja_autoescape: bool = config_field(
         False,
@@ -899,6 +823,343 @@ class DashboardConfig(ConfigModel, section="dashboard"):
     )
     auto_start: bool = config_field(
         default=False, description="Whether to auto-start dashboard with LOCCA"
+    )
+
+
+class TelemetryConfig(ConfigModel, section="telemetry"):
+    """Configuration for OpenTelemetry tracing (OTLP/gRPC export)."""
+
+    enabled: bool = config_field(
+        default=False,
+        description="Whether OTel tracing is enabled (OTEL_EXPORTER_OTLP_ENDPOINT also enables it)",
+    )
+    service_name: str = config_field(
+        default="locca-runtime",
+        description="OTel service.name resource attribute",
+    )
+    otlp_endpoint: str | None = config_field(
+        default=None,
+        description="OTLP/gRPC collector endpoint (e.g. http://localhost:4317 for Jaeger)",
+    )
+    console_export: bool = config_field(
+        default=False,
+        description="Also export spans to the console (debugging)",
+    )
+
+
+class ToolsPlatformTimeoutConfig(ConfigModel, section="tools_platform_timeout"):
+    """Timeout policy for the tools platform (seconds)."""
+
+    soft_seconds: float = config_field(
+        default=10.0,
+        gt=0.0,
+        description="Soft timeout before progress reporting / escalation",
+    )
+    hard_seconds: float = config_field(
+        default=300.0,
+        gt=0.0,
+        description="Maximum execution deadline",
+    )
+    idle_seconds: float = config_field(
+        default=30.0,
+        gt=0.0,
+        description="Timeout when no output is produced",
+    )
+    heartbeat_seconds: float = config_field(
+        default=5.0,
+        gt=0.0,
+        description="Interval for progress checks",
+    )
+    cancellation_grace_seconds: float = config_field(
+        default=5.0,
+        gt=0.0,
+        description="Grace period before forceful termination",
+    )
+
+
+class ToolsPlatformOutputLimitsConfig(
+    ConfigModel, section="tools_platform_output_limits"
+):
+    """Output limits for command execution."""
+
+    max_stdout_bytes: int = config_field(
+        default=262144, gt=0, description="Maximum stdout bytes before truncation"
+    )
+    max_stderr_bytes: int = config_field(
+        default=262144, gt=0, description="Maximum stderr bytes before truncation"
+    )
+    max_lines: int = config_field(
+        default=400, gt=0, description="Maximum output lines before truncation"
+    )
+
+
+class ToolsPlatformConcurrencyConfig(ConfigModel, section="tools_platform_concurrency"):
+    """Concurrency policy for the tools platform scheduler."""
+
+    max_parallel_reads: int = config_field(
+        default=8, gt=0, description="Maximum concurrent read operations"
+    )
+    max_parallel_processes: int = config_field(
+        default=2, gt=0, description="Maximum concurrent process operations"
+    )
+    write_conflict_policy: str = config_field(
+        default="deny",
+        description="Behavior on write conflicts: deny or overwrite",
+    )
+
+
+class ToolsPlatformSnapshotsConfig(ConfigModel, section="tools_platform_snapshots"):
+    """Snapshot storage configuration for workspace transactions."""
+
+    enabled: bool = config_field(
+        default=True, description="Whether workspace snapshots are enabled"
+    )
+    directory: str = config_field(
+        default="@data/workspace_snapshots",
+        description="Snapshot storage directory (supports @ aliases)",
+    )
+    max_snapshots: int = config_field(
+        default=10, gt=0, description="Maximum snapshots kept per workspace"
+    )
+    max_snapshot_age_days: int = config_field(
+        default=30, gt=0, description="Maximum snapshot age in days"
+    )
+
+
+class ToolsPlatformIgnorePolicyConfig(
+    ConfigModel, section="tools_platform_ignore_policy"
+):
+    """Ignore file policy for file traversal tools."""
+
+    files: list[str] = config_field(
+        default_factory=lambda: [".gitignore", ".aiignore"],
+        description="List of ignore filenames in order of precedence (higher index = higher priority)",
+    )
+
+
+class ToolsPlatformPathPolicyConfig(ConfigModel, section="tools_platform_path_policy"):
+    """Workspace path policy for the tools platform."""
+
+    allowed_patterns: list[str] = config_field(
+        default_factory=lambda: ["**"],
+        description="Glob patterns for allowed paths (relative to workspace root)",
+    )
+    denied_patterns: list[str] = config_field(
+        default_factory=list,
+        description="Glob patterns for denied paths (relative to workspace root)",
+    )
+    allow_symlinks: bool = config_field(
+        default=False, description="Whether symlink traversal is allowed"
+    )
+    max_depth: int | None = config_field(
+        default=None, description="Maximum directory depth (None for unlimited)"
+    )
+
+
+class ArgumentMatcherConfig(ConfigModel, section="tools_platform_argument_matcher"):
+    """Argument matcher for approval rules.
+
+    Matches tool arguments using glob patterns on specific argument values
+    or command string patterns for run_command.
+    """
+
+    command_pattern: str | None = config_field(
+        default=None, description="Glob pattern for command string (run_command only)"
+    )
+    arg_patterns: dict[str, str] = config_field(
+        default_factory=dict,
+        description="Glob patterns for specific argument values",
+    )
+    condition: str | None = config_field(
+        default=None, description="Optional Python expression for complex matching"
+    )
+
+
+class MatcherConfig(ConfigModel, section="tools_platform_matcher"):
+    """Matcher configuration for approval rules."""
+
+    type: str = config_field(
+        description="Matcher type: any_args, command_pattern, path_outside_workspace, arg_equals, arg_pattern"
+    )
+    pattern: str | None = config_field(
+        default=None, description="Glob pattern (for command_pattern, arg_pattern)"
+    )
+    arg: str | None = config_field(
+        default=None, description="Argument name (for arg_equals, arg_pattern)"
+    )
+    value: Any | None = config_field(
+        default=None, description="Expected value (for arg_equals)"
+    )
+
+
+class PolicyRuleConfig(ConfigModel, section="tools_platform_policy_rule"):
+    """A single approval policy rule."""
+
+    id: str = config_field(description="Unique rule identifier")
+    tool_id: str | list[str] = config_field(description="Tool this rule applies to")
+    matcher: MatcherConfig = config_field(description="Argument matching criteria")
+    outcome: str = config_field(description="Decision outcome: allow, deny, or ask")
+    description: str = config_field(
+        default="", description="Human-readable description"
+    )
+    source: str = config_field(
+        default="config", description="Rule source: config or user_approval"
+    )
+    priority: int = config_field(
+        default=100, description="Rule priority (higher = evaluated first)"
+    )
+
+
+class ProjectOverrideConfig(ConfigModel, section="tools_platform_project_override"):
+    """Project-level approval override (persisted to .local.yaml)."""
+
+    base_rule_id: str = config_field(description="ID of base rule to override")
+    outcome: str = config_field(description="Override outcome: allow, deny, or ask")
+    description: str = config_field(
+        default="", description="Human-readable description"
+    )
+
+
+class ToolsPlatformConfig(ConfigModel, section="tools_platform"):
+    """Configuration for the tools_platform tool gateway."""
+
+    backend: str = config_field(
+        default="host",
+        description="Tool execution backend: 'host' or 'docker'",
+    )
+    exposed_tools: str | list[str] = config_field(
+        default="auto",
+        description="Exposure policy: 'auto' for all backend-compatible tools, or an explicit list of tool IDs",
+    )
+    default_policy: str = config_field(
+        default="ask",
+        description="Approval default when no rule matches: allow, deny, or ask",
+    )
+    # Risk classes are advisory only (for UI display), not used for policy decisions
+    risk_defaults: dict[str, str] = config_field(
+        default_factory=lambda: {
+            "safe": "allow",
+            "low": "ask",
+            "medium": "ask",
+            "high": "ask",
+            "critical": "deny",
+        },
+        description="Advisory risk-based default policies (not enforced)",
+    )
+    allow_network: bool = config_field(
+        default=False, description="Default network access policy for commands"
+    )
+    non_interactive: bool = config_field(
+        default=False,
+        description="If true, 'ask' approval outcomes become typed blocked results",
+    )
+    auto_approve: bool = config_field(
+        default=False,
+        description="If true, automatically approve tools that would require approval (fallback rule becomes allow)",
+    )
+    workspace_root: str = config_field(
+        default="@target",
+        description="Workspace root (supports @ aliases, resolved via PathManager)",
+    )
+    # Deprecated: use tools.<tool_id>.command_approval instead
+    command_approval_path: str | None = config_field(
+        default="@config/command_approval.toml",
+        description="Path to the command approval TOML policy file (deprecated)",
+    )
+    env_allowlist: list[str] | None = config_field(
+        default=None,
+        description="Environment keys passed to commands (None = pass through)",
+    )
+    max_output_bytes: int = config_field(
+        default=262144, gt=0, description="Maximum bytes returned by read/search tools"
+    )
+    max_read_lines: int = config_field(
+        default=400, gt=0, description="Maximum lines returned by read tools"
+    )
+    max_search_matches: int = config_field(
+        default=200, gt=0, description="Maximum matches returned by search tools"
+    )
+    normalize_to_lf_line_endings: bool = config_field(
+        default=False,
+        description="When true, normalizes CRLF/CR line endings to LF for LLM-facing reads and edit matching. Baseline hashes and snapshots remain raw disk bytes.",
+    )
+    path_policy: ToolsPlatformPathPolicyConfig = config_field(
+        default_factory=ToolsPlatformPathPolicyConfig,
+        description="Workspace path access policy",
+    )
+    ignore_policy: ToolsPlatformIgnorePolicyConfig = config_field(
+        default_factory=ToolsPlatformIgnorePolicyConfig,
+        description="Ignore file policy for file traversal tools",
+    )
+    snapshots: ToolsPlatformSnapshotsConfig = config_field(
+        default_factory=ToolsPlatformSnapshotsConfig,
+        description="Workspace snapshot storage configuration",
+    )
+    timeout: ToolsPlatformTimeoutConfig = config_field(
+        default_factory=ToolsPlatformTimeoutConfig,
+        description="Timeout policy for tool execution",
+    )
+    output_limits: ToolsPlatformOutputLimitsConfig = config_field(
+        default_factory=ToolsPlatformOutputLimitsConfig,
+        description="Output limits for command execution",
+    )
+    concurrency: ToolsPlatformConcurrencyConfig = config_field(
+        default_factory=ToolsPlatformConcurrencyConfig,
+        description="Concurrency policy for the scheduler",
+    )
+    # All approval rules with explicit priorities
+    rules: list[PolicyRuleConfig] = config_field(
+        default_factory=list,
+        description="Complete rule set with priorities",
+    )
+    # Project overrides (auto-populated by YES_ALWAYS_PROJECT)
+    project_overrides: list[ProjectOverrideConfig] = config_field(
+        default_factory=list,
+        description="Project-level approval overrides (ASK -> ALLOW)",
+    )
+    # Configurable paths for tool policies files
+    tool_policies_path: str = config_field(
+        default="@config/tool_policies.yaml",
+        description="Path to base tool policies file (supports @ aliases)",
+    )
+    tool_policies_local_path: str = config_field(
+        default="@config/tool_policies.local.yaml",
+        description="Path to project overrides file (supports @ aliases)",
+    )
+
+
+class ExecutionStoreConfig(ConfigModel, section="execution_store"):
+    """Configuration for the durable execution store (SQLite)."""
+
+    enabled: bool = config_field(
+        default=True,
+        description="Whether the durable execution store is enabled",
+    )
+    db_path: str = config_field(
+        default="@data/execution_store.db",
+        description="Path to the SQLite database (supports @ aliases)",
+    )
+    flush_interval_ms: int = config_field(
+        default=1000,
+        gt=0,
+        description="Writer queue flush interval in milliseconds",
+    )
+    batch_size: int = config_field(
+        default=100,
+        gt=0,
+        description="Maximum number of operations per write batch",
+    )
+    retention_days: dict[str, int] = config_field(
+        default_factory=lambda: {
+            "default": 30,
+            "sessions": 30,
+            "frames": 30,
+            "messages": 30,
+            "events": 30,
+            "tools": 365,
+            "templates": 365,
+        },
+        description="Retention policy in days per table type",
     )
 
 
@@ -1149,10 +1410,6 @@ class AppConfig(ConfigModel, section="app"):
         default_factory=AgentConfig,
         description="Agent configuration and model policies",
     )
-    tools: ToolConfigList = config_field(
-        default_factory=ToolConfigList,
-        description="Tool configurations",
-    )
     prompt: PromptTemplateConfig = config_field(
         default_factory=PromptTemplateConfig,
         description="Prompt template configuration",
@@ -1164,6 +1421,18 @@ class AppConfig(ConfigModel, section="app"):
     dashboard: DashboardConfig = config_field(
         default_factory=DashboardConfig,
         description="Dashboard configuration",
+    )
+    telemetry: TelemetryConfig = config_field(
+        default_factory=TelemetryConfig,
+        description="OpenTelemetry tracing configuration",
+    )
+    tools_platform: ToolsPlatformConfig = config_field(
+        default_factory=ToolsPlatformConfig,
+        description="Tools platform (tool gateway) configuration",
+    )
+    execution_store: ExecutionStoreConfig = config_field(
+        default_factory=ExecutionStoreConfig,
+        description="Durable execution store configuration",
     )
     repository: RepositoryConfig = config_field(
         default_factory=RepositoryConfig,
@@ -1181,10 +1450,16 @@ class AppConfig(ConfigModel, section="app"):
             providers[name] = ProviderConfig.from_dict(provider_data)
 
         agent_config = AgentConfig.from_dict(config_dict.get("agent", {}))
-        tool_config = ToolConfigList.from_dict(config_dict.get("tools", {}))
         prompt_config = PromptTemplateConfig(**config_dict.get("prompt", {}))
         sandbox_config = SandboxConfig(**config_dict.get("sandbox", {}))
         dashboard_config = DashboardConfig(**config_dict.get("dashboard", {}))
+        telemetry_config = TelemetryConfig(**config_dict.get("telemetry", {}))
+        tools_platform_config = ToolsPlatformConfig(
+            **config_dict.get("tools_platform", {})
+        )
+        execution_store_config = ExecutionStoreConfig(
+            **config_dict.get("execution_store", {})
+        )
         repository_config = RepositoryConfig(**config_dict.get("repository", {}))
 
         return cls(
@@ -1192,10 +1467,12 @@ class AppConfig(ConfigModel, section="app"):
             runtime=runtime_config,
             providers=providers,
             agent=agent_config,
-            tools=tool_config,
             prompt=prompt_config,
             sandbox=sandbox_config,
             dashboard=dashboard_config,
+            telemetry=telemetry_config,
+            tools_platform=tools_platform_config,
+            execution_store=execution_store_config,
             repository=repository_config,
         )
 
@@ -1209,9 +1486,11 @@ class AppConfig(ConfigModel, section="app"):
                 for name, provider in self.providers.items()
             },
             "agent": self.agent.model_dump(exclude_unset=True),
-            "tools": self.tools.to_dict(),
             "prompt": self.prompt.model_dump(exclude_unset=True),
             "sandbox": self.sandbox.model_dump(exclude_unset=True),
             "dashboard": self.dashboard.model_dump(exclude_unset=True),
+            "telemetry": self.telemetry.model_dump(exclude_unset=True),
+            "tools_platform": self.tools_platform.model_dump(exclude_unset=True),
+            "execution_store": self.execution_store.model_dump(exclude_unset=True),
             "repository": self.repository.model_dump(exclude_unset=True),
         }

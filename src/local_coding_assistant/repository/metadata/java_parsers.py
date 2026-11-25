@@ -93,6 +93,9 @@ def parse_pom_xml(file_path: Path) -> ProjectInfo:
         log.debug(f"Failed to parse pom.xml: {e}")
         return info
 
+    if root is None:
+        return info
+
     for elem in root.iter():
         _apply_pom_metadata(info, strip_xml_namespace(elem.tag), elem)
 

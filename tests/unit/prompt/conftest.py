@@ -1,83 +1,125 @@
-"""Test configuration and fixtures for prompt composition tests."""
+"""Fixtures for rendering real PromptComposer output against golden files.
+
+The prompt module is tested with the *real* ``PromptComposer`` (not a mock):
+inbound is a ``PromptContext`` plus render settings, outbound is the
+``RenderedPrompt`` compared against golden files.
+"""
+
+from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
-from jinja2 import Environment, FileSystemLoader
 
 from local_coding_assistant.config.path_manager import PathManager
-
-# Use mock implementation for testing
-from .mocks import MockPromptComposer as PromptComposer
-
-# Disable warnings about redefining the PromptComposer name
-# pylint: disable=redefined-outer-name
+from local_coding_assistant.config.schemas import PromptTemplateConfig as PromptConfig
+from local_coding_assistant.prompt.composer import PromptComposer
+from local_coding_assistant.runtime.types import (
+    AgentProfile,
+    ExecutionMode,
+    PromptContext,
+    RenderedPrompt,
+    ToolSpec,
+)
 
 
 @pytest.fixture(scope="session")
-def path_manager():
-    """Create a PathManager instance for testing."""
-    return PathManager(is_testing=True)
+def templates_dir() -> Path:
+    """The package prompt templates directory (FileSystemLoader source)."""
+    return PathManager(is_testing=True).get_template_dir()
 
 
 @pytest.fixture
-def template_env(path_manager):
-    """Create a Jinja2 environment with the template directory."""
-    template_dir = path_manager.get_template_dir()
-    return Environment(loader=FileSystemLoader(template_dir))
+def prompt_config(templates_dir: Path) -> PromptConfig:
+    """Static prompt config pointing at the real templates."""
+    return PromptConfig(template_root=str(templates_dir))
 
 
 @pytest.fixture
-def composer(template_env):
-    """Create a MockPromptComposer instance for testing."""
-    return PromptComposer(template_env=template_env)
+def composer(prompt_config: PromptConfig, templates_dir: Path) -> PromptComposer:
+    """Real PromptComposer wired to the on-disk templates."""
+    return PromptComposer(prompt_config=prompt_config, template_root=templates_dir)
 
 
 @pytest.fixture
-def test_case_dir(request, path_manager):
-    """
-    Fixture to get the directory of the current test case.
+def make_context() -> Callable[[dict[str, Any]], PromptContext]:
+    """Build a PromptContext from a plain dict (JSON-friendly test data)."""
 
-    To use this fixture, a test should be parametrized with 'case_dir' parameter.
-    """
-    if hasattr(request, "param") and request.param:
-        test_dir = (
-            path_manager.get_project_root() / "tests" / "unit" / "prompt" / "golden"
+    def build(data: dict[str, Any]) -> PromptContext:
+        agent_profile = None
+        if data.get("agent_profile"):
+            agent_profile = AgentProfile(**data["agent_profile"])
+        tools = [ToolSpec(**t) for t in data.get("tools", [])]
+        return PromptContext(
+            session_id=data["session_id"],
+            execution_mode=ExecutionMode(data.get("execution_mode", "classic_tools")),
+            tool_call_mode=data.get("tool_call_mode", "classic"),
+            agent_profile=agent_profile,
+            active_skills=list(data.get("active_skills", [])),
+            memories=list(data.get("memories", [])),
+            tools=tools,
+            metadata=dict(data.get("metadata", {})),
+            model_id=data.get("model_id", ""),
+            model_provider=data.get("model_provider", ""),
+            personality=data.get("personality"),
+            project_info=data.get("project_info"),
+            repo_map_data=data.get("repo_map_data"),
+            examples=list(data.get("examples", [])),
+            workspace_root=data.get("workspace_root", ""),
+            platform=data.get("platform", ""),
+            agents_md_content=[tuple(x) for x in data.get("agents_md_content", [])],
+            global_rules=data.get("global_rules", ""),
+            config_instructions=list(data.get("config_instructions", [])),
+            cwd=data.get("cwd", ""),
+            current_date=int(data.get("current_date", 0)),
+            is_git_repo=bool(data.get("is_git_repo", False)),
+            sandbox_enabled=bool(data.get("sandbox_enabled", False)),
         )
-        return test_dir / request.param
-    return None
+
+    return build
 
 
 @pytest.fixture
-def load_test_case(test_case_dir):
-    """Load test case data from the golden directory."""
-    if test_case_dir is None:
-        return {}
+def render_prompt(
+    composer: PromptComposer, make_context
+) -> Callable[..., RenderedPrompt]:
+    """Render a context dict into a RenderedPrompt."""
 
-    def _load():
-        input_file = test_case_dir / "input.json"
-        expected_file = test_case_dir / "expected_output.txt"
+    def render(context_data: dict[str, Any], **render_kwargs: Any) -> RenderedPrompt:
+        context = make_context(context_data)
+        return composer.render(context, **render_kwargs)
 
-        with open(input_file) as f:
-            input_data = json.load(f)
-
-        with open(expected_file) as f:
-            expected_output = f.read().strip()
-
-        return {"input": input_data, "expected_output": expected_output}
-
-    return _load
+    return render
 
 
-def pytest_generate_tests(metafunc):
-    """
-    Generate test cases from golden directory.
+def serialize_rendered(rendered: RenderedPrompt) -> str:
+    """Deterministic text rendering of a RenderedPrompt for golden comparison."""
+    parts: list[str] = ["=== SYSTEM MESSAGES ==="]
+    for i, message in enumerate(rendered.system_messages, 1):
+        parts.append(f"--- system {i} ---")
+        parts.append(message)
+    parts.append("=== USER MESSAGES ===")
+    for i, message in enumerate(rendered.user_messages, 1):
+        parts.append(f"--- user {i} ---")
+        parts.append(message)
+    parts.append("=== TOOL SCHEMAS ===")
+    parts.append(json.dumps(rendered.tool_schemas, indent=2, sort_keys=True))
+    parts.append("=== METADATA ===")
+    parts.append(json.dumps(rendered.metadata, indent=2, sort_keys=True, default=str))
+    return "\n".join(parts) + "\n"
 
-    This function is automatically called by pytest to generate test cases
-    based on the contents of the golden directory.
-    """
-    if "test_case_dir" in metafunc.fixturenames:
-        golden_dir = Path(__file__).parent / "golden"
-        test_cases = [f.name for f in golden_dir.iterdir() if f.is_dir()]
-        metafunc.parametrize("test_case_dir", test_cases, indirect=True)
+
+def pytest_addoption(parser):
+    """Add custom command line options for tests."""
+    # Only add the option if it doesn't already exist (avoid conflicts with
+    # tests/unit/utils/conftest.py which registers the same option).
+    if not any(opt.dest == "update_goldens" for opt in parser._anonymous.options):
+        parser.addoption(
+            "--update-goldens",
+            action="store_true",
+            default=False,
+            help="Update golden files instead of testing against them",
+        )

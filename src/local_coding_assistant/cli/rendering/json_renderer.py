@@ -4,7 +4,7 @@ import json
 
 from rich.console import Console
 
-from local_coding_assistant.runtime.reporting import RunReport
+from local_coding_assistant.runtime import RunReport
 
 
 def render_json(report: RunReport, console: Console, verbose: bool) -> None:

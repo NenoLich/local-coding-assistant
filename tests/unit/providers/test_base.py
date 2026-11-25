@@ -16,6 +16,7 @@ from local_coding_assistant.providers.base import (
 )
 from local_coding_assistant.providers.exceptions import (
     ProviderAuthError,
+    ProviderConnectionError,
     ProviderValidationError,
 )
 
@@ -91,9 +92,9 @@ class TestBaseDriver:
 
     @pytest.mark.asyncio
     async def test_generate_with_retry_failure(self, mock_driver):
-        """Test that generate_with_retry raises the last error after all retries."""
-        # Mock the generate method to raise an exception
-        error = Exception("Test error")
+        """Test that generate_with_retry retries transient errors then raises."""
+        # Mock the generate method to raise a transient exception
+        error = ProviderConnectionError("Test error")
         mock_driver._generate_mock.side_effect = error
 
         # Create a test request
@@ -103,7 +104,7 @@ class TestBaseDriver:
         )
 
         # Call the method with retry and expect it to raise the error
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(ProviderConnectionError) as exc_info:
             await mock_driver.generate_with_retry(
                 request, max_retries=2, retry_delay=0.1
             )
@@ -111,6 +112,26 @@ class TestBaseDriver:
         # Assert the error is as expected
         assert str(exc_info.value) == str(error)
         assert mock_driver._generate_mock.call_count == 3  # Initial + 2 retries
+
+    @pytest.mark.asyncio
+    async def test_generate_with_retry_does_not_retry_permanent_errors(
+        self, mock_driver
+    ):
+        """Permanent (auth/validation) errors fail fast without retrying."""
+        error = ProviderAuthError("Invalid API key")
+        mock_driver._generate_mock.side_effect = error
+
+        request = ProviderLLMRequest(
+            messages=[{"role": "user", "content": "Hello"}],
+            model="test-model",
+        )
+
+        with pytest.raises(ProviderAuthError):
+            await mock_driver.generate_with_retry(
+                request, max_retries=2, retry_delay=0.1
+            )
+
+        assert mock_driver._generate_mock.call_count == 1
 
     @pytest.mark.asyncio
     async def test_stream_with_retry_success(self, mock_driver):
@@ -142,9 +163,9 @@ class TestBaseDriver:
 
     @pytest.mark.asyncio
     async def test_stream_with_retry_failure(self, mock_driver):
-        """Test that stream_with_retry raises the last error after all retries."""
-        # Mock the stream method to raise an exception
-        error = Exception("Test error")
+        """Test that stream_with_retry retries transient errors then raises."""
+        # Mock the stream method to raise a transient exception
+        error = ProviderConnectionError("Test error")
         mock_driver._stream_mock.side_effect = error
 
         # Create a test request
@@ -154,7 +175,7 @@ class TestBaseDriver:
         )
 
         # Call the method with retry and expect it to raise the error
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(ProviderConnectionError) as exc_info:
             async for _ in mock_driver.stream_with_retry(
                 request, max_retries=2, retry_delay=0.1
             ):
@@ -163,6 +184,25 @@ class TestBaseDriver:
         # Assert the error is as expected
         assert str(exc_info.value) == str(error)
         assert mock_driver._stream_mock.call_count == 3  # Initial + 2 retries
+
+    @pytest.mark.asyncio
+    async def test_stream_with_retry_does_not_retry_permanent_errors(self, mock_driver):
+        """Permanent errors fail fast without burning retry backoffs."""
+        error = ProviderValidationError("Invalid request")
+        mock_driver._stream_mock.side_effect = error
+
+        request = ProviderLLMRequest(
+            messages=[{"role": "user", "content": "Hello"}],
+            model="test-model",
+        )
+
+        with pytest.raises(ProviderValidationError):
+            async for _ in mock_driver.stream_with_retry(
+                request, max_retries=2, retry_delay=0.1
+            ):
+                pass
+
+        assert mock_driver._stream_mock.call_count == 1
 
 
 class TestBaseProvider:

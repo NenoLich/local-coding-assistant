@@ -1,12 +1,43 @@
 """Integration tests for conditional validation system."""
 
+import copy
 import os
 
 import pytest
 
 from local_coding_assistant.config.config_manager import ConfigManager
 from local_coding_assistant.config.env_manager import get_env_manager
-from local_coding_assistant.core.system_registry import system_capability_registry
+from local_coding_assistant.config.field import config_field_registry
+from local_coding_assistant.core.system_registry import (
+    system_capability_registry,
+)
+
+# Snapshots of the standard AppConfig field / capability->settings state,
+# captured once at session start (schemas are imported during collection, so
+# the registries hold the standard fields at that point). Other test modules
+# (e.g. test_config_integration) register fields such as ``test.test_field``
+# into these global singletons and never clean them up, so we restore the
+# snapshot before each ConditionalValidation test to keep tests isolated.
+_clean_fields: dict | None = None
+_clean_capability_to_settings: dict | None = None
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _capture_clean_registry_state():
+    """Snapshot the clean post-import registry state once at session start.
+
+    Other test modules (e.g. test_config_integration,
+    test_config_manager_integration) clear the global ConfigFieldRegistry at
+    test time and never restore it, which can leave the registry polluted by
+    the time conditional validation runs. We snapshot here so each test can
+    restore the standard post-import fields.
+    """
+    global _clean_fields, _clean_capability_to_settings
+    _clean_fields = dict(config_field_registry._fields)
+    _clean_capability_to_settings = copy.deepcopy(
+        system_capability_registry.capability_to_settings
+    )
+    yield
 
 
 @pytest.fixture(autouse=True)
@@ -37,12 +68,32 @@ def cleanup_env_vars():
 
 @pytest.fixture(autouse=True)
 def reset_system_registry():
-    """Reset the global system capability registry before each test."""
-    # Clear all capabilities and modules
+    """Reset the global system capability registry before each test.
+
+    Restores the ConfigField registry and capability->settings mapping to the
+    standard post-import snapshot. Other test modules (e.g.
+    test_config_integration) register fields such as ``test.test_field`` into
+    these global singletons and never clean them up; leaving them polluted
+    makes ConfigBuilder._validate_base_config choke on ``AppConfig`` lacking a
+    ``test`` attribute when ConditionalValidation tests call
+    load_global_config().
+    """
+    # Restore the standard ConfigField registry (removes pollution such as
+    # test.test_field registered by other test modules).
+    config_field_registry._fields.clear()
+    if _clean_fields is not None:
+        config_field_registry._fields.update(_clean_fields)
+
+    # Restore the standard capability->settings mapping (needed so that
+    # unregister_capability() can report affected settings).
     system_capability_registry.capabilities.clear()
     system_capability_registry.module_status.clear()
     system_capability_registry.pending_validations.clear()
-    # Don't clear capability_to_settings as it's populated during config loading
+    system_capability_registry.capability_to_settings.clear()
+    if _clean_capability_to_settings is not None:
+        system_capability_registry.capability_to_settings.update(
+            copy.deepcopy(_clean_capability_to_settings)
+        )
 
 
 class TestSystemDegradation:
@@ -63,7 +114,9 @@ class TestSystemDegradation:
         # Load config
         config_manager.load_global_config()
 
-        # Register both modules to enable PTC and sandbox
+        # Register all modules needed for PTC: tool_gateway (tools_available),
+        # tool_manager (python_execution), sandbox_manager (sandbox_available)
+        config_manager.register_module("tool_gateway", {"tools_available": True})
         config_manager.register_module(
             "tool_manager",
             {
@@ -80,7 +133,7 @@ class TestSystemDegradation:
 
         # Verify PTC and sandbox are active
         assert config_manager.global_config.runtime.tool_call_mode == "ptc"
-        assert config_manager.global_config.sandbox.enabled == True
+        assert config_manager.global_config.sandbox.enabled
 
         # Unregister sandbox capability (should fallback both settings)
         affected = config_manager.unregister_capability(["sandbox_available"])
@@ -92,36 +145,32 @@ class TestSystemDegradation:
         assert "runtime.tool_call_mode" in affected_settings
         assert "sandbox.enabled" in affected_settings
         assert affected_settings["runtime.tool_call_mode"] == "ptc"
-        assert affected_settings["sandbox.enabled"] == True
+        assert affected_settings["sandbox.enabled"]
 
         # Verify fallback to classic and sandbox disabled
         assert config_manager.global_config.runtime.tool_call_mode == "classic"
-        assert config_manager.global_config.sandbox.enabled == False
+        assert not config_manager.global_config.sandbox.enabled
 
-    def test_unregister_tool_manager_falls_back_to_reasoning_only(self, config_manager):
-        """Test that unregistering tool_manager falls back from classic to reasoning_only."""
+    def test_unregister_tools_available_falls_back_to_reasoning_only(
+        self, config_manager
+    ):
+        """Test that unregistering tools_available falls back from classic to reasoning_only."""
         # Set classic mode
         os.environ["LOCCA_RUNTIME__TOOL_CALL_MODE"] = "classic"
 
         # Load config
         config_manager.load_global_config()
 
-        # Register tool_manager to enable classic
-        config_manager.register_module(
-            "tool_manager",
-            {
-                "python_execution": True,
-                "tool_count": 12,
-            },
-        )
+        # Register tool_gateway to enable classic (classic needs tools_available)
+        config_manager.register_module("tool_gateway", {"tools_available": True})
 
         # Verify classic is active
         assert config_manager.global_config.runtime.tool_call_mode == "classic"
 
-        # Unregister tool_manager module (should fallback to reasoning_only)
-        affected = config_manager.unregister_capability(["tool_manager"])
+        # Unregister tools_available (should fallback to reasoning_only)
+        affected = config_manager.unregister_capability(["tools_available"])
 
-        # Should affect the tool_call_mode setting (may return multiple possible values)
+        # Should affect the tool_call_mode setting
         assert len(affected) >= 1
 
         # Check that classic is in the affected settings
@@ -153,7 +202,7 @@ class TestSystemDegradation:
         )
 
         # Verify sandbox is enabled
-        assert config_manager.global_config.sandbox.enabled == True
+        assert config_manager.global_config.sandbox.enabled
 
         # Unregister sandbox capability
         affected = config_manager.unregister_capability(["sandbox_available"])
@@ -167,7 +216,7 @@ class TestSystemDegradation:
         assert True in [v for k, v in affected_dict.items() if k == "sandbox.enabled"]
 
         # Verify fallback to False
-        assert config_manager.global_config.sandbox.enabled == False
+        assert not config_manager.global_config.sandbox.enabled
 
     def test_unregister_multiple_capabilities_affects_multiple_settings(
         self, config_manager
@@ -181,6 +230,7 @@ class TestSystemDegradation:
         config_manager.load_global_config()
 
         # Register both modules
+        config_manager.register_module("tool_gateway", {"tools_available": True})
         config_manager.register_module(
             "tool_manager",
             {
@@ -197,7 +247,7 @@ class TestSystemDegradation:
 
         # Verify both settings are active
         assert config_manager.global_config.runtime.tool_call_mode == "ptc"
-        assert config_manager.global_config.sandbox.enabled == True
+        assert config_manager.global_config.sandbox.enabled
 
         # Unregister both sandbox capabilities
         affected = config_manager.unregister_capability(
@@ -212,7 +262,7 @@ class TestSystemDegradation:
 
         # Verify both settings fell back
         assert config_manager.global_config.runtime.tool_call_mode == "classic"
-        assert config_manager.global_config.sandbox.enabled == False
+        assert not config_manager.global_config.sandbox.enabled
 
     def test_unregister_nonexistent_capability_no_effect(self, config_manager):
         """Test that unregistering non-existent capability has no effect."""
@@ -239,7 +289,8 @@ class TestSystemDegradation:
         # Load config
         config_manager.load_global_config()
 
-        # Register both modules to enable PTC
+        # Register all modules to enable PTC
+        config_manager.register_module("tool_gateway", {"tools_available": True})
         config_manager.register_module(
             "tool_manager",
             {
@@ -254,10 +305,14 @@ class TestSystemDegradation:
             },
         )
 
-        # Verify PTC is active and no pending validations
+        # Verify PTC is active and no pending validations for tool_call_mode
         assert config_manager.global_config.runtime.tool_call_mode == "ptc"
         status = config_manager.get_system_status()
-        assert len(status["pending_validations"]) == 0
+        tool_call_pending = any(
+            pv["setting"] == "runtime.tool_call_mode"
+            for pv in status["pending_validations"]
+        )
+        assert not tool_call_pending
 
         # Unregister sandbox capability (should add to pending validations)
         config_manager.unregister_capability(["sandbox_available"])
@@ -282,7 +337,8 @@ class TestSystemDegradation:
         # Load config
         config_manager.load_global_config()
 
-        # Register both modules to enable PTC
+        # Register all modules to enable PTC
+        config_manager.register_module("tool_gateway", {"tools_available": True})
         config_manager.register_module(
             "tool_manager",
             {
@@ -315,9 +371,13 @@ class TestSystemDegradation:
         # Verify PTC is restored
         assert config_manager.global_config.runtime.tool_call_mode == "ptc"
 
-        # Verify no more pending validations
+        # Verify no more pending validations for tool_call_mode
         status = config_manager.get_system_status()
-        assert len(status["pending_validations"]) == 0
+        tool_call_pending = any(
+            pv["setting"] == "runtime.tool_call_mode"
+            for pv in status["pending_validations"]
+        )
+        assert not tool_call_pending
 
     def test_partial_capability_unregistration(self, config_manager):
         """Test partial unregistration when only some dependencies are removed."""
@@ -327,7 +387,8 @@ class TestSystemDegradation:
         # Load config
         config_manager.load_global_config()
 
-        # Register both modules to enable PTC
+        # Register all modules to enable PTC
+        config_manager.register_module("tool_gateway", {"tools_available": True})
         config_manager.register_module(
             "tool_manager",
             {
@@ -361,7 +422,8 @@ class TestSystemDegradation:
         # Load config
         config_manager.load_global_config()
 
-        # Register both modules to enable PTC
+        # Register all modules to enable PTC
+        config_manager.register_module("tool_gateway", {"tools_available": True})
         config_manager.register_module(
             "tool_manager",
             {
@@ -383,15 +445,15 @@ class TestSystemDegradation:
         config_manager.unregister_capability(["sandbox_available"])
         assert config_manager.global_config.runtime.tool_call_mode == "classic"
 
-        # Second degradation: remove tool_manager (classic -> reasoning_only)
-        config_manager.unregister_capability(["tool_manager"])
+        # Second degradation: remove tools_available (classic -> reasoning_only)
+        config_manager.unregister_capability(["tools_available"])
         assert config_manager.global_config.runtime.tool_call_mode == "reasoning_only"
 
         # Verify pending validations for both removed states
         status = config_manager.get_system_status()
         pending_validations = status["pending_validations"]
 
-        # Should have pending for both ptc and classic
+        # Should have pending for ptc, not classic (pending_override preserved ptc)
         ptc_pending = any(
             pv["setting"] == "runtime.tool_call_mode" and pv["value"] == "ptc"
             for pv in pending_validations
@@ -424,7 +486,17 @@ class TestConditionalValidation:
         tool_call_mode = config_manager.global_config.runtime.tool_call_mode
         assert tool_call_mode == "reasoning_only"  # fallback
 
-        # Register tool_manager (should resolve ptc -> classic fallback, but keep ptc pending)
+        # Register tool_gateway (tools_available) resolves ptc -> classic fallback
+        resolved = config_manager.register_module(
+            "tool_gateway",
+            {
+                "tools_available": True,
+            },
+        )
+        assert len(resolved) == 1  # fallback "classic" resolved
+        assert resolved["runtime.tool_call_mode"] == "classic"
+
+        # Register tool_manager (python_execution) - ptc still needs sandbox
         resolved = config_manager.register_module(
             "tool_manager",
             {
@@ -432,8 +504,7 @@ class TestConditionalValidation:
                 "tool_count": 12,
             },
         )
-        assert len(resolved) == 1  # fallback "classic" resolved
-        assert resolved["runtime.tool_call_mode"] == "classic"
+        assert len(resolved) == 0  # ptc still missing sandbox deps
 
         # Register sandbox_manager (should resolve pending ptc -> ptc)
         resolved = config_manager.register_module(
@@ -452,7 +523,19 @@ class TestConditionalValidation:
 
         config_manager.load_global_config()
 
-        # Register tool_manager but not sandbox_manager
+        # Register tool_gateway (tools_available) resolves ptc -> classic
+        resolved = config_manager.register_module(
+            "tool_gateway",
+            {
+                "tools_available": True,
+            },
+        )
+        assert len(resolved) == 1  # Should resolve ptc -> classic immediately
+        assert "runtime.tool_call_mode" in resolved
+        assert resolved["runtime.tool_call_mode"] == "classic"
+        assert config_manager.global_config.runtime.tool_call_mode == "classic"
+
+        # Register tool_manager (python_execution) - sandbox still missing
         resolved = config_manager.register_module(
             "tool_manager",
             {
@@ -460,10 +543,7 @@ class TestConditionalValidation:
                 "tool_count": 12,
             },
         )
-        assert len(resolved) == 1  # Should resolve ptc -> classic immediately
-        assert "runtime.tool_call_mode" in resolved
-        assert resolved["runtime.tool_call_mode"] == "classic"
-        assert config_manager.global_config.runtime.tool_call_mode == "classic"
+        assert len(resolved) == 0  # ptc still missing sandbox
 
         # Register sandbox_manager as unavailable
         resolved = config_manager.register_module(
@@ -473,20 +553,20 @@ class TestConditionalValidation:
             },
         )
         assert len(resolved) == 0  # No new resolutions - pending already resolved
+        assert config_manager.global_config.runtime.tool_call_mode == "classic"
 
-    def test_classic_mode_only_needs_tool_manager(self, config_manager):
-        """Test classic mode only needs tool_manager."""
+    def test_classic_mode_requires_tools_available(self, config_manager):
+        """Test classic mode requires tools_available (provided by tool_gateway)."""
         # Set classic mode
         os.environ["LOCCA_RUNTIME__TOOL_CALL_MODE"] = "classic"
 
         config_manager.load_global_config()
 
-        # Register tool_manager (should resolve classic)
+        # Register tool_gateway (should resolve classic)
         resolved = config_manager.register_module(
-            "tool_manager",
+            "tool_gateway",
             {
-                "python_execution": True,
-                "tool_count": 12,
+                "tools_available": True,
             },
         )
         assert len(resolved) == 1  # Should resolve tool_call_mode
@@ -503,9 +583,13 @@ class TestConditionalValidation:
             config_manager.global_config.runtime.tool_call_mode == "reasoning_only"
         )  # Should validate immediately
 
-        # Should have no pending validations since reasoning_only needs no dependencies
+        # Should have no pending validations for tool_call_mode since reasoning_only needs no dependencies
         status = config_manager.get_system_status()
-        assert len(status["pending_validations"]) == 0
+        tool_call_pending = any(
+            pv["setting"] == "runtime.tool_call_mode"
+            for pv in status["pending_validations"]
+        )
+        assert not tool_call_pending
 
     def test_sandbox_enabled_true_when_available(self, config_manager):
         """Test sandbox.enabled=True when sandbox is available."""
@@ -514,7 +598,7 @@ class TestConditionalValidation:
 
         config_manager.load_global_config()
         assert (
-            config_manager.global_config.sandbox.enabled == False
+            not config_manager.global_config.sandbox.enabled
         )  # Should defer validation
 
         # Register sandbox_manager as available
@@ -526,7 +610,7 @@ class TestConditionalValidation:
         )
         assert len(resolved) == 1  # Should resolve sandbox.enabled
         assert "sandbox.enabled" in resolved
-        assert config_manager.global_config.sandbox.enabled == True
+        assert config_manager.global_config.sandbox.enabled
 
     def test_sandbox_enabled_false_when_unavailable(self, config_manager):
         """Test sandbox.enabled=True when sandbox is not available."""
@@ -535,7 +619,7 @@ class TestConditionalValidation:
 
         config_manager.load_global_config()
         assert (
-            config_manager.global_config.sandbox.enabled == False
+            not config_manager.global_config.sandbox.enabled
         )  # Should defer validation
 
         # Register sandbox_manager as unavailable
@@ -546,21 +630,20 @@ class TestConditionalValidation:
             },
         )
         assert len(resolved) == 0  # Should not resolve (validation fails)
-        assert config_manager.global_config.sandbox.enabled == False
+        assert not config_manager.global_config.sandbox.enabled
 
-    def test_fallback_chain_ptc_to_classic_to_reasoning(self, config_manager):
-        """Test fallback chain: ptc -> classic -> reasoning_only."""
+    def test_fallback_chain_ptc_to_classic(self, config_manager):
+        """Test fallback chain: ptc -> classic."""
         # Set PTC mode
         os.environ["LOCCA_RUNTIME__TOOL_CALL_MODE"] = "ptc"
 
         config_manager.load_global_config()
 
-        # Register only tool_manager (should fallback to classic)
+        # Register tool_gateway (should fallback to classic)
         resolved = config_manager.register_module(
-            "tool_manager",
+            "tool_gateway",
             {
-                "python_execution": True,
-                "tool_count": 12,
+                "tools_available": True,
             },
         )
         assert len(resolved) == 1  # Should fallback to classic
@@ -591,7 +674,7 @@ class TestConditionalValidation:
 
         # Should have the unified dependencies list
         assert isinstance(ptc_deps, list)
-        assert "tool_manager" in ptc_deps
+        assert "tools_available" in ptc_deps
         assert "sandbox_manager" in ptc_deps
         assert "python_execution" in ptc_deps
         assert "sandbox_available" in ptc_deps
@@ -695,20 +778,26 @@ class TestPendingValidationOverride:
         config_manager.load_global_config()
 
         # Step 3: Simulate dependencies becoming available
-        # Register the missing modules
+        # Register tool_gateway (tools_available) -> classic fallback
+        tool_gateway_resolved = config_manager.register_module(
+            "tool_gateway", capabilities={"tools_available": True}
+        )
+        assert "runtime.tool_call_mode" in tool_gateway_resolved, (
+            "Should have resolved to classic fallback"
+        )
+        assert tool_gateway_resolved["runtime.tool_call_mode"] == "classic", (
+            "Should have resolved to classic fallback"
+        )
+
+        # Register tool_manager (python_execution) - ptc still needs sandbox
         tool_resolved = config_manager.register_module(
             "tool_manager", capabilities={"python_execution": True}
         )
+        assert len(tool_resolved) == 0, "ptc still missing sandbox deps"
+
+        # Register sandbox_manager (sandbox_available) -> ptc resolves
         sandbox_resolved = config_manager.register_module(
             "sandbox_manager", capabilities={"sandbox_available": True}
-        )
-
-        # The ptc validation should be resolved in the second call when all dependencies are available
-        assert "runtime.tool_call_mode" in tool_resolved, (
-            "Should have resolved to classic fallback"
-        )
-        assert tool_resolved["runtime.tool_call_mode"] == "classic", (
-            "Should have resolved to classic fallback"
         )
         assert "runtime.tool_call_mode" in sandbox_resolved, (
             "ptc pending validation should have been resolved"
@@ -745,12 +834,13 @@ class TestPendingValidationOverride:
         config_manager.load_global_config()
 
         # Register all required capabilities to make ptc valid
-        # Note: The system resolves to fallback when dependencies are missing,
-        # but keeps ptc pending for future resolution
-        tool_resolved = config_manager.register_module(
+        config_manager.register_module(
+            "tool_gateway", capabilities={"tools_available": True}
+        )
+        config_manager.register_module(
             "tool_manager", capabilities={"python_execution": True}
         )
-        sandbox_resolved = config_manager.register_module(
+        config_manager.register_module(
             "sandbox_manager", capabilities={"sandbox_available": True}
         )
 

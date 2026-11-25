@@ -242,3 +242,107 @@ class TestRepositoryDatabase:
 
         files = temp_db.get_all_files()
         assert len(files) == 3
+
+    def _make_file(self, temp_db: RepositoryDatabase, path: str = "test.py") -> int:
+        metadata = FileMetadata(
+            path=path,
+            language="python",
+            last_modified=1234567890,
+            last_indexed=1234567890,
+            hash="abc123",
+            size_bytes=100,
+        )
+        return temp_db.add_or_update_file(metadata)
+
+    def _make_symbol(
+        self,
+        file_id: int,
+        name: str = "Config",
+        symbol_type: SymbolType = SymbolType.CLASS,
+        line_number: int = 18,
+        end_line_number: int = 82,
+        parent_scope: str | None = None,
+    ) -> SymbolDetail:
+        return SymbolDetail(
+            symbol_id=0,
+            file_id=file_id,
+            name=name,
+            symbol_type=symbol_type,
+            line_number=line_number,
+            end_line_number=end_line_number,
+            parent_scope=parent_scope,
+            docstring=None,
+            content="class Config: ...",
+            signature="class Config",
+        )
+
+    def test_add_symbol_upsert_replaces_duplicate(
+        self, temp_db: RepositoryDatabase
+    ) -> None:
+        """Re-adding the same symbol replaces it instead of duplicating."""
+        file_id = self._make_file(temp_db)
+        symbol = self._make_symbol(file_id)
+
+        first_id = temp_db.add_symbol(symbol)
+        second_id = temp_db.add_symbol(symbol)
+
+        symbols = temp_db.get_all_symbols()
+        assert len(symbols) == 1
+        assert symbols[0]["symbol_id"] == first_id
+        assert symbols[0]["line_number"] == 18
+        assert symbols[0]["end_line_number"] == 82
+
+    def test_add_symbol_upsert_updates_boundaries(
+        self, temp_db: RepositoryDatabase
+    ) -> None:
+        """Re-adding a symbol updates its line boundaries."""
+        file_id = self._make_file(temp_db)
+        symbol = self._make_symbol(file_id, line_number=18, end_line_number=82)
+        temp_db.add_symbol(symbol)
+
+        updated = self._make_symbol(file_id, line_number=25, end_line_number=90)
+        temp_db.add_symbol(updated)
+
+        symbols = temp_db.get_all_symbols()
+        assert len(symbols) == 1
+        assert symbols[0]["line_number"] == 25
+        assert symbols[0]["end_line_number"] == 90
+
+    def test_add_symbols_bulk_upsert_dedups(self, temp_db: RepositoryDatabase) -> None:
+        """Bulk insert of the same symbol twice results in one row."""
+        file_id = self._make_file(temp_db)
+        symbol = self._make_symbol(file_id)
+
+        temp_db.add_symbols([symbol, symbol])
+
+        symbols = temp_db.get_all_symbols()
+        assert len(symbols) == 1
+
+    def test_same_name_different_parent_scope_allowed(
+        self, temp_db: RepositoryDatabase
+    ) -> None:
+        """Same symbol name with different parent scopes are distinct."""
+        file_id = self._make_file(temp_db)
+        top_level = self._make_symbol(file_id, name="load", parent_scope=None)
+        method = self._make_symbol(file_id, name="load", parent_scope="Config")
+
+        temp_db.add_symbol(top_level)
+        temp_db.add_symbol(method)
+
+        symbols = temp_db.get_all_symbols()
+        assert len(symbols) == 2
+
+    def test_same_name_different_file_allowed(
+        self, temp_db: RepositoryDatabase
+    ) -> None:
+        """Same symbol name in different files are distinct."""
+        file_id_a = self._make_file(temp_db, "a.py")
+        file_id_b = self._make_file(temp_db, "b.py")
+        symbol_a = self._make_symbol(file_id_a, name="Config")
+        symbol_b = self._make_symbol(file_id_b, name="Config")
+
+        temp_db.add_symbol(symbol_a)
+        temp_db.add_symbol(symbol_b)
+
+        symbols = temp_db.get_all_symbols()
+        assert len(symbols) == 2

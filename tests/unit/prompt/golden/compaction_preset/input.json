@@ -1,0 +1,82 @@
+{
+  "context": {
+    "session_id": "sess-alpha",
+    "execution_mode": "classic_tools",
+    "tool_call_mode": "classic",
+    "agent_profile": {
+      "name": "default",
+      "kind": "default",
+      "description": "Primary coding assistant focused on safe, step-by-step reasoning.",
+      "goals": ["Deliver concise answers grounded in repository state"],
+      "tone": "Confident, pragmatic, collaborative",
+      "constraints": ["Never fabricate file paths"],
+      "model_policy": "general"
+    },
+    "model_id": "gemini-2.0-flash",
+    "model_provider": "google",
+    "personality": "pragmatic",
+    "workspace_root": "/workspace",
+    "platform": "linux",
+    "is_git_repo": true,
+    "cwd": "/workspace/src",
+    "current_date": 1735689600,
+    "sandbox_enabled": false,
+    "agents_md_content": [["AGENTS.md", "# Project rules\n- Keep it simple"]],
+    "global_rules": "Never commit secrets to version control.",
+    "config_instructions": ["Prefer type hints in all signatures."],
+    "project_info": {
+      "name": "locca",
+      "description": "A local coding assistant.",
+      "language_version": "3.12",
+      "package_manager": "uv",
+      "core_frameworks": ["pytest", "jinja2"],
+      "build_backend": "hatchling",
+      "linter_formatter": ["ruff", "mypy"],
+      "test_frameworks": ["pytest"],
+      "license": "MIT",
+      "available_scripts": ["test", "lint"],
+      "language_distribution": {
+        "Python": 85.5,
+        "YAML": 10.0,
+        "Markdown": 4.5
+      }
+    },
+    "repo_map_data": {
+      "num_symbols": 1,
+      "grouped_symbols": {
+        "src/local_coding_assistant/prompt/composer.py": [
+          {
+            "name": "PromptComposer",
+            "symbol_type": "class",
+            "line_number": 46,
+            "end_line_number": 356,
+            "signature": "class PromptComposer",
+            "parent_scope": null
+          }
+        ]
+      }
+    },
+    "memories": ["Prefer targeted edits over full rewrites."],
+    "examples": [
+      {
+        "description": "edit example",
+        "input": "Change x to y",
+        "output": "Use the edit tool"
+      }
+    ],
+    "tools": [
+      {
+        "name": "read_file",
+        "description": "Read a file",
+        "parameters": {}
+      }
+    ],
+    "active_skills": [],
+    "metadata": {}
+  },
+  "render": {
+    "preset": "compaction",
+    "session_context_resolution": "static",
+    "user_input": ""
+  }
+}

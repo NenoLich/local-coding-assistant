@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from local_coding_assistant.repository.storage import StorageManager, StorageMode
 
 

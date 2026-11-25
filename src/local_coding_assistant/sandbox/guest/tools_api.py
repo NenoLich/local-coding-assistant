@@ -1,4 +1,4 @@
-# type: ignore
+# pyrefly: ignore-errors
 from typing import Any, Dict, Optional, Union, List, AsyncIterator
 import asyncio
 from resource_tracker import tracker

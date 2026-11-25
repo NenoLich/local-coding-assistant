@@ -22,7 +22,7 @@ wheels/
 tmp/
 .cache/
 logs/
-data/
+/data/
 tests/logs/
 tests/cache/
 htmlcov/
@@ -65,3 +65,5 @@ pytest-cache-files-*/
 
 # Ruff
 .ruff_cache/
+.aider*
+.env

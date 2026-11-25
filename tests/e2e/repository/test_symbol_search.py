@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from local_coding_assistant.repository.models import SymbolType
 from local_coding_assistant.repository.service import RepositoryContextService
 

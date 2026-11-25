@@ -1,0 +1,210 @@
+# Tasks for Python CLI Tool Fixture
+
+version: "1.0"
+project: "python_cli_tool"
+description: "Evaluation tasks for LOCCA agent on Python CLI tool codebase"
+
+# Global defaults for all tasks
+defaults:
+  model: "gpt-4"
+  agent_mode: "frame_agent"
+  tool_call_mode: "classic"
+  max_iterations: 10
+  working_directory: "tests/fixtures/projects/python_cli_tool"
+
+tasks:
+  - id: "add_export_command"
+    name: "Add Export Command"
+    category: "feature"
+    difficulty: "easy"
+    prompt: |
+      Add an 'export' command that exports the current configuration to a file in JSON or YAML format.
+      The command should accept an output file path (--output, -o) and optional format flag (--format json|yaml, default json).
+      Register the command in the CLI group.
+    evaluation:
+      type: "file_and_command"
+      criteria:
+        - check: "file_exists"
+          path: "src/python_cli_tool/commands/export.py"
+          description: "Export command module created"
+        - check: "command_registered"
+          command: "export"
+          description: "Export command registered in CLI"
+        - check: "command_works"
+          args: ["export", "--output", "test_export.json", "--format", "json"]
+          expect_exit_code: 0
+          expect_output_contains: "Export"
+        - check: "command_works_yaml"
+          args: ["export", "--output", "test_export.yaml", "--format", "yaml"]
+          expect_exit_code: 0
+
+  - id: "fix_config_loading_bug"
+    name: "Fix Config Loading Bug"
+    category: "bugfix"
+    difficulty: "easy"
+    prompt: |
+      The Config class crashes when no config file exists. Fix the _find_config_file method to return None gracefully
+      instead of crashing, and ensure load() handles missing config files properly. The CLI should work without any config file.
+    evaluation:
+      type: "behavior"
+      criteria:
+        - check: "cli_works_without_config"
+          description: "CLI runs without config file"
+          test: |
+            # Run CLI commands without any config file present
+            python-cli config-show
+            python-cli greet --name "Test"
+        - check: "no_exception_on_missing_config"
+          description: "No exception when config file missing"
+
+  - id: "add_config_validation"
+    name: "Add Config Validation"
+    category: "feature"
+    difficulty: "medium"
+    prompt: |
+      Add validation to the Config class. When setting values, validate:
+      - timeout > 0
+      - retries >= 0
+      - output_format in ['json', 'yaml']
+      - api_url is a valid URL (starts with http:// or https://)
+      Raise ValueError with descriptive message on invalid values.
+    evaluation:
+      type: "behavior_and_code"
+      criteria:
+        - check: "validation_rejects_invalid_timeout"
+          test: |
+            python-cli config-set timeout -5
+            # Should fail with validation error
+          expect_exit_code: 1
+          expect_error_contains: "timeout"
+        - check: "validation_rejects_invalid_retries"
+          test: |
+            python-cli config-set retries -1
+          expect_exit_code: 1
+          expect_error_contains: "retries"
+        - check: "validation_rejects_invalid_format"
+          test: |
+            python-cli config-set output_format xml
+          expect_exit_code: 1
+          expect_error_contains: "output_format"
+        - check: "validation_rejects_invalid_url"
+          test: |
+            python-cli config-set api_url "not-a-url"
+          expect_exit_code: 1
+          expect_error_contains: "api_url"
+        - check: "validation_accepts_valid_values"
+          test: |
+            python-cli config-set timeout 60
+            python-cli config-set retries 5
+            python-cli config-set output_format yaml
+            python-cli config-set api_url "https://api.example.com"
+          expect_exit_code: 0
+
+  - id: "add_input_validation_to_process"
+    name: "Add Input Validation to Process Command"
+    category: "bugfix"
+    difficulty: "easy"
+    prompt: |
+      The process command crashes on binary files. Add input validation to check if file is text-readable before processing.
+      If not, show a friendly error message instead of a traceback.
+    evaluation:
+      type: "behavior"
+      criteria:
+        - check: "binary_file_handled_gracefully"
+          test: |
+            # Create a binary file
+            echo -ne "\x00\x01\x02\x03" > binary.bin
+            python-cli process binary.bin
+          expect_exit_code: 1
+          expect_error_contains: "binary"
+
+  - id: "refactor_commands_into_modules"
+    name: "Refactor Commands into Separate Modules"
+    category: "refactor"
+    difficulty: "medium"
+    prompt: |
+      Refactor the CLI commands into separate modules under src/python_cli_tool/commands/:
+      - config_commands.py (config-show, config-set, export)
+      - file_commands.py (process)
+      - api_commands.py (fetch)
+      - greet_commands.py (greet, version)
+      Update main.py to import and register these command groups.
+      Update commands/__init__.py to export them.
+    evaluation:
+      type: "file_structure"
+      criteria:
+        - check: "file_exists"
+          path: "src/python_cli_tool/commands/config_commands.py"
+        - check: "file_exists"
+          path: "src/python_cli_tool/commands/file_commands.py"
+        - check: "file_exists"
+          path: "src/python_cli_tool/commands/api_commands.py"
+        - check: "file_exists"
+          path: "src/python_cli_tool/commands/greet_commands.py"
+        - check: "all_commands_still_work"
+          test: |
+            python-cli --help
+            python-cli version
+            python-cli greet --name "Test"
+            python-cli config-show
+            python-cli config-set timeout 30
+            python-cli process test_input.txt
+            python-cli fetch https://example.com
+
+  - id: "add_help_text_improvements"
+    name: "Add Help Text Improvements"
+    category: "polish"
+    difficulty: "easy"
+    prompt: |
+      Improve help text for all commands. Add examples to each command's help, improve description clarity,
+      and add a top-level examples section to the main CLI help.
+    evaluation:
+      type: "behavior"
+      criteria:
+        - check: "help_shows_examples"
+          test: |
+            python-cli --help
+            python-cli config-show --help
+            python-cli process --help
+          expect_output_contains: "Example"
+        - check: "help_descriptive"
+          test: |
+            python-cli greet --help
+          expect_output_contains: "Greet"
+
+  - id: "add_unit_tests_for_validation"
+    name: "Add Unit Tests for Config Validation"
+    category: "test"
+    difficulty: "easy"
+    prompt: |
+      Add unit tests for the new config validation functionality. Test valid and invalid values for all validated fields.
+      Add tests to tests/test_cli.py or create tests/test_config.py.
+    evaluation:
+      type: "test_coverage"
+      criteria:
+        - check: "tests_exist"
+          path: "tests/test_config.py"
+          or: "tests/test_cli.py"
+        - check: "tests_pass"
+          test: |
+            pytest tests/ -v -k "validation"
+          expect_exit_code: 0
+        - check: "covers_all_validations"
+          description: "Tests cover timeout, retries, output_format, api_url"
+
+  - id: "add_greet_tests"
+    name: "Add Greet Command Tests"
+    category: "test"
+    difficulty: "easy"
+    prompt: |
+      Add more comprehensive tests for the greet command. Test edge cases like empty name, special characters,
+      very long names, etc.
+    evaluation:
+      type: "test_coverage"
+      criteria:
+        - check: "tests_added"
+          path: "tests/test_cli.py"
+        - check: "tests_pass"
+          test: |
+            pytest tests/ -v -k "greet"
+          expect_exit_code: 0

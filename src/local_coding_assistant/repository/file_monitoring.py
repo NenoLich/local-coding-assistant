@@ -1,10 +1,20 @@
 """Background file monitoring service for repository context service.
 
-This module provides file monitoring for tracked files to detect user edits
-and emit system notifications during active agent sessions.
+This module provides a passive, actor-agnostic file change feed for the workspace.
 
-Note: This is separate from re-indexing. File monitoring tracks all tracked
-files for notifications, while re-indexing filters by extension and size.
+RESPONSIBILITIES:
+- Watch the filesystem and emit low-level change notifications for codebase-wide file events.
+- Responsible for repo-aware reindexing callbacks, UI notifications, and filesystem drift awareness.
+- Does NOT decide whether a write is a user conflict or an agent conflict.
+
+NOT RESPONSIBLE FOR:
+- Conflict detection or resolution (handled by WorkspaceManager + ConflictDetector)
+- Transaction safety or write validation
+- Determining change attribution (user vs agent vs external)
+
+The WorkspaceManager subscribes to file-monitor events only as an optional
+invalidation signal; it must not require that subscription for correctness.
+The final conflict decision comes from the workspace baseline check at write time.
 """
 
 import hashlib
@@ -384,14 +394,26 @@ class TrackedFileHandler(FileSystemEventHandler):
 
 
 class FileMonitoringService:
-    """Background file monitoring service for tracked files.
+    """Background file monitoring service - passive change feed / event source.
 
-    This service monitors tracked files for changes and emits
-    notifications during active agent sessions.
+    This service monitors the filesystem and emits change notifications.
+    It is a PASSIVE OBSERVER - it does not make conflict decisions or enforce
+    transaction safety. Those responsibilities belong to WorkspaceManager and
+    ConflictDetector.
 
-    Note: This is separate from re-indexing. File monitoring tracks
-    all tracked files for notifications, while re-indexing filters
-    by extension and size.
+    RESPONSIBILITIES:
+    - Watch filesystem and emit FileChangeEvent for tracked files
+    - Content-based filtering via FileChangesChecker (avoid notifications for unchanged content)
+    - Debouncing rapid changes
+    - Support repo-aware reindexing callbacks (independent of conflict detection)
+
+    NOT RESPONSIBLE FOR:
+    - Deciding if a write is a user conflict or agent conflict
+    - Validating write versions or enforcing transaction safety
+    - Attributing changes to user/agent/external (this is done by WorkspaceManager)
+
+    The WorkspaceManager may subscribe to events as an advisory invalidation signal,
+    but the final conflict decision comes from workspace baseline checks at write time.
     """
 
     def __init__(
@@ -490,12 +512,12 @@ class FileMonitoringService:
     def stop(self) -> None:
         """Stop the file monitoring service."""
         if not self._is_running or self.observer is None:
-            logger.warning("File monitoring service is not running")
+            logger.debug("File monitoring service is not running")
             return
 
         logger.info("Stopping file monitoring service")
         self.observer.stop()
-        self.observer.join()
+        self.observer.join(timeout=5)
         self._is_running = False
         logger.info("File monitoring service stopped")
 

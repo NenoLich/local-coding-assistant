@@ -43,7 +43,7 @@ class TestBootstrapErrorHandling:
 
         # Mock other components to avoid side effects
         with patch(
-            "local_coding_assistant.core.bootstrap._initialize_tool_manager",
+            "local_coding_assistant.core.bootstrap._initialize_tool_gateway",
             return_value=Mock(),
         ):
             with patch(
@@ -51,11 +51,15 @@ class TestBootstrapErrorHandling:
                 return_value=Mock(),
             ):
                 with patch(
-                        "local_coding_assistant.core.bootstrap._initialize_repository_context_service",
-                        return_value=Mock(),
+                    "local_coding_assistant.core.bootstrap._initialize_repository_context_service",
+                    return_value=Mock(),
                 ):
-                    # Call bootstrap
-                    ctx = bootstrap()
+                    with patch(
+                        "local_coding_assistant.core.bootstrap._initialize_sandbox_manager",
+                        return_value=Mock(),
+                    ):
+                        # Call bootstrap
+                        ctx = bootstrap()
 
         # Verify it still returns a context
         assert isinstance(ctx, AppContext)
@@ -65,18 +69,20 @@ class TestBootstrapErrorHandling:
 
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
     @patch("local_coding_assistant.core.bootstrap._initialize_llm_service")
-    @patch("local_coding_assistant.core.bootstrap._initialize_tool_manager")
-    def test_tool_manager_initialization_failure(
-        self, mock_init_tools, mock_init_llm, mock_init_config, caplog
+    @patch("local_coding_assistant.core.bootstrap._initialize_tool_gateway")
+    def test_tool_gateway_initialization_failure(
+        self, mock_init_tool_gateway, mock_init_llm, mock_init_config, caplog
     ):
-        """Test behavior when tool manager initialization returns None."""
+        """Test behavior when tool gateway initialization returns None."""
         # Setup mocks
         mock_config = {"logging": {"level": "INFO"}}
         mock_config_manager = Mock()
         mock_llm_service = Mock()
         mock_init_config.return_value = mock_config_manager
         mock_init_llm.return_value = mock_llm_service
-        mock_init_tools.return_value = None  # Simulate tool manager init returns None
+        mock_init_tool_gateway.return_value = (
+            None  # Simulate tool gateway init returns None
+        )
 
         # Mock runtime manager to avoid side effects
         with patch(
@@ -84,28 +90,34 @@ class TestBootstrapErrorHandling:
             return_value=Mock(),
         ):
             with patch(
-                    "local_coding_assistant.core.bootstrap._initialize_repository_context_service",
-                    return_value=Mock(),
+                "local_coding_assistant.core.bootstrap._initialize_repository_context_service",
+                return_value=Mock(),
             ):
-                # Call bootstrap
-                ctx = bootstrap()
+                with patch(
+                    "local_coding_assistant.core.bootstrap._initialize_sandbox_manager",
+                    return_value=Mock(),
+                ):
+                    # Call bootstrap
+                    ctx = bootstrap()
 
         # Verify it still returns a context
         assert isinstance(ctx, AppContext)
 
-        # Verify tool manager is not set in context
-        assert ctx.get("tools") is None
+        # Verify tool gateway is not set in context
+        assert ctx.get("tool_gateway") is None
 
     @patch("local_coding_assistant.core.bootstrap._initialize_config")
     @patch("local_coding_assistant.core.bootstrap._initialize_llm_service")
-    @patch("local_coding_assistant.core.bootstrap._initialize_tool_manager")
+    @patch("local_coding_assistant.core.bootstrap._initialize_tool_gateway")
     @patch("local_coding_assistant.core.bootstrap._initialize_runtime_manager")
-    @patch("local_coding_assistant.core.bootstrap._initialize_repository_context_service")
+    @patch(
+        "local_coding_assistant.core.bootstrap._initialize_repository_context_service"
+    )
     def test_runtime_manager_initialization_failure(
         self,
         mock_init_repo,
         mock_init_runtime,
-        mock_init_tools,
+        mock_init_tool_gateway,
         mock_init_llm,
         mock_init_config,
         caplog,
@@ -116,15 +128,19 @@ class TestBootstrapErrorHandling:
         mock_repo_service = Mock()
         mock_config_manager = Mock()
         mock_llm_service = Mock()
-        mock_tool_manager = Mock()
+        mock_tool_gateway = Mock()
         mock_init_repo.return_value = mock_repo_service
         mock_init_config.return_value = mock_config_manager
         mock_init_llm.return_value = mock_llm_service
-        mock_init_tools.return_value = mock_tool_manager
+        mock_init_tool_gateway.return_value = mock_tool_gateway
         mock_init_runtime.return_value = None  # Simulate runtime manager init failure
 
-        # Call bootstrap
-        ctx = bootstrap()
+        with patch(
+            "local_coding_assistant.core.bootstrap._initialize_sandbox_manager",
+            return_value=Mock(),
+        ):
+            # Call bootstrap
+            ctx = bootstrap()
 
         # Verify it still returns a context
         assert isinstance(ctx, AppContext)

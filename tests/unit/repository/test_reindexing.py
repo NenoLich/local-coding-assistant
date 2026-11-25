@@ -8,7 +8,6 @@ import pytest
 from local_coding_assistant.repository.database import RepositoryDatabase
 from local_coding_assistant.repository.file_filter import FileFilter
 from local_coding_assistant.repository.file_reindexer import FileReindexer
-from local_coding_assistant.repository.file_scope import FileScope
 from local_coding_assistant.repository.reindexing import (
     AgentEditReindexer,
     ReindexManager,

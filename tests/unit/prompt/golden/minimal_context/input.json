@@ -1,0 +1,10 @@
+{
+  "context": {
+    "session_id": "sess-min",
+    "execution_mode": "classic_tools",
+    "tool_call_mode": "classic"
+  },
+  "render": {
+    "session_context_resolution": "static"
+  }
+}

@@ -251,17 +251,18 @@ class RepoMapBuilder:
         grouped: dict[str, list[dict[str, Any]]] = {}
         for symbol in symbols:
             file_path = symbol["file_path"]
-            if file_path not in grouped:
-                if convert_to_rel_path_if_possible:
-                    try:
-                        file_path = str(
-                            Path(file_path).relative_to(resolved_target_project_root)
-                        )
-                    except ValueError:
-                        file_path = file_path
+            group_key = file_path
+            if convert_to_rel_path_if_possible:
+                try:
+                    group_key = str(
+                        Path(file_path).relative_to(resolved_target_project_root)
+                    )
+                except ValueError:
+                    pass
 
-                grouped[file_path] = []
-            grouped[file_path].append(symbol)
+            if group_key not in grouped:
+                grouped[group_key] = []
+            grouped[group_key].append(symbol)
 
         return grouped
 

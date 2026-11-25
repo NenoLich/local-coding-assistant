@@ -2,9 +2,6 @@
 Provider manager for dynamic provider loading and registration
 """
 
-import importlib
-import importlib.util
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -29,19 +26,6 @@ def _deep_merge_dicts(d1: dict, d2: dict) -> dict:
     return merged
 
 
-class ProviderSource:
-    """Information about where a provider comes from."""
-
-    BUILTIN = "builtin"
-    GLOBAL = "global"
-    LOCAL = "local"
-
-
-# Module-level registry for provider classes (used by decorators)
-_provider_registry: dict[str, type[BaseProvider]] = {}
-_provider_sources: dict[str, str] = {}
-
-
 class ProviderManager:
     """Manages dynamic loading and registration of LLM providers"""
 
@@ -53,31 +37,8 @@ class ProviderManager:
         self._provider_configs: dict[
             str, dict[str, Any]
         ] = {}  # provider_name -> config
-        self._auto_discovery_paths = [
-            Path(__file__).parent,  # Current providers directory
-        ]
         self._env_manager = env_manager or get_env_manager()
         self._allow_test_requests = allow_test_requests
-
-        # Reference the module-level registry
-        self._providers = _provider_registry
-        self._provider_sources = _provider_sources
-
-    def register_provider(self, name: str):
-        """Decorator to register a provider class"""
-
-        def decorator(cls: type[BaseProvider]) -> type[BaseProvider]:
-            # Register in module-level registry
-            _provider_registry[name] = cls
-            _provider_sources[name] = ProviderSource.BUILTIN
-            logger.debug(f"Registered builtin provider: {name}")
-            return cls
-
-        return decorator
-
-    def get_provider_class(self, name: str) -> type[BaseProvider] | None:
-        """Get a provider class by name"""
-        return self._providers.get(name)
 
     def get_provider(self, name: str) -> BaseProvider | None:
         """Get a provider instance by name"""
@@ -90,23 +51,12 @@ class ProviderManager:
         """List all registered provider names"""
         return sorted(list(self._instances.keys()))
 
-    def get_provider_source(self, name: str) -> str | None:
-        """Get the source of a provider (builtin, global, local)"""
-        # Check module-level registry first (for builtin providers)
-        if name in _provider_sources:
-            return _provider_sources[name]
-        # Check instance registry (for config providers)
-        if name in self._provider_sources:
-            return self._provider_sources.get(name)
-        return None
-
     def reload(self, config_manager=None) -> None:
         """Reload providers from all sources with layer merging.
 
         Layer priority (later layers override earlier ones):
-        1. Builtins (from *_provider.py files)
-        2. Global config (from config manager if available)
-        2.5. Global YAML (from providers.default.yaml file directly)
+        1. Global config (from config manager if available)
+        2. Global YAML (from providers.default.yaml file directly)
         3. Local config (from providers.local.yaml)
         """
         logger.info("Reloading providers from all sources")
@@ -114,20 +64,10 @@ class ProviderManager:
         # Clear current instances and configs
         self._instances.clear()
         self._provider_configs.clear()
-        self._provider_sources.clear()
-
-        # Copy fresh from module-level registry
-        self._providers = _provider_registry.copy()
-        self._provider_sources = _provider_sources.copy()
-        logger.debug(
-            f"Loaded module-level builtin providers: {list(_provider_registry.keys())}"
-        )
 
         # Layer 2: Load from global config if available
         if config_manager:
-            self._load_providers_from_config_layer(
-                config_manager, ProviderSource.GLOBAL
-            )
+            self._load_providers_from_config_layer(config_manager)
 
         # Layer 2.5: Load from global providers.default.yaml file directly
         self._load_providers_from_global_yaml()
@@ -141,43 +81,8 @@ class ProviderManager:
         # Log the final state
         total_providers = len(self._instances)
         logger.info(f"Provider reload complete: {total_providers} providers loaded")
-        for name, _instance in self._instances.items():
-            logger.debug(f"  {name} ({self._provider_sources.get(name, 'unknown')})")
 
-    def _auto_discover_providers_from_paths(self) -> None:
-        """Discover and import provider classes from auto-discovery paths."""
-        for path in self._auto_discovery_paths:
-            for provider_file in path.glob("*_provider.py"):
-                module_name = provider_file.stem
-                name = module_name.replace("_provider", "")
-                if (
-                    name not in self._providers
-                ):  # Only discover if not already registered
-                    try:
-                        spec = importlib.util.spec_from_file_location(
-                            module_name, provider_file
-                        )
-                        if spec and spec.loader:
-                            module = importlib.util.module_from_spec(spec)
-                            spec.loader.exec_module(module)
-
-                            provider_class = getattr(
-                                module, f"{name.title()}Provider", None
-                            )
-                            if provider_class and issubclass(
-                                provider_class, BaseProvider
-                            ):
-                                self._providers[name] = provider_class
-                                self._provider_sources[name] = ProviderSource.BUILTIN
-                                logger.debug(
-                                    f"Auto-discovered provider from file: {name}"
-                                )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to load provider from {provider_file}: {e}"
-                        )
-
-    def _load_providers_from_config_layer(self, config_manager, source: str) -> None:
+    def _load_providers_from_config_layer(self, config_manager) -> None:
         """Load providers from a specific config layer."""
         try:
             config = config_manager.global_config
@@ -197,7 +102,7 @@ class ProviderManager:
                     provider_dict = provider_config
 
                 # Register the provider configuration
-                self._process_provider_config(provider_name, provider_dict, source)
+                self._process_provider_config(provider_name, provider_dict)
 
         except Exception as e:
             logger.error(f"Failed to load providers from config: {e}")
@@ -224,9 +129,7 @@ class ProviderManager:
 
                 # Process the provider configuration using the helper method
                 # Use ProviderSource.GLOBAL to indicate this is from the global config
-                self._process_provider_config(
-                    provider_name, provider_config, ProviderSource.GLOBAL
-                )
+                self._process_provider_config(provider_name, provider_config)
         except ValueError as e:
             logger.error(f"Error getting global config path: {e}")
         except Exception as e:
@@ -248,9 +151,7 @@ class ProviderManager:
                     )
                     continue
 
-                self._process_provider_config(
-                    provider_name, provider_config, ProviderSource.LOCAL
-                )
+                self._process_provider_config(provider_name, provider_config)
 
         except ValueError as e:
             logger.error(f"Error getting local config path: {e}")
@@ -271,7 +172,11 @@ class ProviderManager:
         """
         # Use PathManager to get the config directory and construct the path
         config_dir = self._env_manager.path_manager.get_config_dir()
-        return config_dir / f"providers.{config_type}.yaml"
+        config_path = config_dir / f"providers.{config_type}.yaml"
+        if not config_path.exists():
+            return self._get_config_path_from_src(config_type)
+
+        return config_path
 
     def _get_config_path_from_src(self, config_type: str) -> Path:
         """Get the path to a configuration file from the project source directory.
@@ -297,7 +202,7 @@ class ProviderManager:
             return yaml.safe_load(f) or {}
 
     def _process_provider_config(
-        self, provider_name: str, provider_config: dict, source: str | ProviderSource
+        self, provider_name: str, provider_config: dict
     ) -> None:
         """Process and merge a provider configuration.
 
@@ -310,19 +215,13 @@ class ProviderManager:
         if "models" in provider_config:
             provider_config = self._normalize_models_config(provider_config)
 
-        # Get source as string (handles both enum and string inputs)
-        if isinstance(source, Enum):
-            source_str = source.name.lower()  # Use .name instead of .value for enums
-        else:
-            source_str = str(source).lower()
-
         # Merge with existing config
         existing_config = self._provider_configs.get(provider_name, {})
         self._provider_configs[provider_name] = _deep_merge_dicts(
             existing_config, provider_config
         )
-        self._provider_sources[provider_name] = source_str
-        logger.debug(f"Loaded {source_str} provider config: {provider_name}")
+
+        logger.debug(f"Loaded provider config for {provider_name}")
 
     def _normalize_models_config(self, provider_config: dict) -> dict:
         """Normalize the models configuration format."""
@@ -388,22 +287,3 @@ class ProviderManager:
                 )
                 # Continue to next provider instead of failing completely
                 continue
-
-
-# Global provider manager instance
-provider_manager = ProviderManager(EnvManager(load_env=True))
-
-
-def register_provider(name: str):
-    """Convenience function to register providers"""
-    return provider_manager.register_provider(name)
-
-
-def get_provider(name: str) -> BaseProvider | None:
-    """Get a provider instance"""
-    return provider_manager.get_provider(name)
-
-
-def list_providers() -> list[str]:
-    """List all registered providers"""
-    return provider_manager.list_providers()

@@ -85,3 +85,30 @@ class AppContext:
     def __contains__(self, name: str) -> bool:
         """Check if a resource exists in the context."""
         return name in self._resources
+
+    async def __aenter__(self) -> "AppContext":
+        """Enter the async context, initializing application resources.
+
+        Usage::
+
+            async with AppContext(dependencies) as ctx:
+                ...  # use ctx.get("runtime"), etc.
+
+        Returns:
+            The context itself, after :func:`initialize` has run.
+        """
+        from local_coding_assistant.core.bootstrap import initialize
+
+        await initialize(self)
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool:
+        """Exit the async context, shutting down all application resources.
+
+        ``shutdown()`` always runs, even if the body raised (including
+        ``KeyboardInterrupt`` / ``CancelledError`` from Ctrl-C).
+        """
+        from local_coding_assistant.core.bootstrap import shutdown
+
+        await shutdown(self)
+        return False

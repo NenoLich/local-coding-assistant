@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from local_coding_assistant.config import EnvManager
 from local_coding_assistant.config.schemas import ModelConfig
+from local_coding_assistant.providers.error_classification import classify_llm_error
 from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("providers.base")
@@ -48,6 +49,10 @@ class OptionalParameters(BaseModel):
         default_factory=dict,
         description="Provider-specific parameters passed via extra_body to litellm",
     )
+    cache_control: dict[str, Any] | None = Field(
+        default=None,
+        description="Prefix cache control directive (e.g. {'type': 'ephemeral'}) applied to eligible messages by the driver",
+    )
 
     # Set of parameter names that are required when tools are used
     REQUIRED_WITH_TOOLS: ClassVar[frozenset[str]] = frozenset({"tools", "tool_choice"})
@@ -67,6 +72,9 @@ class ProviderLLMRequest(BaseModel):
         ge=0.0,
         le=2.0,
         description="Sampling temperature for response generation",
+    )
+    timeout: float | None = Field(
+        default=None, gt=0, description="Per-request timeout in seconds for litellm"
     )
     tool_outputs: dict[str, Any] | None = Field(
         None, description="Tool outputs for response generation"
@@ -395,7 +403,7 @@ class BaseDriver(abc.ABC):
         max_retries: int = 3,
         retry_delay: float = 1.0,
     ) -> ProviderLLMResponse:
-        """Generate with retry logic"""
+        """Generate with retry logic (transient failures only)"""
         last_error = None
 
         for attempt in range(max_retries + 1):
@@ -403,6 +411,8 @@ class BaseDriver(abc.ABC):
                 return await self.generate(request)
             except Exception as e:
                 last_error = e
+                if not classify_llm_error(e).transient:
+                    raise
                 if attempt < max_retries:
                     await asyncio.sleep(
                         retry_delay * (2**attempt)
@@ -416,7 +426,7 @@ class BaseDriver(abc.ABC):
         max_retries: int = 3,
         retry_delay: float = 1.0,
     ) -> AsyncGenerator[ProviderLLMResponseDelta, None]:
-        """Stream with retry logic"""
+        """Stream with retry logic (transient failures only)"""
         last_error = None
 
         for attempt in range(max_retries + 1):
@@ -426,6 +436,8 @@ class BaseDriver(abc.ABC):
                 return
             except Exception as e:
                 last_error = e
+                if not classify_llm_error(e).transient:
+                    raise
                 if attempt < max_retries:
                     await asyncio.sleep(
                         retry_delay * (2**attempt)
@@ -663,6 +675,15 @@ class BaseProvider(abc.ABC):
         if self.driver_instance is None:
             self.driver_instance = self._create_driver_instance()
 
+        # Merge model-level extra_body from config into the request parameters
+        model_config = self.get_model_config(request.model)
+        if model_config and model_config.extra_body:
+            existing = request.parameters.extra_body or {}
+            request.parameters.extra_body = {
+                **model_config.extra_body,
+                **existing,
+            }
+
         try:
             return await self.driver_instance.generate(request)
         except Exception as e:
@@ -710,6 +731,15 @@ class BaseProvider(abc.ABC):
             )
 
         try:
+            # Merge model-level extra_body from config into the request parameters
+            model_config = self.get_model_config(request.model)
+            if model_config and model_config.extra_body:
+                existing = request.parameters.extra_body or {}
+                request.parameters.extra_body = {
+                    **model_config.extra_body,
+                    **existing,
+                }
+
             if self.driver_instance:
                 async for delta in self.driver_instance.stream(request):
                     yield delta

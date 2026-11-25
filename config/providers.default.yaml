@@ -1,3 +1,16 @@
+# Default provider configuration for Local Coding Assistant
+#
+# Supported model parameters (OptionalParameters fields, per-model via
+# `supported_parameters`):
+#   tools, tool_choice, stream, response_format, max_tokens, top_p,
+#   presence_penalty, frequency_penalty, top_k, seed, stop,
+#   include_reasoning, reasoning_effort, include_usage, extra_body,
+#   cache_control
+#
+# cache_control is applied by the driver to eligible messages (last system,
+# last tool, last user) when set on the request, e.g.:
+#   cache_control: {"type": "ephemeral"}
+#
 providers:
   openrouter:
     driver: "openai_chat"
@@ -7,16 +20,14 @@ providers:
     models:
       nvidia/nemotron-3-ultra-550b-a55b:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty", "include_usage"]
-      inclusionai/ling-3.0-flash:free:
-        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "response_format", "include_usage"]
-      cohere/north-mini-code:free:
-        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "include_usage"]
-      poolside/laguna-s-2.1:free:
+      baidu/ernie-5.5-flash-preview:free:
         supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty", "include_usage"]
-      z-ai/glm-4.5-air:free:
-        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "include_usage"]
-      kwaipilot/kat-coder-pro:free:
-        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "response_format", "structured outputs", "stream", "include_usage"]
+      inclusionai/ling-3.2-flash:free:
+        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty", "include_usage"]
+      particle-ai/particle-1:free:
+        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty", "include_usage"]
+      recursive/flint-v1.0:free:
+        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty", "include_usage"]
   google_gemini:
     driver: "openai_chat"
     base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -24,9 +35,9 @@ providers:
     health_check_endpoint: "https://generativelanguage.googleapis.com/v1beta/openai/models"
     models:
       gemini-3.5-flash-lite:
-        supported_parameters: ["tools", "reasoning_effort", "max_tokens", "stream", "tool_choice", "response_format", "extra_body.thinking_config"]
+        supported_parameters: ["tools", "reasoning_effort", "max_tokens", "stream", "tool_choice", "response_format", "extra_body.thinking_config", "include_usage"]
       gemini-3.6-flash:
-        supported_parameters: [ "tools", "reasoning_effort", "max_tokens", "stream", "tool_choice", "response_format", "extra_body.thinking_config" ]
+        supported_parameters: [ "tools", "reasoning_effort", "max_tokens", "stream", "tool_choice", "response_format", "extra_body.thinking_config", "include_usage" ]
   github_models:
     driver: "openai_chat"
     base_url: "https://models.github.ai/inference"
@@ -53,5 +64,8 @@ providers:
     api_key_env: "NVIDIA_API_KEY"
     health_check_endpoint: "https://integrate.api.nvidia.com/v1/models"
     models:
-      minimaxai/minimax-m3:
-        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty", "include_usage"]
+      nvidia/nemotron-3.5-super-vl-120b-a12b:
+        supported_parameters: ["tools", "tool_choice", "max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed", "top_k", "repetition_penalty", "include_usage", "extra_body"]
+        extra_body:
+          chat_template_kwargs:
+            enable_thinking: true

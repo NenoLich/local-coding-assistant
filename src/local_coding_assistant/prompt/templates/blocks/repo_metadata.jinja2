@@ -1,0 +1,27 @@
+{% set ctx = context -%}
+{% if not ctx.project_info %}{% endif -%}
+{% set metadata_parts = [] -%}
+{% if ctx.project_info.name -%}{% set _ = metadata_parts.append("Name: " + ctx.project_info.name) -%}{% endif -%}
+{% if ctx.project_info.description -%}{% set _ = metadata_parts.append("Description: " + ctx.project_info.description) -%}{% endif -%}
+{% if ctx.project_info.language_distribution -%}
+  {% set lang_strs = [] -%}
+  {% for lang, pct in ctx.project_info.language_distribution.items() | sort(attribute='1', reverse=true) -%}
+    {% set _ = lang_strs.append(lang + " (" + (pct | round(1)) | string + "%)") -%}
+  {% endfor -%}
+  {% set _ = metadata_parts.append("Languages: " + lang_strs | join(', ')) -%}
+{% endif -%}
+{% if ctx.project_info.language_version -%}{% set _ = metadata_parts.append("Language version: " + ctx.project_info.language_version) -%}{% endif -%}
+{% if ctx.project_info.package_manager -%}{% set _ = metadata_parts.append("Package Manager: " + ctx.project_info.package_manager) -%}{% endif -%}
+{% if ctx.project_info.core_frameworks -%}{% set _ = metadata_parts.append("Core Frameworks: " + ctx.project_info.core_frameworks | join(', ')) -%}{% endif -%}
+{% if ctx.project_info.build_backend -%}{% set _ = metadata_parts.append("Build Backend: " + ctx.project_info.build_backend) -%}{% endif -%}
+{% if ctx.project_info.linter_formatter -%}{% set _ = metadata_parts.append("Formatter: " + ctx.project_info.linter_formatter | join(', ')) -%}{% endif -%}
+{% if ctx.project_info.test_frameworks -%}{% set _ = metadata_parts.append("Test Frameworks: " + ctx.project_info.test_frameworks | join(', ')) -%}{% endif -%}
+{% if ctx.project_info.license -%}{% set _ = metadata_parts.append("License: " + ctx.project_info.license) -%}{% endif -%}
+{% if ctx.project_info.available_scripts -%}{% set _ = metadata_parts.append("Scripts: " + ctx.project_info.available_scripts | join(', ')) -%}{% endif -%}
+
+{% if metadata_parts -%}
+Project Metadata:
+{% for part in metadata_parts -%}
+- {{ part }}
+{% endfor -%}
+{% endif -%}

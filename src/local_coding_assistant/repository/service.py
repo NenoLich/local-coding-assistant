@@ -15,7 +15,11 @@ from local_coding_assistant.repository.file_monitoring import (
 from local_coding_assistant.repository.file_reindexer import FileReindexer
 from local_coding_assistant.repository.file_scope import FileScope
 from local_coding_assistant.repository.metadata import MetadataExtractor
-from local_coding_assistant.repository.models import ProjectInfo, SymbolResult
+from local_coding_assistant.repository.models import (
+    ProjectInfo,
+    SymbolDetail,
+    SymbolResult,
+)
 from local_coding_assistant.repository.reindexing import ReindexManager
 from local_coding_assistant.repository.repo_map import (
     MapFormatter,
@@ -253,6 +257,8 @@ class RepositoryContextService:
         Returns:
             Tuple of ProjectInfo and RepoMapData
         """
+        self.ensure_initialized()
+
         # Build repo map (structured data)
         repo_map_data = None
         if self.repo_map_builder is None:
@@ -399,6 +405,9 @@ class RepositoryContextService:
             convert_to_rel_path_if_possible=True,
         )
 
+    def get_target_project_root(self) -> str:
+        return str(self.target_project_root)
+
     def search_symbols(
         self,
         query: str,
@@ -423,6 +432,72 @@ class RepositoryContextService:
 
         searcher = SymbolSearcher(self.database)
         return searcher.search_symbols(query, symbol_types, file_path, limit)
+
+    def get_symbol_by_id(self, symbol_id: int) -> SymbolDetail | None:
+        """Get detailed information about a symbol by its ID.
+
+        Args:
+            symbol_id: Symbol ID.
+
+        Returns:
+            SymbolDetail if found, None otherwise.
+        """
+        if self.database is None:
+            logger.debug("Database not initialized")
+            return None
+
+        searcher = SymbolSearcher(self.database)
+        return searcher.get_symbol_by_id(symbol_id)
+
+    def get_symbol_by_name(self, name: str) -> SymbolDetail | None:
+        """Get detailed information about a symbol by its name.
+
+        Args:
+            name: Symbol name.
+
+        Returns:
+            SymbolDetail if found, None otherwise.
+        """
+        if self.database is None:
+            logger.debug("Database not initialized")
+            return None
+
+        searcher = SymbolSearcher(self.database)
+        return searcher.get_symbol_by_name(name)
+
+    def get_symbol(
+        self,
+        name: str,
+        symbol_type: str | None = None,
+        file_path: str | None = None,
+        limit: int = 20,
+    ) -> list[SymbolDetail]:
+        """Get detailed information about symbols matching the name.
+
+        Supports multiple symbol returns when several symbols share a name
+        (e.g. methods on different classes). Optional ``symbol_type`` and
+        ``file_path`` filters narrow the result set.
+
+        Args:
+            name: Symbol name to look up.
+            symbol_type: Optional symbol type filter.
+            file_path: Optional file path filter.
+            limit: Maximum number of symbols to return.
+
+        Returns:
+            List of SymbolDetail objects (possibly empty).
+        """
+        if self.database is None:
+            logger.debug("Database not initialized")
+            return []
+
+        searcher = SymbolSearcher(self.database)
+        return searcher.get_symbol(
+            name=name,
+            symbol_type=symbol_type,
+            file_path=file_path,
+            limit=limit,
+        )
 
     def index_files_batch(
         self,

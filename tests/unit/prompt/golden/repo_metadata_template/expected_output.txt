@@ -1,0 +1,11 @@
+Project Metadata:
+- Name: local-coding-assistant
+- Description: A local coding assistant for developers
+- Languages: Python (85.5%), YAML (10.0%), Markdown (4.5%)
+- Language version: 3.11
+- Package Manager: uv
+- Core Frameworks: pytest, jinja2
+- Build Backend: hatchling
+- Formatter: ruff, mypy
+- Test Frameworks: pytest
+- License: MIT

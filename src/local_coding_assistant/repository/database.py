@@ -19,6 +19,22 @@ from local_coding_assistant.utils.logging import get_logger
 logger = get_logger("repository.database")
 
 
+def _parent_scope_for_storage(parent_scope: str | None) -> str:
+    """Normalize parent_scope for storage.
+
+    SQLite treats NULL as distinct in UNIQUE constraints, so None values
+    would never conflict. Store empty string instead so the UNIQUE
+    constraint on (file_id, name, parent_scope) deduplicates top-level
+    symbols correctly.
+    """
+    return parent_scope if parent_scope is not None else ""
+
+
+def _parent_scope_from_storage(parent_scope: str | None) -> str | None:
+    """Restore parent_scope from storage, converting empty string back to None."""
+    return parent_scope if parent_scope not in (None, "") else None
+
+
 class RepositoryDatabase:
     """Database connection and schema management for repository context."""
 
@@ -46,7 +62,8 @@ class RepositoryDatabase:
         docstring TEXT,
         content TEXT,
         signature TEXT,
-        FOREIGN KEY (file_id) REFERENCES files(id)
+        FOREIGN KEY (file_id) REFERENCES files(id),
+        UNIQUE(file_id, name, parent_scope)
     );
 
     -- Symbols table with FTS5 using external content
@@ -355,12 +372,21 @@ class RepositoryDatabase:
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            # Insert into metadata table (trigger will sync to FTS)
+            # Insert into metadata table (triggers will sync to FTS).
+            # Upsert on conflict so re-indexing replaces existing symbols
+            # instead of duplicating them with stale line boundaries.
             cursor.execute(
                 """
                 INSERT INTO symbol_metadata
                 (file_id, name, symbol_type, line_number, end_line_number, parent_scope, docstring, content, signature)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(file_id, name, parent_scope) DO UPDATE SET
+                    symbol_type=excluded.symbol_type,
+                    line_number=excluded.line_number,
+                    end_line_number=excluded.end_line_number,
+                    docstring=excluded.docstring,
+                    content=excluded.content,
+                    signature=excluded.signature
                 """,
                 (
                     symbol.file_id,
@@ -368,7 +394,7 @@ class RepositoryDatabase:
                     symbol.symbol_type.value,
                     symbol.line_number,
                     symbol.end_line_number,
-                    symbol.parent_scope,
+                    _parent_scope_for_storage(symbol.parent_scope),
                     symbol.docstring,
                     symbol.content,
                     symbol.signature,
@@ -397,12 +423,21 @@ class RepositoryDatabase:
             symbols: List of symbol details to store.
             cursor: Database cursor.
         """
-        # Insert into metadata table (triggers will sync to FTS)
+        # Insert into metadata table (triggers will sync to FTS).
+        # Upsert on conflict so re-indexing replaces existing symbols
+        # instead of duplicating them with stale line boundaries.
         cursor.executemany(
             """
             INSERT INTO symbol_metadata
             (file_id, name, symbol_type, line_number, end_line_number, parent_scope, docstring, content, signature)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(file_id, name, parent_scope) DO UPDATE SET
+                symbol_type=excluded.symbol_type,
+                line_number=excluded.line_number,
+                end_line_number=excluded.end_line_number,
+                docstring=excluded.docstring,
+                content=excluded.content,
+                signature=excluded.signature
             """,
             [
                 (
@@ -411,7 +446,7 @@ class RepositoryDatabase:
                     symbol.symbol_type.value,
                     symbol.line_number,
                     symbol.end_line_number,
-                    symbol.parent_scope,
+                    _parent_scope_for_storage(symbol.parent_scope),
                     symbol.docstring,
                     symbol.content,
                     symbol.signature,
@@ -460,14 +495,20 @@ class RepositoryDatabase:
                     sm.parent_scope,
                     sm.docstring,
                     sm.signature,
-                    f.path as file_path,
-                    f.language
+                f.path as file_path,
+                f.language
                 FROM symbol_metadata sm
                 JOIN files f ON sm.file_id = f.id
                 """
             )
 
-            return [dict(row) for row in cursor.fetchall()]
+            return [
+                {
+                    **dict(row),
+                    "parent_scope": _parent_scope_from_storage(row["parent_scope"]),
+                }
+                for row in cursor.fetchall()
+            ]
 
     def add_imports(self, import_list: list[ImportInfo]) -> None:
         """Add multiple import statements to the database.
@@ -930,6 +971,151 @@ class RepositoryDatabase:
             conn.commit()
 
             return total_indexed
+
+    def get_symbol_by_id(self, symbol_id: int) -> SymbolDetail | None:
+        """Get detailed information about a symbol by its ID.
+
+        Args:
+            symbol_id: Symbol ID.
+
+        Returns:
+            SymbolDetail if found, None otherwise.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT
+                    sm.symbol_id,
+                    sm.file_id,
+                    sm.name,
+                    sm.symbol_type,
+                    sm.line_number,
+                    sm.end_line_number,
+                    sm.parent_scope,
+                    sm.docstring,
+                    sm.content,
+                    sm.signature,
+                    f.path as file_path
+                FROM symbol_metadata sm
+                JOIN files f ON sm.file_id = f.id
+                WHERE sm.symbol_id = ?
+                """,
+                (symbol_id,),
+            )
+
+            row = cursor.fetchone()
+            if row:
+                from local_coding_assistant.repository.models import SymbolType
+
+                symbol_type = SymbolType(row["symbol_type"])
+                return SymbolDetail(
+                    symbol_id=row["symbol_id"],
+                    file_id=row["file_id"],
+                    name=row["name"],
+                    symbol_type=symbol_type,
+                    line_number=row["line_number"],
+                    end_line_number=row["end_line_number"],
+                    parent_scope=_parent_scope_from_storage(row["parent_scope"]),
+                    docstring=row["docstring"],
+                    content=row["content"],
+                    signature=row["signature"],
+                    file_path=row["file_path"],
+                )
+            return None
+
+    def get_symbol_by_name(self, name: str) -> SymbolDetail | None:
+        """Get detailed information about a symbol by its name.
+
+        Args:
+            name: Symbol name.
+
+        Returns:
+            SymbolDetail if found, None otherwise.
+        """
+        symbols = self.get_symbols(name=name, limit=1)
+        return symbols[0] if symbols else None
+
+    def get_symbols(
+        self,
+        name: str,
+        symbol_type: str | None = None,
+        file_path: str | None = None,
+        limit: int = 20,
+    ) -> list[SymbolDetail]:
+        """Get detailed information about symbols matching the name.
+
+        Supports multiple symbol returns when several symbols share a name
+        (e.g. methods on different classes). Optional ``symbol_type`` and
+        ``file_path`` filters narrow the result set.
+
+        Args:
+            name: Symbol name to look up.
+            symbol_type: Optional symbol type filter.
+            file_path: Optional file path filter.
+            limit: Maximum number of symbols to return.
+
+        Returns:
+            List of SymbolDetail objects (possibly empty).
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            sql = """
+                SELECT
+                    sm.symbol_id,
+                    sm.file_id,
+                    sm.name,
+                    sm.symbol_type,
+                    sm.line_number,
+                    sm.end_line_number,
+                    sm.parent_scope,
+                    sm.docstring,
+                    sm.content,
+                    sm.signature,
+                    f.path as file_path
+                FROM symbol_metadata sm
+                JOIN files f ON sm.file_id = f.id
+                WHERE sm.name = ?
+            """
+            params: list[Any] = [name]
+
+            if symbol_type is not None:
+                sql += " AND sm.symbol_type = ?"
+                params.append(symbol_type)
+
+            if file_path is not None:
+                sql += " AND f.path = ?"
+                params.append(file_path)
+
+            sql += " ORDER BY sm.line_number"
+            sql += " LIMIT ?"
+            params.append(str(limit))
+
+            cursor.execute(sql, params)
+
+            from local_coding_assistant.repository.models import SymbolType
+
+            results = []
+            for row in cursor.fetchall():
+                symbol_type_value = SymbolType(row["symbol_type"])
+                results.append(
+                    SymbolDetail(
+                        symbol_id=row["symbol_id"],
+                        file_id=row["file_id"],
+                        name=row["name"],
+                        symbol_type=symbol_type_value,
+                        line_number=row["line_number"],
+                        end_line_number=row["end_line_number"],
+                        parent_scope=_parent_scope_from_storage(row["parent_scope"]),
+                        docstring=row["docstring"],
+                        content=row["content"],
+                        signature=row["signature"],
+                        file_path=row["file_path"],
+                    )
+                )
+
+            return results
 
     def close(self) -> None:
         """Close the database connection (no-op for connection pooling)."""

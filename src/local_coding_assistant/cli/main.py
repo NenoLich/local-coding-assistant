@@ -1,11 +1,28 @@
 import typer
 
-from .commands import config, dashboard, provider, run, sandbox, serve, tool
+from .commands import (
+    chat,
+    config,
+    dashboard,
+    provider,
+    replay,
+    run,
+    sandbox,
+    serve,
+    sessions,
+    tool,
+)
 
 app = typer.Typer(help="Local Coding Assistant CLI")
 
-# Include sub-commands
 app.add_typer(run.app, name="run", help="Run a single LLM or tool request")
+app.add_typer(chat.app, name="chat", help="Interactive multi-turn chat session")
+app.add_typer(
+    sessions.app,
+    name="sessions",
+    help="List, inspect and resume stored sessions",
+)
+app.add_typer(replay.app, name="replay", help="Replay a stored session or turn")
 app.add_typer(serve.app, name="serve", help="Start the assistant server")
 app.add_typer(tool.app, name="tool", help="Manage tools")
 app.add_typer(config.app, name="config", help="Configure system settings")

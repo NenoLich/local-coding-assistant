@@ -5,6 +5,7 @@ This module provides commands to manage LLM providers through configuration file
 and the bootstrap system, following the same patterns as other CLI commands.
 """
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -214,42 +215,47 @@ def _create_provider_config(
     return config
 
 
-def _verify_provider_health(llm_service, provider_name: str) -> None:
-    """Verify that the provider was loaded correctly and is healthy."""
-    try:
-        provider_status_list = llm_service.get_provider_status_list()
-        available_providers = [p["name"] for p in provider_status_list]
+async def _verify_provider_health(llm_service, provider_name: str) -> None:
+    """Verify that the provider was loaded correctly and is healthy.
 
-        if provider_name not in available_providers:
+    Only checks the specified provider rather than refreshing the status of
+    every configured provider, so a failing health check for an unrelated
+    provider does not block adding a new one.
+    """
+    try:
+        provider_names = llm_service.provider_manager.list_providers()
+
+        if provider_name not in provider_names:
             typer.echo(
                 f"Error: Provider '{provider_name}' is not available after loading. "
-                f"Available providers: {', '.join(available_providers)}",
+                f"Available providers: {', '.join(provider_names)}",
                 err=True,
             )
             raise typer.Exit(code=1)
 
-        # Check provider status
-        provider_status = next(
-            (p for p in provider_status_list if p.get("name") == provider_name), None
-        )
+        provider = llm_service.provider_manager.get_provider(provider_name)
+        if provider is None:
+            typer.echo(
+                f"Error: Provider '{provider_name}' failed to initialize", err=True
+            )
+            raise typer.Exit(code=1)
 
-        if provider_status:
-            status_msg = provider_status.get("status", "unknown")
-            if status_msg == "health_check_not_configured":
-                typer.echo(
-                    f"Provider '{provider_name}' was added successfully. "
-                    "Note: Health check is not configured for this provider.",
-                    err=True,
-                )
-            elif status_msg != "available":
-                error_msg = provider_status.get("error", "")
-                health_status = f"Status: {status_msg}"
-                if error_msg:
-                    health_status = f"{health_status} - {error_msg}"
-                typer.echo(
-                    f"⚠️  Warning: Provider '{provider_name}' is available but not healthy. {health_status}",
-                    err=True,
-                )
+        health_status = await provider.health_check()
+
+        # Handle the case where health check is not available
+        if health_status == "unavailable":
+            typer.echo(
+                f"Provider '{provider_name}' was added successfully. "
+                "Note: Health check is not configured for this provider.",
+                err=True,
+            )
+        elif not bool(health_status):
+            typer.echo(
+                f"⚠️  Warning: Provider '{provider_name}' is available but not healthy.",
+                err=True,
+            )
+    except typer.Exit:
+        raise
     except Exception as e:
         typer.echo(f"Error checking provider status: {e!s}", err=True)
         raise typer.Exit(code=1) from e
@@ -355,7 +361,7 @@ def add(
             )
             raise typer.Exit(code=1)
 
-        _verify_provider_health(llm_service, name)
+        asyncio.run(_verify_provider_health(llm_service, name))
         if models:
             typer.echo(
                 f"✅ Successfully added and verified provider '{name}'. "
@@ -408,11 +414,8 @@ def _list_specific_provider(llm_service, provider_name: str) -> None:
     """List models for a specific provider."""
     if provider_name in llm_service.provider_manager.list_providers():
         provider_instance = llm_service.provider_manager.get_provider(provider_name)
-        source = (
-            llm_service.provider_manager.get_provider_source(provider_name) or "unknown"
-        )
 
-        typer.echo(f"Provider: {provider_name} ({source})")
+        typer.echo(f"Provider: {provider_name}")
         if provider_instance:
             models = provider_instance.get_available_models()
             if models:
@@ -438,7 +441,6 @@ def _list_all_providers(llm_service) -> None:
         for provider_status in status_list:
             typer.echo(
                 f"{provider_status['name']:<20} "
-                f"{provider_status['source']:<10} "
                 f"{provider_status['status']:<12} "
                 f"{provider_status['models']} models"
             )
@@ -654,7 +656,7 @@ def _validate_provider_config(
 
     # Validate driver type if provided
     if "driver" in provider_config:
-        valid_drivers = ["openai_chat", "openai_responses", "local"]
+        valid_drivers = ["openai_chat", "openai_responses", "local", "mock"]
         if provider_config["driver"] not in valid_drivers:
             typer.echo(
                 f"⚠️  Warning: Unknown driver type: {provider_config['driver']}. "

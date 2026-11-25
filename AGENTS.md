@@ -13,7 +13,7 @@ Local Coding Assistant (LOCCA): a local-first AI coding assistant. Python 3.12, 
 
 ```bash
 uv run locca run query "..."          # CLI entrypoint; run --help to list flags
-uvx ty check --ignore unresolved-import src/   # typecheck (whole src/, as pre-commit does; tests are not checked)
+pyrefly check src/*   # typecheck (whole src/, as pre-commit does; tests are not checked)
 ruff check --fix .                    # lint
 ruff format .                         # format
 uv run task test-unit                 # pytest -v -s -x tests/unit
@@ -28,7 +28,7 @@ Gotchas:
 - `uv run` auto-syncs from `uv.lock` first (needs network, can be slow). Use `uv run --no-sync ...` or `.venv/bin/...` for quick checks. If `.venv` imports fail with missing-module errors that shouldn't exist, rebuild with `uv sync`.
 - `asyncio_mode = "auto"` in pyproject: async tests run automatically, no `@pytest.mark.asyncio` needed.
 - Golden tests compare exact output against `tests/unit/cli/golden/*.txt` (pytest-golden); regenerate with `pytest ... --update-goldens`.
-- Pre-commit (`.pre-commit-config.yaml`): lint/format/ty + unit tests run on commit, integration + e2e on push. Install with `pre-commit install`.
+- Pre-commit (`.pre-commit-config.yaml`): lint/format/pyrefly + unit tests run on commit, integration + e2e on push. Install with `pre-commit install`.
 
 ## Configuration & paths
 
@@ -45,8 +45,8 @@ Gotchas:
 - Logging: `utils/logging.get_logger("a.b.c")` (structlog). Pass structured data as keyword args, e.g. `logger.info("msg", data=thing)`, not string interpolation.
 - All I/O is async.
 - Ruff (pyproject): max-complexity 10; `tests/**` is allowed `assert`/`print`; **`**/sandbox/guest/tools_api.py` is excluded from ruff + pyupgrade** because it runs in the trimmed sandbox runtime — leave it untouched.
+- Use pyrefly for type checking. Dont typecheck `tests/` or `sandbox/guest/`.
 
-## Adding tools & providers
+## Mock model for testing
 
-- Regular tools: register in `config/tools.default.yaml`, implement a class with `run()` (+ optional `stream()`); inputs are JSON-schema validated. Sandbox tools: register in `config/sandbox_tools.yaml`, args come from the docstring.
-- Providers are declarative: `config/providers.default.yaml` are built-ins, `locca provider add ...` writes to `config/providers.local.yaml`. `config/` is the source of truth; `README.md` mirrors this but lags in places (see the `@root`/`@logs` note above).
+Use the `mock-model` with `mock` driver to test without real LLM calls. Look in data/mock_responses to setup mocked responses for mock-model.

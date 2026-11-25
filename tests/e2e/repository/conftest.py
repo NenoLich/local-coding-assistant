@@ -1,14 +1,13 @@
 """Pytest configuration and fixtures for repository e2e tests."""
 
-import tempfile
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
-from unittest.mock import MagicMock, patch
+from typing import Any
 
 import pytest
 import yaml
 
-from local_coding_assistant.config import ConfigManager, EnvManager, PathManager
+from local_coding_assistant.config.config_manager import ConfigManager
 from local_coding_assistant.repository.service import RepositoryContextService
 
 
@@ -190,7 +189,7 @@ def config_manager_with_repo(
     config_manager.register_capability(["repository"])
     config_manager.load_global_config()
 
-    yield config_manager
+    return config_manager
 
 
 @pytest.fixture

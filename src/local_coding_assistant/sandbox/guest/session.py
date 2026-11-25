@@ -10,7 +10,7 @@ from typing import Any
 from pydantic import ValidationError
 
 try:
-    from resource_tracker import tracker
+    from resource_tracker import tracker  # type: ignore
 except ImportError:
     # Fallback for relative import if run as a module
     from .resource_tracker import tracker

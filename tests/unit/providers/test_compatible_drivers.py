@@ -12,6 +12,12 @@ from local_coding_assistant.providers.base import (
 from local_coding_assistant.providers.compatible_drivers import (
     OpenAIChatCompletionsDriver,
     OpenAIResponsesDriver,
+    _apply_cache_control_to_parts,
+    _apply_cache_control_to_tools,
+    _extract_developer_message,
+    _find_last_user_or_tool_index,
+    _format_message_content,
+    _prepare_messages_for_cache,
 )
 from local_coding_assistant.providers.exceptions import (
     ProviderAuthError,
@@ -36,7 +42,7 @@ class TestOpenAIChatCompletionsDriver:
     def mock_acompletion(self):
         """Mock litellm's acompletion function"""
         with patch(
-            "local_coding_assistant.providers.compatible_drivers.acompletion",
+            "litellm.acompletion",
             new_callable=AsyncMock,
         ) as mock:
             yield mock
@@ -229,7 +235,7 @@ class TestOpenAIChatCompletionsDriver:
     async def test_health_check_success(self, driver):
         """Test successful health check"""
         with patch(
-            "local_coding_assistant.providers.compatible_drivers.get_valid_models",
+            "litellm.get_valid_models",
             return_value=["model1"],
         ):
             assert await driver.health_check() is True
@@ -238,7 +244,7 @@ class TestOpenAIChatCompletionsDriver:
     async def test_health_check_failure(self, driver):
         """Test failed health check"""
         with patch(
-            "local_coding_assistant.providers.compatible_drivers.get_valid_models",
+            "litellm.get_valid_models",
             side_effect=Exception("API error"),
         ):
             assert await driver.health_check() is False
@@ -490,7 +496,7 @@ class TestOpenAIResponsesDriver:
     def mock_acompletion(self):
         """Mock litellm's acompletion function"""
         with patch(
-            "local_coding_assistant.providers.compatible_drivers.acompletion",
+            "litellm.acompletion",
             new_callable=AsyncMock,
         ) as mock:
             yield mock
@@ -666,7 +672,7 @@ class TestOpenAIResponsesDriver:
     async def test_health_check_success(self, driver):
         """Test successful health check"""
         with patch(
-            "local_coding_assistant.providers.compatible_drivers.get_valid_models",
+            "litellm.get_valid_models",
             return_value=["model1"],
         ):
             assert await driver.health_check() is True
@@ -675,7 +681,7 @@ class TestOpenAIResponsesDriver:
     async def test_health_check_failure(self, driver):
         """Test failed health check"""
         with patch(
-            "local_coding_assistant.providers.compatible_drivers.get_valid_models",
+            "litellm.get_valid_models",
             side_effect=Exception("API error"),
         ):
             assert await driver.health_check() is False
@@ -780,9 +786,9 @@ class TestOpenAIResponsesDriver:
 
         assert len(formatted) == 2
         assert formatted[0]["type"] == "message"
-        assert formatted[0]["content"] == "Hello"
+        assert formatted[0]["content"] == [{"type": "text", "text": "Hello"}]
         assert formatted[1]["type"] == "message"
-        assert formatted[1]["content"] == "Hi there"
+        assert formatted[1]["content"] == [{"type": "text", "text": "Hi there"}]
 
     def test_format_messages_with_tool_calls(self, driver):
         """Test message formatting with tool calls for Responses API."""
@@ -813,7 +819,7 @@ class TestOpenAIResponsesDriver:
         assert len(formatted) == 2
         # Assistant message
         assert formatted[0]["type"] == "message"
-        assert formatted[0]["content"] == "I'll help"
+        assert formatted[0]["content"] == [{"type": "text", "text": "I'll help"}]
         assert formatted[0]["tool_calls"] == messages[0]["tool_calls"]
         # Tool message
         assert formatted[1]["type"] == "function_call_output"
@@ -847,7 +853,7 @@ class TestOpenAIResponsesDriver:
         formatted = driver._format_messages(messages)
 
         assert len(formatted) == 1
-        assert formatted[0]["content"] == "Hello"
+        assert formatted[0]["content"] == [{"type": "text", "text": "Hello"}]
 
     def test_format_tools_for_responses_api(self, driver):
         """Test tool formatting for Responses API"""
@@ -925,3 +931,555 @@ class TestOpenAIResponsesDriver:
         response5 = MockResponse5()
         reasoning = driver._extract_reasoning(response5)
         assert reasoning is None
+
+
+class TestFormatMessageContent:
+    """Tests for the _format_message_content helper function."""
+
+    def test_plain_string(self):
+        """A plain string becomes a single text part."""
+        result = _format_message_content("Hello world")
+        assert result == [{"type": "text", "text": "Hello world"}]
+
+    def test_none_content(self):
+        """None content returns an empty list."""
+        assert _format_message_content(None) == []
+
+    def test_list_of_text_parts(self):
+        """A list of text parts is preserved (copied)."""
+        parts = [{"type": "text", "text": "Part 1"}, {"type": "text", "text": "Part 2"}]
+        result = _format_message_content(parts)
+        assert result == parts
+        # Should be a copy, not the same object
+        assert result is not parts
+
+    def test_list_with_strings_and_dicts(self):
+        """A mixed list of strings and dict parts is normalized."""
+        content = ["Plain string", {"type": "text", "text": "Dict part"}]
+        result = _format_message_content(content)
+        assert result == [
+            {"type": "text", "text": "Plain string"},
+            {"type": "text", "text": "Dict part"},
+        ]
+
+    def test_empty_list(self):
+        """An empty list returns an empty list."""
+        assert _format_message_content([]) == []
+
+    def test_input_text_type_preserved(self):
+        """input_text type parts are preserved."""
+        parts = [{"type": "input_text", "text": "Input text"}]
+        result = _format_message_content(parts)
+        assert result == parts
+
+
+class TestExtractDeveloperMessage:
+    """Tests for the _extract_developer_message helper function."""
+
+    def test_no_developer_message(self):
+        """Without a developer message, returns None and unchanged list."""
+        messages = [
+            {"role": "system", "content": "System"},
+            {"role": "user", "content": "Hello"},
+        ]
+        remainder, cleaned = _extract_developer_message(messages)
+        assert remainder is None
+        assert cleaned == messages
+
+    def test_with_developer_message(self):
+        """Extracts the developer message text and removes it from the list."""
+        messages = [
+            {"role": "system", "content": "System"},
+            {"role": "developer", "content": "<system_reminder> workspace state"},
+            {"role": "user", "content": "Hello"},
+        ]
+        remainder, cleaned = _extract_developer_message(messages)
+        assert remainder == "<system_reminder> workspace state"
+        assert len(cleaned) == 2
+        assert cleaned[0]["role"] == "system"
+        assert cleaned[1]["role"] == "user"
+
+    def test_developer_message_with_list_content(self):
+        """Developer message with list content is joined into a string."""
+        messages = [
+            {
+                "role": "developer",
+                "content": [
+                    {"type": "text", "text": "Remainder part 1"},
+                    {"type": "text", "text": " Remainder part 2"},
+                ],
+            },
+            {"role": "user", "content": "Hello"},
+        ]
+        remainder, cleaned = _extract_developer_message(messages)
+        assert remainder == "Remainder part 1 Remainder part 2"
+        assert len(cleaned) == 1
+        assert cleaned[0]["role"] == "user"
+
+    def test_developer_message_first(self):
+        """Developer message at the start is correctly extracted."""
+        messages = [
+            {"role": "developer", "content": "First remainder"},
+            {"role": "user", "content": "Hello"},
+        ]
+        remainder, cleaned = _extract_developer_message(messages)
+        assert remainder == "First remainder"
+        assert len(cleaned) == 1
+        assert cleaned[0]["role"] == "user"
+
+    def test_original_list_not_mutated(self):
+        """The original messages list is not mutated."""
+        messages = [
+            {"role": "developer", "content": "Remainder"},
+            {"role": "user", "content": "Hello"},
+        ]
+        original = list(messages)
+        _extract_developer_message(messages)
+        assert messages == original
+
+
+class TestFindLastUserOrToolIndex:
+    """Tests for the _find_last_user_or_tool_index helper function."""
+
+    def test_last_is_user(self):
+        """Returns index of last user message."""
+        messages = [
+            {"role": "system", "content": "System"},
+            {"role": "user", "content": "First"},
+            {"role": "tool", "content": "Tool result"},
+            {"role": "user", "content": "Last"},
+        ]
+        assert _find_last_user_or_tool_index(messages) == 3
+
+    def test_last_is_tool(self):
+        """Returns index of last tool message when it's after user."""
+        messages = [
+            {"role": "user", "content": "First"},
+            {"role": "tool", "content": "Tool result"},
+            {"role": "user", "content": "Middle"},
+            {"role": "tool", "content": "Last tool"},
+        ]
+        assert _find_last_user_or_tool_index(messages) == 3
+
+    def test_only_system_messages(self):
+        """Returns None when only system messages exist."""
+        messages = [
+            {"role": "system", "content": "System 1"},
+            {"role": "system", "content": "System 2"},
+        ]
+        assert _find_last_user_or_tool_index(messages) is None
+
+    def test_empty_list(self):
+        """Returns None for empty message list."""
+        assert _find_last_user_or_tool_index([]) is None
+
+    def test_single_user(self):
+        """Returns 0 for a single user message."""
+        messages = [{"role": "user", "content": "Only message"}]
+        assert _find_last_user_or_tool_index(messages) == 0
+
+    def test_single_tool(self):
+        """Returns 0 for a single tool message."""
+        messages = [{"role": "tool", "content": "Only tool"}]
+        assert _find_last_user_or_tool_index(messages) == 0
+
+
+class TestApplyCacheControlToParts:
+    """Tests for the _apply_cache_control_to_parts helper function."""
+
+    def test_attaches_to_all_text_parts(self):
+        """Cache control is attached to all text parts."""
+        parts = [
+            {"type": "text", "text": "Part 1"},
+            {"type": "text", "text": "Part 2"},
+        ]
+        _apply_cache_control_to_parts(parts, {"type": "ephemeral"}, exclude_last=False)
+        assert parts[0]["cache_control"] == {"type": "ephemeral"}
+        assert parts[1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_exclude_last_skips_final_part(self):
+        """When exclude_last=True, the last part is skipped."""
+        parts = [
+            {"type": "text", "text": "Part 1"},
+            {"type": "text", "text": "Part 2"},
+            {"type": "text", "text": "Part 3"},
+        ]
+        _apply_cache_control_to_parts(parts, {"type": "ephemeral"}, exclude_last=True)
+        assert parts[0]["cache_control"] == {"type": "ephemeral"}
+        assert parts[1]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in parts[2]
+
+    def test_empty_parts(self):
+        """Empty parts list is handled gracefully."""
+        _apply_cache_control_to_parts([], {"type": "ephemeral"}, exclude_last=False)
+        # No error, no parts modified
+
+    def test_non_text_parts_ignored(self):
+        """Non-text parts are not modified."""
+        parts = [
+            {"type": "image_url", "image_url": {"url": "http://example.com"}},
+            {"type": "text", "text": "Text part"},
+        ]
+        _apply_cache_control_to_parts(parts, {"type": "ephemeral"}, exclude_last=False)
+        assert "cache_control" not in parts[0]
+        assert parts[1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_single_part_exclude_last(self):
+        """Single part with exclude_last=True is skipped."""
+        parts = [{"type": "text", "text": "Only part"}]
+        _apply_cache_control_to_parts(parts, {"type": "ephemeral"}, exclude_last=True)
+        assert "cache_control" not in parts[0]
+
+
+class TestPrepareMessagesForCache:
+    """Tests for the _prepare_messages_for_cache helper function."""
+
+    def test_system_and_user_with_cache_control(self):
+        """System message and user content before remainder get cache_control."""
+        messages = [
+            {"role": "system", "content": "System prompt"},
+            {"role": "user", "content": "User message"},
+        ]
+        result = _prepare_messages_for_cache(messages, {"type": "ephemeral"}, None)
+        # System message cached
+        assert result[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        # User message cached (no remainder, so all parts cached)
+        assert result[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_with_system_reminder(self):
+        """System remainder is appended as final part of last user/tool message."""
+        messages = [
+            {"role": "system", "content": "System prompt"},
+            {"role": "user", "content": "User message"},
+        ]
+        result = _prepare_messages_for_cache(
+            messages, {"type": "ephemeral"}, "<system_reminder> workspace state"
+        )
+        # Remainder appended to user message
+        assert result[1]["content"] == [
+            {
+                "type": "text",
+                "text": "User message",
+                "cache_control": {"type": "ephemeral"},
+            },
+            {"type": "text", "text": "<system_reminder> workspace state"},
+        ]
+        # User content before remainder cached, remainder not cached
+        assert result[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in result[1]["content"][1]
+
+    def test_system_message_cached(self):
+        """Last system message gets cache_control on all parts."""
+        messages = [
+            {"role": "system", "content": "System prompt"},
+            {"role": "user", "content": "User message"},
+        ]
+        result = _prepare_messages_for_cache(
+            messages, {"type": "ephemeral"}, "<system_reminder> workspace"
+        )
+        assert result[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_no_cache_control(self):
+        """Without cache_control, messages are still normalized but no cache_control attached."""
+        messages = [
+            {"role": "system", "content": "System prompt"},
+            {"role": "user", "content": "User message"},
+        ]
+        result = _prepare_messages_for_cache(messages, None, None)
+        assert result[0]["content"][0] == {"type": "text", "text": "System prompt"}
+        assert "cache_control" not in result[0]["content"][0]
+
+    def test_tool_message_targeted(self):
+        """When last message is tool, only tool gets cache_control (not user)."""
+        messages = [
+            {"role": "user", "content": "User first"},
+            {"role": "tool", "content": "Tool output"},
+        ]
+        result = _prepare_messages_for_cache(
+            messages, {"type": "ephemeral"}, "<system_reminder> state"
+        )
+        # User message should NOT have cache_control
+        assert "cache_control" not in result[0]["content"][0]
+        # Tool message content before remainder should have cache_control
+        assert result[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in result[1]["content"][1]
+
+    def test_content_normalized_to_parts(self):
+        """String content is normalized to structured parts."""
+        messages = [{"role": "user", "content": "Plain string"}]
+        result = _prepare_messages_for_cache(messages, None, None)
+        assert result[0]["content"] == [{"type": "text", "text": "Plain string"}]
+
+
+class TestApplyCacheControlToTools:
+    """Tests for the _apply_cache_control_to_tools helper function."""
+
+    def test_attaches_to_last_tool(self):
+        """Cache control is attached only to the last tool definition."""
+        tools = [
+            {"name": "tool_one", "description": "First tool"},
+            {"name": "tool_two", "description": "Second tool"},
+        ]
+        result = _apply_cache_control_to_tools(tools, {"type": "ephemeral"})
+        assert "cache_control" not in result[0]
+        assert result[1]["cache_control"] == {"type": "ephemeral"}
+        assert result[1]["name"] == "tool_two"
+
+    def test_no_cache_control_returns_unchanged(self):
+        """Without cache_control, tools are returned unchanged."""
+        tools = [{"name": "tool_one", "description": "First tool"}]
+        result = _apply_cache_control_to_tools(tools, None)
+        assert result == tools
+
+    def test_empty_tools(self):
+        """Empty tools list is handled gracefully."""
+        assert _apply_cache_control_to_tools([], {"type": "ephemeral"}) == []
+
+    def test_single_tool(self):
+        """Single tool gets cache_control."""
+        tools = [{"name": "only_tool", "description": "Only tool"}]
+        result = _apply_cache_control_to_tools(tools, {"type": "ephemeral"})
+        assert result[0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_original_tools_not_mutated(self):
+        """The original tools list is not mutated."""
+        tools = [
+            {"name": "tool_one"},
+            {"name": "tool_two"},
+        ]
+        original = [dict(t) for t in tools]
+        _apply_cache_control_to_tools(tools, {"type": "ephemeral"})
+        assert tools == original
+
+
+class TestCacheControlChatPayload:
+    """Tests for cache_control in _build_chat_payload."""
+
+    @pytest.fixture
+    def driver(self):
+        return OpenAIChatCompletionsDriver(
+            api_key="test-api-key",
+            base_url="https://api.example.com",
+            provider_name="test-provider",
+        )
+
+    def test_chat_payload_with_cache_control_and_remainder(self, driver):
+        """Chat payload applies cache_control to system and user content before remainder."""
+        request = ProviderLLMRequest(
+            model="test-model",
+            messages=[
+                {"role": "system", "content": "System prompt"},
+                {"role": "developer", "content": "<system_reminder> workspace state"},
+                {"role": "user", "content": "User message"},
+            ],
+            temperature=0.7,
+            parameters=OptionalParameters(cache_control={"type": "ephemeral"}),
+        )
+        payload = driver._build_chat_payload(request)
+        messages = payload["messages"]
+
+        # Developer message removed
+        assert all(m["role"] != "developer" for m in messages)
+
+        # System message cached
+        system_msg = messages[0]
+        assert system_msg["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+        # User message: content before remainder cached, remainder not cached
+        user_msg = messages[1]
+        assert user_msg["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in user_msg["content"][1]
+        assert user_msg["content"][1]["text"] == "<system_reminder> workspace state"
+
+    def test_chat_payload_cache_control_no_remainder(self, driver):
+        """Cache control applies to all of last user message without remainder."""
+        request = ProviderLLMRequest(
+            model="test-model",
+            messages=[
+                {"role": "system", "content": "System prompt"},
+                {"role": "user", "content": "User message"},
+            ],
+            temperature=0.7,
+            parameters=OptionalParameters(cache_control={"type": "ephemeral"}),
+        )
+        payload = driver._build_chat_payload(request)
+        messages = payload["messages"]
+
+        # System cached
+        assert messages[0]["content"][0]["cache_control"] == {"type": "ephemeral"}
+        # User cached (no remainder to exclude)
+        assert messages[1]["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_chat_payload_no_cache_control(self, driver):
+        """Without cache_control, no cache_control fields are attached."""
+        request = ProviderLLMRequest(
+            model="test-model",
+            messages=[
+                {"role": "system", "content": "System prompt"},
+                {"role": "user", "content": "User message"},
+            ],
+            temperature=0.7,
+        )
+        payload = driver._build_chat_payload(request)
+        messages = payload["messages"]
+        for msg in messages:
+            for part in msg["content"]:
+                assert "cache_control" not in part
+
+    def test_chat_payload_tools_cache_control(self, driver):
+        """Tools get cache_control on the last tool definition."""
+        request = ProviderLLMRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Hello"}],
+            temperature=0.7,
+            parameters=OptionalParameters(
+                cache_control={"type": "ephemeral"},
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "tool_one",
+                            "description": "First tool",
+                            "parameters": {"type": "object"},
+                        },
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "tool_two",
+                            "description": "Second tool",
+                            "parameters": {"type": "object"},
+                        },
+                    },
+                ],
+            ),
+        )
+        payload = driver._build_chat_payload(request)
+        tools = payload["tools"]
+        assert "cache_control" not in tools[0]
+        assert tools[1]["cache_control"] == {"type": "ephemeral"}
+
+
+class TestCacheControlResponsesPayload:
+    """Tests for cache_control in _build_responses_payload and _prepare_responses_input."""
+
+    @pytest.fixture
+    def driver(self):
+        return OpenAIResponsesDriver(
+            api_key="test-api-key",
+            base_url="https://api.example.com",
+            provider_name="test-provider",
+        )
+
+    def test_prepare_responses_input_with_remainder(self, driver):
+        """Responses input applies cache_control to user content before remainder."""
+        raw_messages = [
+            {"role": "system", "content": "System prompt"},
+            {"role": "user", "content": "User message"},
+        ]
+        formatted = driver._format_messages(raw_messages)
+        result = driver._prepare_responses_input(
+            formatted, {"type": "ephemeral"}, "<system_reminder> workspace state"
+        )
+        # System messages are skipped in responses input
+        user_item = result[0]
+        assert user_item["type"] == "message"
+        assert user_item["role"] == "user"
+        # Content: original + remainder
+        assert user_item["content"][0] == {
+            "type": "text",
+            "text": "User message",
+            "cache_control": {"type": "ephemeral"},
+        }
+        assert user_item["content"][1] == {
+            "type": "input_text",
+            "text": "<system_reminder> workspace state",
+        }
+        # Content before remainder cached, remainder not
+        assert user_item["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in user_item["content"][1]
+
+    def test_prepare_responses_input_no_remainder(self, driver):
+        """Without remainder, all user content gets cache_control."""
+        raw_messages = [
+            {"role": "user", "content": "User message"},
+        ]
+        formatted = driver._format_messages(raw_messages)
+        result = driver._prepare_responses_input(formatted, {"type": "ephemeral"}, None)
+        user_item = result[0]
+        assert user_item["content"][0]["cache_control"] == {"type": "ephemeral"}
+
+    def test_responses_payload_with_cache_control(self, driver):
+        """_build_responses_payload applies cache_control correctly."""
+        request = ProviderLLMRequest(
+            model="test-model",
+            messages=[
+                {"role": "system", "content": "System prompt"},
+                {"role": "developer", "content": "<system_reminder> workspace state"},
+                {"role": "user", "content": "User message"},
+            ],
+            temperature=0.7,
+            parameters=OptionalParameters(cache_control={"type": "ephemeral"}),
+        )
+        payload = driver._build_responses_payload(request)
+        input_items = payload["input"]
+
+        # System messages skipped
+        assert all(
+            item["type"] != "message" or item.get("role") != "system"
+            for item in input_items
+        )
+
+        # User item has cache_control on content before remainder
+        user_item = input_items[0]
+        assert user_item["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert "cache_control" not in user_item["content"][1]
+
+    def test_responses_payload_tools_cache_control(self, driver):
+        """Tools get cache_control on the last tool definition."""
+        request = ProviderLLMRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "Hello"}],
+            temperature=0.7,
+            parameters=OptionalParameters(
+                cache_control={"type": "ephemeral"},
+                tools=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "tool_one",
+                            "description": "First tool",
+                            "parameters": {"type": "object"},
+                        },
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "tool_two",
+                            "description": "Second tool",
+                            "parameters": {"type": "object"},
+                        },
+                    },
+                ],
+            ),
+        )
+        payload = driver._build_responses_payload(request)
+        tools = payload["tools"]
+        assert "cache_control" not in tools[0]
+        assert tools[1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_responses_payload_no_cache_control(self, driver):
+        """Without cache_control, no cache_control fields are attached."""
+        request = ProviderLLMRequest(
+            model="test-model",
+            messages=[
+                {"role": "system", "content": "System prompt"},
+                {"role": "user", "content": "User message"},
+            ],
+            temperature=0.7,
+        )
+        payload = driver._build_responses_payload(request)
+        for item in payload["input"]:
+            if item.get("content"):
+                for part in item["content"]:
+                    assert "cache_control" not in part

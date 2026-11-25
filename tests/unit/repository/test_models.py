@@ -1,7 +1,5 @@
 """Unit tests for repository models."""
 
-import pytest
-
 from local_coding_assistant.repository.models import (
     ASTNode,
     FileMetadata,

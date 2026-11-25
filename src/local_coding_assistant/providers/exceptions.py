@@ -8,9 +8,19 @@ from local_coding_assistant.core.exceptions import LLMError
 class ProviderError(LLMError):
     """Base exception for provider-related errors"""
 
-    def __init__(self, message: str, provider: str | None = None, **kwargs):
+    def __init__(
+        self,
+        message: str,
+        provider: str | None = None,
+        *,
+        status_code: int | None = None,
+        retry_after: float | None = None,
+        **kwargs,
+    ):
         self.provider = provider
         self.message = message
+        self.status_code = status_code
+        self.retry_after = retry_after
         # Only pass the message to the parent class, not the kwargs
         super().__init__(
             f"[{provider or 'unknown'}] {message}" if provider else message
@@ -28,7 +38,7 @@ class ProviderAuthError(ProviderError):
     """Raised when authentication with provider fails"""
 
     def __init__(self, message: str, provider: str | None = None, **kwargs):
-        super().__init__(message, provider, **kwargs)
+        super().__init__(message, provider, status_code=401, **kwargs)
 
 
 class ProviderRateLimitError(ProviderError):
@@ -41,8 +51,9 @@ class ProviderRateLimitError(ProviderError):
         retry_after: int | None = None,
         **kwargs,
     ):
-        self.retry_after = retry_after
-        super().__init__(message, provider, **kwargs)
+        super().__init__(
+            message, provider, status_code=429, retry_after=retry_after, **kwargs
+        )
 
 
 class ProviderTimeoutError(ProviderError):

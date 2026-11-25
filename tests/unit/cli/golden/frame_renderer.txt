@@ -1,12 +1,3 @@
 Frames (1) - status: success
-└── Frame 1 [success] 15.0ms tokens=20
-    ├── Actions (2)
-    │   ├── llm_message: generate
-    │   │   ├── input: {"prompt": "Hello"}
-    │   │   ├── output: Hello world
-    │   │   └── meta: {"input": {"prompt": "Hello"}, "output": "Hello world", "reasoning": "Thinking
-    │   │       step by step"}
-    │   └── tool_call: calculator
-    │       ├── input: {"expression": "1+1"}
-    │       └── output: {"result": 2}
-    └── final_answer: All done
+└── Frame 1 [completed] 15.0ms tokens_in=10 tokens_out=10
+    └── llm_content: All done

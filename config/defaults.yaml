@@ -6,12 +6,13 @@
 
 llm:
   # LLM generation settings
-  temperature: 0.1
-  max_tokens: 1000
+  temperature: 0.2
+  max_tokens: 3000
+  timeout: 120
   max_retries: 1
   retry_delay: 1.0
   capture_reasoning: true
-  reasoning_max_chars: 1000
+  reasoning_max_chars: 3000
   # Whether to automatically register unmapped models with LiteLLM to bypass cost mapping
   auto_register_litellm_models: true
   # Providers will be dynamically managed at runtime
@@ -21,12 +22,47 @@ runtime:
   # Default runtime behavior
   persistent_sessions: false
   max_session_history: 100
+  # In-memory session file-version retention (LRU eviction by turn watermark)
+  session_retention_enabled: true
+  session_retention_max_turns: 50
   enable_logging: true
   log_level: "INFO"
-  agent_mode: "no_agent"
+  agent_mode: "frame"
   stream: true
   # Tool calling mode: 'classic' (default), 'ptc' (programmatic tool calling), 'reasoning_only' (no tool calls)
   tool_call_mode: "classic"
+  # Context resolution mode: 'static' (default) uses the same config for all turns in one session, 'dynamic' uses current config for each turn
+  session_context_resolution: "static"
+  # Continuation policy configuration
+  continuation_policy:
+    max_frames_per_turn: 15
+    max_generation_retries: 2
+    max_compaction_retries: 1
+    # Transient provider-error retries: honor Retry-After hints, otherwise
+    # exponential backoff from the base delay (clamped to the max).
+    respect_retry_after: true
+    transient_retry_base_delay: 1.0
+    transient_retry_max_delay: 60.0
+    # Tool retry configuration for retryable infrastructure failures
+    # (timeout, backend failure, connection error)
+    tool_retry_max_retries: 2
+    tool_retry_base_delay: 1.0
+    tool_retry_max_delay: 30.0
+    # Time before approval request expires
+    approval_timeout_seconds: 3000
+    loop_detection:
+      max_repetitions: 3
+      window_size: 5
+      enabled: true
+      check_consecutive: true
+      check_window_repetitions: true
+    token_budget:
+      input_max_tokens: 1000000
+      output_max_tokens: 100000
+      warn_threshold: 0.8
+    deadline:
+      timeout_seconds: 3000
+      warn_threshold: 0.2
 
 dashboard:
   # Dashboard configuration
@@ -124,15 +160,53 @@ prompt:
   
   # Template paths (relative to template_root)
   templates:
-    system: "base/system_core.jinja2"
-    execution_rules: "base/execution_rules.jinja2"
-    agent_identity: "base/agent_identity.jinja2"
+    identity_base: "base/identity.jinja2"
+    personality: "base/personality.jinja2"
+    model_default: "base/model_default.jinja2"
+    model_gemini: "base/model_gemini.jinja2"
+    static_env: "blocks/static_env.jinja2"
+    agents_md: "blocks/agents_md.jinja2"
+    global_rules: "blocks/global_rules.jinja2"
+    config_overrides: "blocks/config_rules.jinja2"
     skills: "blocks/skills.jinja2"
     memories: "blocks/memories.jinja2"
-    tools_prompt: "blocks/tools_prompt.jinja2"
     examples: "blocks/examples.jinja2"
-    repo_context: "blocks/repo_context.jinja2"
+    repo_metadata: "blocks/repo_metadata.jinja2"
+    repo_map: "blocks/repo_map.jinja2"
     constraints: "blocks/constraints.jinja2"
+    safety: "blocks/safety.jinja2"
+    output_format: "blocks/output_format.jinja2"
+    classic_tools_mode: "modes/classic_tools.jinja2"
+    sandbox_python_mode: "modes/sandbox_python.jinja2"
+    sandbox_shell_mode: "modes/sandbox_shell.jinja2"
+    reasoning_only_mode: "modes/reasoning_only.jinja2"
+    default_agent: "agents/default.jinja2"
+    planner_agent: "agents/planner.jinja2"
+    executor_agent: "agents/executor.jinja2"
+    compaction_agent: "agents/compaction.jinja2"
+    subagent_agent: "agents/subagent.jinja2"
+    planner_extra: "agents/planner_extra.jinja2"
+    executor_extra: "agents/executor_extra.jinja2"
+  
+  # Agent preset registries
+  presets:
+    default: "default"
+    compaction: "compaction"
+    subagent: "subagent"
+    planner: "planner"
+    executor: "executor"
+  
+  # AGENTS.md configuration
+  agents_md:
+    enabled: true
+    walk_up: true
+    filenames: ["AGENTS.md", "CLAUDE.md", "LOCCA.md"]
+    global_paths:
+      - "~/.config/locca/AGENTS.md"
+      - "~/.claude/CLAUDE.md"
+  
+  # Config instructions
+  config_instructions: []
 
 sandbox:
   enabled: false
@@ -331,3 +405,86 @@ repository:
     user_edit_enabled: true
     debounce_window: 2.0
     max_cumulative_file_size_kb: 10000  # Max cumulative file size for batch indexing (default 10MB)
+
+# Tools platform configuration
+tools_platform:
+  backend: host  # host | docker
+  exposed_tools: auto  # 'auto' = all backend-compatible tools, or an explicit list of tool IDs
+  default_policy: ask  # allow | deny | ask (approval default when no rule matches)
+  allow_network: false  # global default network access for commands
+  non_interactive: false  # if true, 'ask' becomes a typed blocked result
+  auto_approve: false  # if true, 'ask' becomes a typed allowed result
+  workspace_root: "@target"  # path alias resolved through PathManager
+  env_allowlist: null  # null = pass environment through; list = only these keys reach commands
+  max_output_bytes: 262144
+  max_read_lines: 400
+  max_search_matches: 200
+  normalize_to_lf_line_endings: true  # normalize CRLF/CR to LF for LLM-facing reads and edit matching; baseline/snapshots stay raw
+  # Configurable paths for tool policies files (supports @ aliases)
+  tool_policies_path: "@config/tool_policies.yaml"
+  tool_policies_local_path: "@config/tool_policies.local.yaml"
+  path_policy:
+    allowed_patterns:
+      - "**"
+    denied_patterns: []
+    allow_symlinks: false
+    max_depth: null
+  ignore_policy:
+    # List of ignore filenames in order of precedence (higher index = higher priority)
+    files:
+      - .gitignore
+      - .aiignore
+  snapshots:
+    enabled: true
+    directory: "@data/workspace_snapshots"
+    max_snapshots: 10
+    max_snapshot_age_days: 30
+  timeout:
+    soft_seconds: 10
+    hard_seconds: 300
+    idle_seconds: 30
+    heartbeat_seconds: 5
+    cancellation_grace_seconds: 5
+  output_limits:
+    max_stdout_bytes: 262144
+    max_stderr_bytes: 262144
+    max_lines: 400
+  concurrency:
+    max_parallel_reads: 8
+    max_parallel_processes: 2
+    write_conflict_policy: deny
+
+  workspace_state:
+    baselines_directory: "@data/baselines"
+    baselines_ttl_days: 7
+    checkpoints_directory: "@data/checkpoints"
+    checkpoints_max_turns: 10
+    checkpoints_ttl_days: 2
+    compression_enabled: true
+    large_file_threshold_mb: 1
+
+
+# Durable execution store (SQLite) configuration
+execution_store:
+  enabled: true
+  # Database path (supports @ aliases or absolute)
+  db_path: "@data/execution_store.db"
+  # Writer queue settings
+  flush_interval_ms: 1000  # Flush batch every second
+  batch_size: 100  # Max operations per batch
+  # Retention policy in days per table type
+  retention_days:
+    default: 30  # Default retention for all data
+    sessions: 30
+    frames: 30
+    messages: 30
+    events: 30
+    tools: 365  # Global tools retained longer
+    templates: 365  # Global templates retained longer
+
+# OpenTelemetry tracing (OTLP/gRPC, Jaeger-compatible)
+telemetry:
+  enabled: false  # Set true (or OTEL_EXPORTER_OTLP_ENDPOINT) to export spans
+  service_name: "locca-runtime"
+  otlp_endpoint: null  # e.g. http://localhost:4317
+  console_export: false  # Also print spans to console (debug)

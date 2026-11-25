@@ -22,7 +22,10 @@ from local_coding_assistant.repository import FileFilter
 from local_coding_assistant.repository.database import RepositoryDatabase
 from local_coding_assistant.repository.file_reindexer import FileReindexer
 from local_coding_assistant.repository.file_scope import FileScope
-from local_coding_assistant.repository.metadata import MetadataExtractor, MetadataFileDetector
+from local_coding_assistant.repository.metadata import (
+    MetadataExtractor,
+    MetadataFileDetector,
+)
 from local_coding_assistant.repository.repo_map import RepoMapBuilder
 from local_coding_assistant.repository.service import RepositoryContextService
 

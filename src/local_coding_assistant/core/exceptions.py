@@ -1,3 +1,6 @@
+from typing import Any
+
+
 class LocalAssistantError(Exception):
     """Base exception for all Local Assistant errors.
 
@@ -27,7 +30,22 @@ class LLMError(AgentError):
 
 
 class LLMInfrastructureError(LLMError):
-    """Raised for provider-level infrastructure issues (auth, network, rate limits)."""
+    """Raised for provider-level infrastructure issues (auth, network, rate limits).
+
+    Carries a structured classification (see
+    ``providers.error_classification.ClassifiedError``) so callers do not
+    have to re-derive transience from the message text.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        classification: Any | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(message, **kwargs)
+        self.classification = classification
 
 
 class LLMContentError(LLMError):

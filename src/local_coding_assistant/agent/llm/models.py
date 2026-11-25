@@ -81,10 +81,22 @@ class LLMTask(BaseModel):
         if self.prompt:
             messages.append({"role": "user", "content": self.prompt})
 
+        # Extract the ephemeral system_reminder carried in task metadata and
+        # append it as a developer message so downstream drivers can merge it
+        # into the last user/tool message content.
+        system_reminder = self.metadata.pop("system_reminder", None)
+        if system_reminder:
+            messages.append({"role": "developer", "content": str(system_reminder)})
+
         optional_params = OptionalParameters(stream=stream, include_usage=True)
         if self.tools:
             optional_params.tools = self.tools
             optional_params.tool_choice = "auto"
+
+        # Prefix cache control is applied when a stable system_reminder prefix
+        # exists (indicating cacheable stable content before the ephemeral hint).
+        if system_reminder:
+            optional_params.cache_control = {"type": "ephemeral"}
 
         return ProviderLLMRequest(
             messages=messages,
@@ -101,6 +113,7 @@ class LLMOptions(BaseModel):
     model: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+    timeout: float | None = None
     retry_attempts: int | None = None
     retry_delay: float | None = None
     stream: bool | None = None
@@ -117,6 +130,7 @@ class LLMOptions(BaseModel):
         max_failovers: int | None = None,
     ) -> ResolvedLLMOptions:
         """Merge explicit overrides with config defaults."""
+        timeout = float(self.timeout if self.timeout is not None else defaults.timeout)
         retry_attempts = (
             self.retry_attempts
             if self.retry_attempts is not None
@@ -141,6 +155,7 @@ class LLMOptions(BaseModel):
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout=timeout,
             retry_attempts=retry_attempts,
             retry_delay=retry_delay,
             stream=(self.stream if self.stream is not None else runtime_stream),
@@ -159,6 +174,7 @@ class ResolvedLLMOptions(BaseModel):
     model: str | None
     temperature: float
     max_tokens: int | None
+    timeout: float
     retry_attempts: int
     retry_delay: float
     stream: bool

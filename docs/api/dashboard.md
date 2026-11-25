@@ -302,47 +302,6 @@ List frames with filtering and pagination.
 }
 ```
 
-#### Get Frame Details
-```http
-GET /api/frames/{frame_id}
-```
-
-Get detailed information for a specific frame.
-
-**Path Parameters:**
-- `frame_id` (string): Unique identifier for the frame
-
-**Response:**
-```json
-{
-  "frame_id": "frame_789",
-  "run_id": "run_123",
-  "status": "completed",
-  "start_time": "2024-01-01T12:00:00Z",
-  "end_time": "2024-01-01T12:00:05Z",
-  "duration": 5.1,
-  "action_count": 3,
-  "prompt_context": "User query context",
-  "llm_response": "LLM generated response",
-  "tool_calls": [
-    {
-      "tool": "calculator",
-      "input": { "expression": "2+2" },
-      "output": "4",
-      "timestamp": "2024-01-01T12:00:02Z"
-    }
-  ],
-  "actions": [
-    {
-      "type": "tool_call",
-      "tool": "calculator",
-      "timestamp": "2024-01-01T12:00:02Z",
-      "duration": 0.1
-    }
-  ]
-}
-```
-
 #### Export Frames
 ```http
 GET /api/frames/export?format=csv&run_id=run_123

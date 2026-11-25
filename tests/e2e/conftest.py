@@ -1,7 +1,7 @@
 """Pytest configuration and fixtures for e2e CLI tests."""
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
@@ -88,7 +88,10 @@ def mock_bootstrap_success():
 
         # Create an async generator function for the orchestrate mock
         async def mock_orchestrate_async(text, *args, **kwargs):
-            from local_coding_assistant.runtime.events import EventType, ExecutionEvent
+            from local_coding_assistant.runtime.events.legacy import (
+                EventType,
+                ExecutionEvent,
+            )
 
             # Yield some mock events
             yield ExecutionEvent(
@@ -184,7 +187,16 @@ def mock_bootstrap_config():
 def mock_bootstrap_serve():
     """Mock bootstrap for serve command."""
     # Patch the bootstrap where it's actually imported and used
-    with patch("local_coding_assistant.cli.commands.serve.bootstrap") as mock_bootstrap:
-        mock_ctx = {"runtime": MagicMock()}
+    with (
+        patch("local_coding_assistant.cli.commands.serve.bootstrap") as mock_bootstrap,
+        patch(
+            "local_coding_assistant.cli.commands.serve.uvicorn.Server.serve",
+            new_callable=AsyncMock,
+        ) as mock_serve,
+    ):
+        mock_store = MagicMock()
+        mock_store.init = AsyncMock()
+        mock_store.close = AsyncMock()
+        mock_ctx = {"runtime": MagicMock(), "execution_store": mock_store}
         mock_bootstrap.return_value = mock_ctx
         yield mock_bootstrap, mock_ctx

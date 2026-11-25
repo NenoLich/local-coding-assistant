@@ -7,12 +7,10 @@ from .models import (
     LLMTask,
     LLMToolCall,
 )
-from .service import LLMService
 
 __all__ = [
     "LLMOptions",
     "LLMResult",
-    "LLMService",
     "LLMStreamChunk",
     "LLMTask",
     "LLMToolCall",

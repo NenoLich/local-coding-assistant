@@ -39,6 +39,7 @@ class PathManager:
         self._project_root = (
             Path(project_root) if project_root else self._find_project_root()
         )
+        self._target_project_root_override: Path | None = None
         self._ensure_directories()
 
     @property
@@ -118,9 +119,26 @@ class PathManager:
 
     def get_target_project_root(self) -> Path:
         """Get the target project root directory."""
+        if self._target_project_root_override:
+            return self._target_project_root_override
         if self.is_production:
             return Path(os.getcwd())
         return self._project_root
+
+    def set_target_project_root(self, path: str | Path | None) -> None:
+        """Set the target project root for the current process.
+
+        This is intended to be called during bootstrap before services are initialized.
+        Once services are initialized, they capture this value.
+
+        Args:
+            path: Target project root path, or None to clear (use default behavior).
+                  Relative paths are resolved from the current working directory.
+        """
+        if path is not None:
+            self._target_project_root_override = Path(path).resolve()
+        else:
+            self._target_project_root_override = None
 
     def get_cache_dir(self) -> Path:
         """Get the cache directory for the current environment."""
@@ -282,12 +300,16 @@ class PathManager:
 
         # Split on the first path separator
         parts = path_str[1:].replace("\\", "/").split("/", 1)
-        if len(parts) != 2:
-            return None
 
-        prefix, rest = parts
+        prefix = parts[0]
         handler = prefix_handlers.get(prefix)
         if not handler:
             return None
 
+        # Bare alias (e.g. "@project") resolves to the directory itself;
+        # aliases with a sub-path (e.g. "@data/db.sqlite") join the remainder
+        if len(parts) == 1:
+            return handler()
+
+        rest = parts[1]
         return handler() / rest.replace("/", os.sep)

@@ -151,7 +151,7 @@ The main agent implementation uses execution frames:
 
 **Key Classes:**
 - `FrameAgent` (`src/local_coding_assistant/agent/frame_agent.py`) - Main agent class
-- `ExecutionFrame` (`src/local_coding_assistant/runtime/execution_types.py`) - Execution frame structure
+- `RuntimeFrame` (`../../src/local_coding_assistant/runtime/frame.py`) - Execution frame structure
 - `ExecutionEvent` (`src/local_coding_assistant/runtime/events.py`) - Event streaming
 
 **Note**: Frame Agent does not use traditional request/response contracts but operates through execution frames and events.

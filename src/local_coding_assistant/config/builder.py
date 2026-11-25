@@ -95,7 +95,7 @@ class ConfigBuilder:
                 logger.error(
                     f"Error validating base config field {field.full_path}: {e}"
                 )
-                critical_failures.append(field.full_path)
+                critical_failures.append(field.full_path or "unknown")
 
         if critical_failures:
             raise ConfigError(
@@ -135,8 +135,6 @@ class ConfigBuilder:
         """
         if not overrides:
             return
-
-        logger.debug("Setting session overrides", overrides=overrides)
 
         for field_path, value in overrides.items():
             if skip_validation:
@@ -343,27 +341,3 @@ class ConfigBuilder:
             f"Updated base configuration. Data type: {type(update_data).__name__}, "
             f"Field path: {field_path or 'direct update'}"
         )
-
-    def update_tools(self, tools: dict[str, Any]) -> None:
-        """Update the tools configuration with loaded tool configurations.
-
-        Args:
-            tools: Dictionary of tool configurations keyed by tool ID
-
-        Raises:
-            ConfigError: If the base config doesn't have a tools field
-        """
-        if not hasattr(self._base_config, "tools"):
-            raise ConfigError("Base config does not have a tools field")
-
-        # Convert dict to ToolConfigList
-        from local_coding_assistant.config.schemas import ToolConfigList
-
-        tool_config_list = ToolConfigList(tools=list(tools.values()))
-
-        # Update the tools field
-        self._base_config.tools = tool_config_list
-
-        # Invalidate cached config and validation since base config changed
-        self._built_config = None
-        self._is_base_config_validated = False

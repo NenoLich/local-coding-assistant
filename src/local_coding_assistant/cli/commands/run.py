@@ -1,4 +1,9 @@
-"""Run a single LLM or tool request via the runtime orchestrator."""
+"""Run a single LLM or tool request via the runtime.
+
+Streams typed runtime events (LLM chunks, tool calls, frame boundaries) to
+the console, handles in-process approval prompts, and prints the final
+report in the requested format.
+"""
 
 import asyncio
 import json
@@ -13,10 +18,7 @@ from local_coding_assistant.cli.rendering import (
     dump_report,
     render_report,
 )
-from local_coding_assistant.cli.streaming_output import (
-    collect_report_from_events,
-    handle_streaming_event,
-)
+from local_coding_assistant.cli.run_flow import RunOptions, execute_query
 from local_coding_assistant.core.bootstrap import bootstrap
 from local_coding_assistant.core.error_handler import safe_entrypoint
 from local_coding_assistant.utils.logging import get_logger
@@ -24,138 +26,95 @@ from local_coding_assistant.utils.logging import get_logger
 app = typer.Typer(name="run", help="Run a single LLM or tool request")
 log = get_logger("cli.run")
 
-
-def _extract_plain_message(result) -> str:
-    """Extract the plain text message from a result for CLI output.
-
-    Args:
-        result: The result from runtime.orchestrate(), either a dict or RunReport.
-
-    Returns:
-        Formatted message string with optional tool calls.
-    """
-    if isinstance(result, dict):
-        message = result.get("message") or result.get("final_answer") or ""
-        return message
-
-    report = coerce_report(result)
-    message = report.message or report.final_answer or ""
-
-    if report.tool_calls:
-        tool_sections = [message, "Tool Calls:"]
-        tool_sections.extend(
-            json.dumps(tool_call, indent=2) for tool_call in report.tool_calls
-        )
-        message = "\n\n".join(tool_sections)
-
-    return message
+_SUCCESS_STATUSES = ("completed", "success")
 
 
 @app.command()
 @safe_entrypoint("cli.run.query")
 def query(
-    text: str = typer.Argument(..., help="The query to run"),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable verbose output"
-    ),
-    model: str | None = typer.Option(None, help="Model to use for the query"),
-    agent_mode: str = typer.Option(
-        "no_agent",
-        "--agent-mode",
-        help="Agent execution mode: 'default_loop' (legacy), 'graph' (LangGraph), 'frame' (ExecutionFrame), or 'no_agent'",
-        case_sensitive=False,
-    ),
+    text: str,
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+    model: str = typer.Option(None, "--model", "-m", help="Override model name"),
+    agent_mode: str = typer.Option("no_agent", "--agent-mode", help="Agent mode"),
     tool_call_mode: str = typer.Option(
-        "reasoning",
-        "--tool-call-mode",
-        help="Tool calling mode: 'ptc' (Programmatic Tool Calling), 'classic' (standard tool calling), or 'reasoning' (default)",
-        case_sensitive=False,
+        None, "--tool-call-mode", help="Tool call mode (e.g. 'ptc' for sandbox)"
     ),
-    sandbox_session: str | None = typer.Option(
-        None, "--sandbox-session", help="Session ID for persistent state in sandbox"
+    sandbox_session: str = typer.Option(
+        None, "--sandbox-session", help="Sandbox session name"
     ),
-    log_level: str = typer.Option(
-        "INFO",
-        "--log-level",
-        help="Logging level (e.g., DEBUG, INFO, WARNING, ERROR)",
+    target_project_root: str = typer.Option(
+        None, "--target-project-root", "-t", help="Target project root directory"
     ),
+    log_level: str = typer.Option("INFO", "--log-level", help="Logging level"),
     output_format: str = typer.Option(
-        "plain",
-        "--format",
-        help="Output format: plain, json, frame, summary",
-        case_sensitive=False,
+        "plain", "--format", help="Output format: plain, yaml, json"
     ),
-    trace: str | None = typer.Option(
+    session_id: str = typer.Option(
         None,
-        "--trace",
-        help="Write RunReport JSON trace to a file",
+        "--session-id",
+        help=(
+            "Continue an existing durable session (creates a new turn). "
+            "Use `locca sessions resume` to re-enter an interrupted turn "
+            "or branch from a past one"
+        ),
+    ),
+    trace: str = typer.Option(None, "--trace", help="Dump JSON trace to file"),
+    auto_approve: bool = typer.Option(
+        None, "--auto-approve", help="Auto-approve all tool calls"
     ),
 ) -> None:
-    """Execute a single query using `RuntimeManager` and print the result.
-
-    This command configures logging, boots the app context, and delegates to
-    the runtime to handle the session, LLM interaction, and tool orchestration.
-    """
-    format_lower = output_format.lower()
-
-    typer.echo(f"Running query: {text}", err=True)
-
-    typer.echo(f"Using agent mode: {agent_mode}", err=True)
-
-    # Map provided level string to logging.* constant (default INFO)
+    """Run a query with streaming runtime events."""
     level = getattr(logging, log_level.upper(), logging.INFO)
 
-    ctx = bootstrap(log_level=level)
-    runtime = ctx["runtime"]
-    console = Console()
+    async def _main() -> int:
+        console = Console()
+        async with bootstrap(
+            log_level=level, target_project_root=target_project_root
+        ) as ctx:
+            runtime = ctx.get("runtime")
+            if runtime is None:
+                typer.echo(
+                    "Error: Runtime manager not available (LLM initialization failed)",
+                    err=True,
+                )
+                return 1
 
-    if format_lower == "plain" or verbose:
-        log.info(
-            "Executing query with model=%s, agent_mode=%s",
-            model or "default",
-            agent_mode or "default",
-        )
+            options = RunOptions(
+                model=model,
+                agent_mode=agent_mode,
+                tool_call_mode=tool_call_mode,
+                sandbox_session=sandbox_session,
+                session_id=session_id,
+                verbose=verbose,
+                auto_approve=auto_approve,
+            )
+            report, session = await execute_query(runtime, text, options, console)
 
-    # Check if runtime is available
-    if runtime is None:
-        typer.echo("Error: Runtime manager not available (LLM initialization failed)")
-        raise typer.Exit(code=1)
+            if report is None:
+                typer.echo("Error: No terminal report received from runtime", err=True)
+                return 1
 
-    # Consume streaming events
-    events = []
+            if trace is not None:
+                txpath = Path(trace)
+                txpath.write_text(
+                    json.dumps(
+                        dump_report(report), indent=2, ensure_ascii=True, default=str
+                    )
+                )
 
-    async def consume_events():
-        async for event in runtime.orchestrate(
-            text,
-            agent_mode=agent_mode,
-            model=model,
-            tool_call_mode=tool_call_mode,
-            sandbox_session=sandbox_session,
-        ):
-            handle_streaming_event(event, console)
-            events.append(event)
+            if verbose:
+                typer.echo(f"session={session.id}")
 
-    asyncio.run(consume_events())
+            fmt = output_format.lower()
+            if fmt == "plain":
+                message = report.final_answer or ""
+                typer.echo("\nResponse:")
+                typer.echo(message)
+                return 0 if report.status in _SUCCESS_STATUSES else 1
 
-    result = collect_report_from_events(events)
-    if result is None:
-        typer.echo("Error: No report received from streaming events")
-        raise typer.Exit(code=1)
+            render_report(
+                coerce_report(report), _format=fmt, verbose=verbose, console=console
+            )
+        return 0 if report.status in _SUCCESS_STATUSES else 1
 
-    if trace is not None:
-        trace_payload = dump_report(result)
-        trace_path = Path(trace)
-        trace_path.write_text(
-            json.dumps(trace_payload, indent=2, ensure_ascii=True, default=str)
-        )
-
-    if format_lower == "plain":
-        message = _extract_plain_message(result)
-        typer.echo("\nResponse:")
-        typer.echo(message)
-        return
-
-    console = Console()
-    render_report(
-        coerce_report(result), _format=format_lower, verbose=verbose, console=console
-    )
+    raise typer.Exit(code=asyncio.run(_main()))

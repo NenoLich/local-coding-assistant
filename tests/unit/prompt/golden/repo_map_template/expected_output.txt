@@ -1,0 +1,4 @@
+Repo Map (top 2 symbols by usage):
+src/local_coding_assistant/repository/service.py
+- [class] class RepositoryContextService L23-130
+- [method] get_repo_context(self) -> tuple[ProjectInfo, RepoMapData] L132-149

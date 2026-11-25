@@ -5,7 +5,25 @@ Mock tool responses for testing handler integration scenarios.
 from dataclasses import dataclass
 from typing import Any
 
-from local_coding_assistant.tools.types import ToolExecutionResponse
+
+class _ToolExecutionResponse:
+    """Local replacement for the old tools.types.ToolExecutionResponse."""
+
+    def __init__(
+        self,
+        success: bool,
+        result: Any,
+        tool_name: str,
+        tool_args: dict,
+        execution_time_ms: int,
+        error_message: str | None = None,
+    ):
+        self.success = success
+        self.result = result
+        self.tool_name = tool_name
+        self.tool_args = tool_args
+        self.execution_time_ms = execution_time_ms
+        self.error_message = error_message
 
 
 @dataclass
@@ -17,9 +35,9 @@ class MockToolResponse:
         result: Any = {"files_found": ["file1.py", "file2.py"], "count": 2},
         tool_name: str = "search_files",
         execution_time_ms: int = 150,
-    ) -> ToolExecutionResponse:
+    ) -> _ToolExecutionResponse:
         """Create a successful tool response."""
-        return ToolExecutionResponse(
+        return _ToolExecutionResponse(
             success=True,
             result=result,
             tool_name=tool_name,
@@ -32,9 +50,9 @@ class MockToolResponse:
     def network_error_response(
         tool_name: str = "search_files",
         error_message: str = "Connection timeout after 30 seconds",
-    ) -> ToolExecutionResponse:
+    ) -> _ToolExecutionResponse:
         """Create a network error tool response."""
-        return ToolExecutionResponse(
+        return _ToolExecutionResponse(
             success=False,
             result=None,
             tool_name=tool_name,
@@ -47,9 +65,9 @@ class MockToolResponse:
     def tool_not_found_response(
         tool_name: str = "search_files",
         error_message: str = "Tool 'search_files' is not exposed",
-    ) -> ToolExecutionResponse:
+    ) -> _ToolExecutionResponse:
         """Create a tool not found error response."""
-        return ToolExecutionResponse(
+        return _ToolExecutionResponse(
             success=False,
             result=None,
             tool_name=tool_name,
@@ -62,9 +80,9 @@ class MockToolResponse:
     def syntax_error_response(
         tool_name: str = "search_files",
         error_message: str = "Invalid argument: 'pattern' must be a string",
-    ) -> ToolExecutionResponse:
+    ) -> _ToolExecutionResponse:
         """Create a syntax/validation error response."""
-        return ToolExecutionResponse(
+        return _ToolExecutionResponse(
             success=False,
             result=None,
             tool_name=tool_name,
@@ -77,9 +95,9 @@ class MockToolResponse:
     def rate_limit_error_response(
         tool_name: str = "search_files",
         error_message: str = "Rate limit exceeded. Try again in 60 seconds",
-    ) -> ToolExecutionResponse:
+    ) -> _ToolExecutionResponse:
         """Create a rate limit error response."""
-        return ToolExecutionResponse(
+        return _ToolExecutionResponse(
             success=False,
             result=None,
             tool_name=tool_name,
@@ -92,9 +110,9 @@ class MockToolResponse:
     def permission_error_response(
         tool_name: str = "read_file",
         error_message: str = "Permission denied: cannot access file '/etc/passwd'",
-    ) -> ToolExecutionResponse:
+    ) -> _ToolExecutionResponse:
         """Create a permission error response."""
-        return ToolExecutionResponse(
+        return _ToolExecutionResponse(
             success=False,
             result=None,
             tool_name=tool_name,
@@ -107,9 +125,9 @@ class MockToolResponse:
     def timeout_error_response(
         tool_name: str = "execute_command",
         error_message: str = "Command execution timed out after 120 seconds",
-    ) -> ToolExecutionResponse:
+    ) -> _ToolExecutionResponse:
         """Create a timeout error response."""
-        return ToolExecutionResponse(
+        return _ToolExecutionResponse(
             success=False,
             result=None,
             tool_name=tool_name,
@@ -122,9 +140,9 @@ class MockToolResponse:
     def authentication_error_response(
         tool_name: str = "api_call",
         error_message: str = "Authentication failed: invalid API key",
-    ) -> ToolExecutionResponse:
+    ) -> _ToolExecutionResponse:
         """Create an authentication error response."""
-        return ToolExecutionResponse(
+        return _ToolExecutionResponse(
             success=False,
             result=None,
             tool_name=tool_name,

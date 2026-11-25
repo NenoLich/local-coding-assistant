@@ -1,0 +1,33 @@
+{
+  "fixture": "python_cli_tool",
+  "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
+  "results": [
+    {
+      "task_id": "fix_config_loading_bug",
+      "task_name": "Fix Config Loading Bug",
+      "success": false,
+      "eval_pass": false,
+      "duration_seconds": 18.13846778869629,
+      "return_code": 1,
+      "files_created": [],
+      "files_changed": [],
+      "error": "",
+      "evaluation": {
+        "task_id": "fix_config_loading_bug",
+        "eval_type": "behavior",
+        "criteria_results": [
+          {
+            "check": "cli_works_without_config",
+            "passed": false
+          },
+          {
+            "check": "no_exception_on_missing_config",
+            "warning": "Unknown check type: no_exception_on_missing_config",
+            "passed": false
+          }
+        ],
+        "overall_pass": false
+      }
+    }
+  ]
+}

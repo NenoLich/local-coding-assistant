@@ -1,0 +1,20 @@
+{% set ctx = context -%}
+{% if not ctx.repo_map_data or not ctx.repo_map_data.grouped_symbols %}{% endif -%}
+{% set symbol_count = ctx.repo_map_data.num_symbols | default(ctx.repo_map_data.total_symbols | default(0)) -%}
+You can use the following repo map to understand the working repository without reading actual files.
+To get more details about some symbols use get_simbol and search_symbols tools.
+Repo Map (top {{ symbol_count }} symbols by usage):
+{% for file_path in ctx.repo_map_data.grouped_symbols.keys() | sort -%}
+{{ file_path }}
+{% for symbol in ctx.repo_map_data.grouped_symbols[file_path] | sort(attribute='line_number') -%}
+  {% set line_number = symbol.line_number -%}
+  {% set end_line_number = symbol.get('end_line_number') -%}
+  {% if end_line_number and end_line_number != line_number -%}
+    {% set line_range = "L" + line_number | string + "-" + end_line_number | string -%}
+  {% else -%}
+    {% set line_range = "L" + line_number | string -%}
+  {% endif -%}
+  {% set signature = symbol.get('signature') or symbol.name -%}
+  - [{{ symbol.symbol_type }}] {{ signature }} {{ line_range }}
+{% endfor -%}
+{% endfor -%}

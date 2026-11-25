@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from local_coding_assistant.config.builder import ConfigBuilder
-from local_coding_assistant.config.schemas import AppConfig, ToolConfigList
+from local_coding_assistant.config.schemas import AppConfig
 from local_coding_assistant.core.exceptions import ConfigError
 
 
@@ -218,35 +218,6 @@ class TestConfigBuilder:
         config_builder.update_base_config(0.6, "llm.temperature")
 
         assert config_builder._base_config.llm.temperature == 0.6
-
-    def test_update_tools(self, config_builder):
-        """Test updating tools configuration."""
-        tools = {
-            "tool1": {
-                "id": "test_tool",
-                "description": "A test tool",
-                "name": "test_tool",
-                "enabled": True,
-            }
-        }
-        config_builder.update_tools(tools)
-
-        assert isinstance(config_builder._base_config.tools, ToolConfigList)
-        assert len(config_builder._base_config.tools.tools) == 1
-        assert config_builder._base_config.tools.tools[0].id == "test_tool"
-        assert config_builder._built_config is None
-        assert config_builder._is_base_config_validated is False
-
-    def test_update_tools_no_tools_field(self, config_builder):
-        """Test updating tools when base config has no tools field."""
-        # Mock base config without tools field
-        config_builder._base_config = Mock(spec=AppConfig)
-        del config_builder._base_config.tools
-
-        with pytest.raises(
-            ConfigError, match="Base config does not have a tools field"
-        ):
-            config_builder.update_tools({})
 
     def test_validate_base_config_no_fields_with_deps(self, config_builder):
         """Test base config validation when no fields have dependencies."""

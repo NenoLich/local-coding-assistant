@@ -13,4 +13,4 @@ if str(dashboard_test_helpers.parent) not in sys.path:
     sys.path.insert(0, str(dashboard_test_helpers.parent))
 
 # Import dashboard test fixtures
-from tests.conftest_dashboard import *
+from tests.conftest_dashboard import *  # noqa: E402, F403

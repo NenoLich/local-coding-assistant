@@ -4,36 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}LOCCA Dashboard{% endblock %}</title>
-    
-    <!-- Bootstrap CSS -->
+
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Font Awesome -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
-    <!-- HTMX -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css" rel="stylesheet">
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    
+
+    <link href="/static/css/dashboard.css?v=20261115" rel="stylesheet">
+
     <style>
-        .sidebar {
-            min-height: 100vh;
-            background-color: #f8f9fa;
-        }
-        .main-content {
-            min-height: 100vh;
-        }
-        .navbar-brand {
-            font-weight: bold;
-        }
-        .status-badge {
-            font-size: 0.8rem;
-        }
+        .sidebar { min-height: 100vh; background-color: #f8f9fa; }
+        .main-content { min-height: 100vh; }
+        .navbar-brand { font-weight: bold; }
+        .status-badge { font-size: 0.8rem; }
+        .live-indicator { display: inline-block; width: 8px; height: 8px; background: #28a745; border-radius: 50%; margin-right: 6px; animation: pulse 2s infinite; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
     </style>
-    
+
     {% block extra_head %}{% endblock %}
 </head>
 <body>
-    <!-- Navigation -->
     <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
         <div class="container-fluid">
             <a class="navbar-brand" href="/">LOCCA Dashboard</a>
@@ -43,35 +33,37 @@
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto">
                     <li class="nav-item">
-                        <a class="nav-link" href="/">Dashboard</a>
+                        <a class="nav-link {% if request.url.path == '/' or request.url.path == '/runs' %}active{% endif %}" href="/runs">
+                            <i class="bi bi-play-circle me-1"></i> Runs (Live)
+                        </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="/runs">Runs</a>
+                        <a class="nav-link {% if request.url.path.startswith('/sessions') %}active{% endif %}" href="/sessions">
+                            <i class="bi bi-list-ul me-1"></i> Sessions
+                        </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link" href="/analytics">Analytics</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="/live">Live</a>
+                        <a class="nav-link" href="/debug">
+                            <i class="bi bi-bug me-1"></i> Debug
+                        </a>
                     </li>
                 </ul>
                 <span class="navbar-text">
-                    <span class="badge bg-success status-badge">Connected</span>
+                    <span class="badge bg-success status-badge">
+                        <span class="live-indicator"></span> Live
+                    </span>
                 </span>
             </div>
         </div>
     </nav>
 
-    <!-- Main Content -->
     <div class="container-fluid">
         <div class="row">
             {% block content %}{% endblock %}
         </div>
     </div>
 
-    <!-- Bootstrap JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    
     {% block extra_scripts %}{% endblock %}
 </body>
 </html>

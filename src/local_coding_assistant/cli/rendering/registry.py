@@ -9,7 +9,7 @@ from local_coding_assistant.cli.rendering.frame_renderer import render_frame
 from local_coding_assistant.cli.rendering.json_renderer import render_json
 from local_coding_assistant.cli.rendering.plain import render_plain
 from local_coding_assistant.cli.rendering.summary import render_summary
-from local_coding_assistant.runtime.reporting import RunReport
+from local_coding_assistant.runtime import RunReport
 
 Renderer = Callable[[RunReport, Console, bool], None]
 

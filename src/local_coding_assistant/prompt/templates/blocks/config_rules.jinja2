@@ -1,0 +1,7 @@
+{% set ctx = context %}
+{% if ctx.config_instructions %}
+Config Instructions:
+{% for instr in ctx.config_instructions %}
+- {{ instr }}
+{% endfor %}
+{% endif %}

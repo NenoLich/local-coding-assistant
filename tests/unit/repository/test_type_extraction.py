@@ -1,7 +1,5 @@
 """Tests for TypeExtractor class across different programming languages."""
 
-import pytest
-
 from local_coding_assistant.repository.ast_parser import TypeExtractor
 
 

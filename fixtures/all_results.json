@@ -1,0 +1,198 @@
+{
+  "fixture": "python_cli_tool",
+  "model": "mock-model",
+  "results": [
+    {
+      "task_id": "add_export_command",
+      "task_name": "Add Export Command",
+      "success": true,
+      "eval_pass": true,
+      "duration_seconds": 7.371468544006348,
+      "return_code": 0,
+      "files_created": [],
+      "files_changed": [],
+      "error": "",
+      "evaluation": {
+        "task_id": "add_export_command",
+        "eval_type": "file_and_command",
+        "criteria_results": [
+          {
+            "check": "mock_success",
+            "passed": true,
+            "return_code": 0,
+            "duration_seconds": 7.371468544006348
+          }
+        ],
+        "overall_pass": true
+      }
+    },
+    {
+      "task_id": "fix_config_loading_bug",
+      "task_name": "Fix Config Loading Bug",
+      "success": true,
+      "eval_pass": true,
+      "duration_seconds": 6.695832014083862,
+      "return_code": 0,
+      "files_created": [],
+      "files_changed": [],
+      "error": "",
+      "evaluation": {
+        "task_id": "fix_config_loading_bug",
+        "eval_type": "behavior",
+        "criteria_results": [
+          {
+            "check": "mock_success",
+            "passed": true,
+            "return_code": 0,
+            "duration_seconds": 6.695832014083862
+          }
+        ],
+        "overall_pass": true
+      }
+    },
+    {
+      "task_id": "add_config_validation",
+      "task_name": "Add Config Validation",
+      "success": true,
+      "eval_pass": true,
+      "duration_seconds": 7.686106204986572,
+      "return_code": 0,
+      "files_created": [],
+      "files_changed": [],
+      "error": "",
+      "evaluation": {
+        "task_id": "add_config_validation",
+        "eval_type": "behavior_and_code",
+        "criteria_results": [
+          {
+            "check": "mock_success",
+            "passed": true,
+            "return_code": 0,
+            "duration_seconds": 7.686106204986572
+          }
+        ],
+        "overall_pass": true
+      }
+    },
+    {
+      "task_id": "add_input_validation_to_process",
+      "task_name": "Add Input Validation to Process Command",
+      "success": true,
+      "eval_pass": true,
+      "duration_seconds": 6.996593713760376,
+      "return_code": 0,
+      "files_created": [],
+      "files_changed": [],
+      "error": "",
+      "evaluation": {
+        "task_id": "add_input_validation_to_process",
+        "eval_type": "behavior",
+        "criteria_results": [
+          {
+            "check": "mock_success",
+            "passed": true,
+            "return_code": 0,
+            "duration_seconds": 6.996593713760376
+          }
+        ],
+        "overall_pass": true
+      }
+    },
+    {
+      "task_id": "refactor_commands_into_modules",
+      "task_name": "Refactor Commands into Separate Modules",
+      "success": true,
+      "eval_pass": true,
+      "duration_seconds": 6.692495584487915,
+      "return_code": 0,
+      "files_created": [],
+      "files_changed": [],
+      "error": "",
+      "evaluation": {
+        "task_id": "refactor_commands_into_modules",
+        "eval_type": "file_structure",
+        "criteria_results": [
+          {
+            "check": "mock_success",
+            "passed": true,
+            "return_code": 0,
+            "duration_seconds": 6.692495584487915
+          }
+        ],
+        "overall_pass": true
+      }
+    },
+    {
+      "task_id": "add_help_text_improvements",
+      "task_name": "Add Help Text Improvements",
+      "success": true,
+      "eval_pass": true,
+      "duration_seconds": 7.140915155410767,
+      "return_code": 0,
+      "files_created": [],
+      "files_changed": [],
+      "error": "",
+      "evaluation": {
+        "task_id": "add_help_text_improvements",
+        "eval_type": "behavior",
+        "criteria_results": [
+          {
+            "check": "mock_success",
+            "passed": true,
+            "return_code": 0,
+            "duration_seconds": 7.140915155410767
+          }
+        ],
+        "overall_pass": true
+      }
+    },
+    {
+      "task_id": "add_unit_tests_for_validation",
+      "task_name": "Add Unit Tests for Config Validation",
+      "success": true,
+      "eval_pass": true,
+      "duration_seconds": 6.648465633392334,
+      "return_code": 0,
+      "files_created": [],
+      "files_changed": [],
+      "error": "",
+      "evaluation": {
+        "task_id": "add_unit_tests_for_validation",
+        "eval_type": "test_coverage",
+        "criteria_results": [
+          {
+            "check": "mock_success",
+            "passed": true,
+            "return_code": 0,
+            "duration_seconds": 6.648465633392334
+          }
+        ],
+        "overall_pass": true
+      }
+    },
+    {
+      "task_id": "add_greet_tests",
+      "task_name": "Add Greet Command Tests",
+      "success": true,
+      "eval_pass": true,
+      "duration_seconds": 6.66874623298645,
+      "return_code": 0,
+      "files_created": [],
+      "files_changed": [],
+      "error": "",
+      "evaluation": {
+        "task_id": "add_greet_tests",
+        "eval_type": "test_coverage",
+        "criteria_results": [
+          {
+            "check": "mock_success",
+            "passed": true,
+            "return_code": 0,
+            "duration_seconds": 6.66874623298645
+          }
+        ],
+        "overall_pass": true
+      }
+    }
+  ]
+}

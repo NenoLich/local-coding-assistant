@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.markup import escape
 from rich.tree import Tree
 
-from local_coding_assistant.runtime.reporting import RunReport
+from local_coding_assistant.runtime import RunReport
 
 
 def _stringify(value: Any, limit: int = 160) -> str:
@@ -47,14 +47,17 @@ def render_frame(report: RunReport, console: Console, verbose: bool) -> None:  #
         if hasattr(status, "value"):
             status = status.value
         if result:
-            llm_tokens = result.get("total_tokens", None)
+            llm_tokens = result.get("total_input_tokens", None)
+            llm_output_tokens = result.get("total_output_tokens", None)
             duration = result.get("total_latency_ms", None)
 
             label = escape(f"Frame {iteration} [{status}]")
             if duration is not None:
                 label += f" {duration:.1f}ms"
-            if llm_tokens is not None:
-                label += f" tokens={llm_tokens}"
+            if llm_tokens is not None or llm_output_tokens is not None:
+                label += (
+                    f" tokens_in={llm_tokens or 0} tokens_out={llm_output_tokens or 0}"
+                )
 
         else:
             label = escape(f"Frame {iteration} [{status}]")
@@ -87,9 +90,9 @@ def render_frame(report: RunReport, console: Console, verbose: bool) -> None:  #
                     if metadata:
                         action_node.add(f"meta: {_stringify(metadata)}")
 
-        final_answer = result.get("final_answer")
-        if final_answer:
-            frame_node.add(f"final_answer: {_stringify(final_answer)}")
+        llm_content = result.get("final_answer")
+        if llm_content:
+            frame_node.add(f"llm_content: {_stringify(llm_content)}")
         error_message = result.get("error_message")
         if error_message:
             frame_node.add(f"error: {_stringify(error_message)}")

@@ -1,0 +1,857 @@
+# Tool Policies - Complete Rule Set
+# This file contains ALL approval rules with explicit priorities.
+# Higher priority = evaluated first.
+# Project overrides in tool_policies.local.yaml only change outcome (ASK -> ALLOW).
+
+tools_platform:
+  # Configurable paths for tool policies files (supports @ aliases)
+  tool_policies_path: "@config/tool_policies.yaml"
+  tool_policies_local_path: "@config/tool_policies.local.yaml"
+  rules:
+    # === BASE PER-TOOL POLICIES (priority 100) ===
+    - id: "base_read_file"
+      tool_id: "read_file"
+      matcher:
+        type: "any_args"
+      outcome: "allow"
+      priority: 100
+      description: "Base policy for read_file"
+
+    - id: "base_search_text"
+      tool_id: "search_text"
+      matcher:
+        type: "any_args"
+      outcome: "allow"
+      priority: 100
+      description: "Base policy for search_text"
+
+    - id: "base_search_symbols"
+      tool_id: "search_symbols"
+      matcher:
+        type: "any_args"
+      outcome: "allow"
+      priority: 100
+      description: "Base policy for search_symbols"
+
+    - id: "base_get_symbol"
+      tool_id: "get_symbol"
+      matcher:
+        type: "any_args"
+      outcome: "allow"
+      priority: 100
+      description: "Base policy for get_symbol"
+
+    - id: "base_match_paths"
+      tool_id: "match_paths"
+      matcher:
+        type: "any_args"
+      outcome: "allow"
+      priority: 100
+      description: "Base policy for match_paths"
+
+    - id: "base_check_process_status"
+      tool_id: "check_process_status"
+      matcher:
+        type: "any_args"
+      outcome: "allow"
+      priority: 100
+      description: "Base policy for check_process_status"
+
+    - id: "base_run_command"
+      tool_id: "run_command"
+      matcher:
+        type: "any_args"
+      outcome: "ask"
+      priority: 100
+      description: "Base policy for run_command"
+
+    - id: "base_replace_exact"
+      tool_id: "replace_exact"
+      matcher:
+        type: "any_args"
+      outcome: "ask"
+      priority: 100
+      description: "Base policy for replace_exact"
+
+    - id: "base_create_file"
+      tool_id: "create_file"
+      matcher:
+        type: "any_args"
+      outcome: "ask"
+      priority: 100
+      description: "Base policy for create_file"
+
+    - id: "base_delete_file"
+      tool_id: "delete_file"
+      matcher:
+        type: "any_args"
+      outcome: "ask"
+      priority: 100
+      description: "Base policy for delete_file"
+
+    - id: "base_create_file"
+      tool_id: "create_file"
+      matcher:
+        type: "any_args"
+      outcome: "ask"
+      priority: 100
+      description: "Base policy for create_file"
+
+    - id: "base_replace_exact"
+      tool_id: "replace_exact"
+      matcher:
+        type: "any_args"
+      outcome: "ask"
+      priority: 100
+      description: "Base policy for replace_exact"
+
+    - id: "base_kill_process"
+      tool_id: "kill_process"
+      matcher:
+        type: "any_args"
+      outcome: "ask"
+      priority: 100
+      description: "Base policy for kill_process"
+
+    # === COMMAND APPROVAL PATTERNS (priority 110-190) ===
+    # Deny patterns (highest within command approval)
+    - id: "cmd_deny_sudo"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "sudo *"
+      outcome: "deny"
+      priority: 190
+      description: "Deny sudo commands"
+
+    - id: "cmd_deny_apt"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "apt*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny apt commands"
+
+    - id: "cmd_deny_apt_get"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "apt-get*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny apt-get commands"
+
+    - id: "cmd_deny_yum"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "yum*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny yum commands"
+
+    - id: "cmd_deny_dnf"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "dnf*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny dnf commands"
+
+    - id: "cmd_deny_service"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "service *"
+      outcome: "deny"
+      priority: 190
+      description: "Deny service commands"
+
+    - id: "cmd_deny_usermod"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "usermod*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny usermod commands"
+
+    - id: "cmd_deny_useradd"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "useradd*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny useradd commands"
+
+    - id: "cmd_deny_passwd"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "passwd*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny passwd commands"
+
+    - id: "cmd_deny_mount"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "mount*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny mount commands"
+
+    - id: "cmd_deny_umount"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "umount*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny umount commands"
+
+    - id: "cmd_deny_iptables"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "iptables*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny iptables commands"
+
+    - id: "cmd_deny_shutdown"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "shutdown*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny shutdown commands"
+
+    - id: "cmd_deny_reboot"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "reboot*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny reboot commands"
+
+    - id: "cmd_deny_kill"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "kill*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny kill commands"
+
+    - id: "cmd_deny_pkill"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "pkill*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny pkill commands"
+
+    - id: "cmd_deny_dd"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "dd*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny dd commands"
+
+    - id: "cmd_deny_fdisk"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "fdisk*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny fdisk commands"
+
+    - id: "cmd_deny_mkfs"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "mkfs*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny mkfs commands"
+
+    - id: "cmd_deny_format"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "format*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny format commands"
+
+    - id: "cmd_deny_id_rsa"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "*id_rsa*"
+      outcome: "deny"
+      priority: 190
+      description: "Deny id_rsa access"
+
+    - id: "cmd_deny_fork_bomb"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: ":(){ :|:& };:"
+      outcome: "deny"
+      priority: 190
+      description: "Deny fork bomb"
+
+    # Allow patterns
+    - id: "cmd_allow_git_diff"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "git diff*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow git diff"
+
+    - id: "cmd_allow_git_status"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "git status"
+      outcome: "allow"
+      priority: 170
+      description: "Allow git status"
+
+    - id: "cmd_allow_git_log"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "git log*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow git log"
+
+    - id: "cmd_allow_git_show"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "git show*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow git show"
+
+    - id: "cmd_allow_git_branch"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "git branch*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow git branch"
+
+    - id: "cmd_allow_cargo_check"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "cargo check"
+      outcome: "allow"
+      priority: 170
+      description: "Allow cargo check"
+
+    - id: "cmd_allow_cargo_test"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "cargo test*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow cargo test"
+
+    - id: "cmd_allow_cargo_build"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "cargo build*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow cargo build"
+
+    - id: "cmd_allow_pytest"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "pytest*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow pytest"
+
+    - id: "cmd_allow_ruff_check"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "ruff check*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow ruff check"
+
+    - id: "cmd_allow_ruff_format"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "ruff format*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow ruff format"
+
+    - id: "cmd_allow_ls"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "ls*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow ls"
+
+    - id: "cmd_allow_cat"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "cat*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow cat"
+
+    - id: "cmd_allow_head"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "head*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow head"
+
+    - id: "cmd_allow_tail"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "tail*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow tail"
+
+    - id: "cmd_allow_grep"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "grep*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow grep"
+
+    - id: "cmd_allow_find"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "find*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow find"
+
+    - id: "cmd_allow_wc"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "wc*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow wc"
+
+    - id: "cmd_allow_file"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "file*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow file"
+
+    - id: "cmd_allow_stat"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "stat*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow stat"
+
+    - id: "cmd_allow_read"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "read*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow read"
+
+    - id: "cmd_allow_less"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "less*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow less"
+
+    - id: "cmd_allow_more"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "more*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow more"
+
+    - id: "cmd_allow_diff"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "diff*"
+      outcome: "allow"
+      priority: 170
+      description: "Allow diff"
+
+    # Ask patterns (lower than allow/deny)
+    - id: "cmd_ask_git_commit"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "git commit*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for git commit"
+
+    - id: "cmd_ask_git_push"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "git push*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for git push"
+
+    - id: "cmd_ask_git_pull"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "git pull*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for git pull"
+
+    - id: "cmd_ask_git_reset"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "git reset*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for git reset"
+
+    - id: "cmd_ask_git_checkout"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "git checkout*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for git checkout"
+
+    - id: "cmd_ask_git_revert"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "git revert*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for git revert"
+
+    - id: "cmd_ask_npm_install"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "npm install*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for npm install"
+
+    - id: "cmd_ask_pip_install"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "pip install*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for pip install"
+
+    - id: "cmd_ask_rm"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "rm *"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for rm"
+
+    - id: "cmd_ask_cp"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "cp *"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for cp"
+
+    - id: "cmd_ask_mv"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "mv *"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for mv"
+
+    - id: "cmd_ask_sed"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "sed *"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for sed"
+
+    - id: "cmd_ask_awk"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "awk *"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for awk"
+
+    - id: "cmd_ask_touch"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "touch *"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for touch"
+
+    - id: "cmd_ask_mkdir"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "mkdir *"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for mkdir"
+
+    - id: "cmd_ask_chmod"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "chmod *"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for chmod"
+
+    - id: "cmd_ask_chown"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "chown *"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for chown"
+
+    - id: "cmd_ask_python"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "python*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for python"
+
+    - id: "cmd_ask_node"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "node*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for node"
+
+    - id: "cmd_ask_bash"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "bash*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for bash"
+
+    - id: "cmd_ask_sh"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "sh*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for sh"
+
+    - id: "cmd_ask_zsh"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "zsh*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for zsh"
+
+    - id: "cmd_ask_fish"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "fish*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for fish"
+
+    - id: "cmd_ask_curl"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "curl*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for curl"
+
+    - id: "cmd_ask_wget"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "wget*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for wget"
+
+    - id: "cmd_ask_ssh"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "ssh*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for ssh"
+
+    - id: "cmd_ask_scp"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "scp*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for scp"
+
+    - id: "cmd_ask_ping"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "ping*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for ping"
+
+    - id: "cmd_ask_nc"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "nc*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for nc"
+
+    - id: "cmd_ask_telnet"
+      tool_id: "run_command"
+      matcher:
+        type: "command_pattern"
+        pattern: "telnet*"
+      outcome: "ask"
+      priority: 150
+      description: "Ask for telnet"
+
+    # === WORKSPACE BOUNDARY (priority 200-210) ===
+    - id: "boundary_read_outside"
+      tool_id: ["read_file", "search_text", "match_paths"]
+      matcher:
+        type: "path_outside_workspace"
+      outcome: "ask"
+      priority: 210
+      description: "Reading outside workspace requires approval"
+
+    - id: "boundary_write_outside"
+      tool_id: ["create_file", "replace_exact", "delete_file"]
+      matcher:
+        type: "path_outside_workspace"
+      outcome: "ask"
+      priority: 220
+      description: "Writing outside workspace is not allowed"
+
+    # === HEURISTICS (priority 160) ===
+    - id: "heuristic_shell_mode"
+      tool_id: "run_command"
+      matcher:
+        type: "arg_equals"
+        arg: "shell_mode"
+        value: true
+      outcome: "ask"
+      priority: 160
+      description: "Shell mode execution requires approval"
+
+    - id: "heuristic_network"
+      tool_id: "run_command"
+      matcher:
+        type: "arg_equals"
+        arg: "allow_network"
+        value: true
+      outcome: "ask"
+      priority: 160
+      description: "Network access requires approval"
+
+    # === GLOBAL FALLBACK (priority 0) ===
+    - id: "fallback"
+      tool_id: "*"
+      matcher:
+        type: "any_args"
+      outcome: "ask"
+      priority: 0
+      description: "Global fallback"
+
+  # === PROJECT OVERRIDES (auto-populated by YES_ALWAYS_PROJECT) ===
+  # Only contains: base_rule_id + outcome override
+  project_overrides: []
+  # Example:
+  # - base_rule_id: "cmd_ask_git_commit"
+  #   outcome: "allow"
+  #   description: "Allow git commit (user approved)"

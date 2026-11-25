@@ -282,7 +282,7 @@ def config_field(
     description: str | None = None,
     dependencies: SettingDependency | None = None,
     **kwargs,
-) -> ConfigField:
+) -> Any:
     """Create a ConfigField for use in AppConfig models.
 
     Args:

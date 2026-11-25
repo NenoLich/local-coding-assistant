@@ -1,7 +1,6 @@
 """Example Python file for testing the repository context pipeline."""
 
 import asyncio
-from typing import List
 
 
 class DataProcessor:
@@ -11,7 +10,7 @@ class DataProcessor:
         self.batch_size = batch_size
         self.processed_count = 0
 
-    async def process_batch(self, data: List[str]) -> dict:
+    async def process_batch(self, data: list[str]) -> dict:
         """Process a batch of data asynchronously.
 
         Args:
@@ -36,7 +35,7 @@ class DataProcessor:
         return bool(value and value.strip())
 
 
-def calculate_metrics(data: List[dict]) -> dict:
+def calculate_metrics(data: list[dict]) -> dict:
     """Calculate metrics from processed data.
 
     Args:

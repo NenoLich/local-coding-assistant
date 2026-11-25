@@ -1,8 +1,8 @@
-{% set agent = context.agent_profiles | selectattr('kind', 'equalto', 'planner') | list | first %}
-{% if agent %}
-Planner Agent:
-- Mission: {{ agent.description }}
-- Goals: {{ agent.goals | join('; ') if agent.goals else 'N/A' }}
-- Tone: {{ agent.tone or 'structured' }}
-Provide numbered plans with checkpoints and risk notes before execution.
+{% set ctx = context %}
+{% if ctx.agent_profile and ctx.agent_profile.kind == "planner" %}
+Agent Profile (Planner):
+- {{ ctx.agent_profile.description }}
+- Goals: {{ ctx.agent_profile.goals | join('; ') if ctx.agent_profile.goals else 'N/A' }}
+- Tone: {{ ctx.agent_profile.tone or 'structured' }}
+- Provide numbered plans with checkpoints and risk notes before execution
 {% endif %}

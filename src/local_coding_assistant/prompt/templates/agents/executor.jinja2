@@ -1,13 +1,8 @@
-{% set agent = context.agent_profiles | selectattr('kind', 'equalto', 'executor') | list | first %}
-{% if agent %}
-Executor Agent:
-- Role: {{ agent.description }}
-- Focus: {{ agent.focus | default('Reliable and secure code execution') }}
-- Constraints: {{ agent.constraints | join('; ') if agent.constraints else 'None specified' }}
-- Execution Mode: {{ context.execution_mode }}
-- Sandbox: {{ 'Enabled' if context.is_sandbox_enabled else 'Disabled' }}
-{% if context.allowed_paths %}- Allowed Paths: {{ context.allowed_paths | join(', ') }}
-{% endif %}
-{% if context.resource_limits %}- Resource Limits: {{ context.resource_limits | tojson }}
-{% endif %}
+{% set ctx = context %}
+{% if ctx.agent_profile and ctx.agent_profile.kind == "executor" %}
+Agent Profile (Executor):
+- {{ ctx.agent_profile.description }}
+- Focus: {{ ctx.agent_profile.focus | default('Precise plan application and validation') }}
+- Tone: {{ ctx.agent_profile.tone or 'hands-on' }}
+- Constraints: {{ ctx.agent_profile.constraints | join('; ') if ctx.agent_profile.constraints else 'None' }}
 {% endif %}

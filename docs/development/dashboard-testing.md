@@ -26,7 +26,7 @@ tests/
 
 #### Models Testing (`test_models.py`)
 - **Purpose**: Validate Pydantic model schemas and data validation
-- **Coverage**: All dashboard models (RunSummary, FrameDetail, DashboardStats, etc.)
+- **Coverage**: All dashboard models (RunSummary, DashboardStats, etc.)
 - **Key Tests**:
   - Model creation with valid/invalid data
   - Serialization/deserialization
@@ -103,7 +103,6 @@ tests/
 - `mock_event_collector`: Mocked EventCollector instance
 - `sample_execution_events`: Sample ExecutionEvent objects
 - `sample_run_summary`: Sample RunSummary model
-- `sample_frame_detail`: Sample FrameDetail model
 
 #### Helper Classes
 - `DashboardTestHelpers`: Utility methods for test data creation
@@ -145,7 +144,7 @@ pytest tests/unit/dashboard/test_models.py -v
 pytest tests/unit/dashboard/test_event_collector.py -v
 
 # CLI testing
-pytest tests/unit/dashboard/test_cli_commands.py -v
+pytest tests/unit/dashboard/test_cli_dashboard_commands.py -v
 ```
 
 ### Run with Markers

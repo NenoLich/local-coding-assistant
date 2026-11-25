@@ -10,24 +10,141 @@ import time
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from typing import Any, NoReturn
 
-import litellm
-from litellm import acompletion, get_valid_models
-
 from local_coding_assistant.providers.base import (
     BaseDriver,
     ProviderLLMRequest,
     ProviderLLMResponse,
     ProviderLLMResponseDelta,
 )
+from local_coding_assistant.providers.error_classification import (
+    extract_retry_after,
+    extract_status_code,
+)
 from local_coding_assistant.providers.exceptions import (
     ProviderAuthError,
     ProviderConnectionError,
     ProviderError,
     ProviderRateLimitError,
+    ProviderValidationError,
 )
 from local_coding_assistant.utils.logging import get_logger
 
 logger = get_logger("providers.compatible_drivers")
+
+
+def _format_message_content(content: Any) -> list[dict[str, Any]]:
+    """Normalize message content into a list of structured text parts.
+
+    Plain strings become a single ``{"type": "text", "text": ...}`` part so
+    cache_control and system_reminder parts can be attached per-part.
+    """
+    if content is None:
+        return []
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") in ("text", "input_text"):
+                parts.append(dict(item))
+            elif isinstance(item, str):
+                parts.append({"type": "text", "text": item})
+        return parts or []
+    return [{"type": "text", "text": str(content)}]
+
+
+def _extract_developer_message(
+    messages: list[dict[str, Any]],
+) -> tuple[str | None, list[dict[str, Any]]]:
+    """Pull the developer (system_reminder) message out of the message list.
+
+    Returns (remainder_text, messages_without_developer).
+    """
+    for i, msg in enumerate(messages):
+        if msg.get("role") == "developer":
+            text = msg.get("content", "")
+            if isinstance(text, list):
+                text = "".join(
+                    p.get("text", "")
+                    for p in text
+                    if isinstance(p, dict) and p.get("type") in ("text", "input_text")
+                )
+            return str(text), messages[:i] + messages[i + 1 :]
+    return None, messages
+
+
+def _find_last_user_or_tool_index(
+    messages: list[dict[str, Any]],
+) -> int | None:
+    """Return the index of the last user or tool message (only one)."""
+    for i in range(len(messages) - 1, -1, -1):
+        if messages[i].get("role") in ("user", "tool"):
+            return i
+    return None
+
+
+def _apply_cache_control_to_parts(
+    parts: list[dict[str, Any]], cache_control: dict[str, Any], exclude_last: bool
+) -> None:
+    """Attach ``cache_control`` to text parts (all but the last if excluded)."""
+    target = parts[:-1] if exclude_last and parts else parts
+    for part in target:
+        if isinstance(part, dict) and part.get("type") == "text":
+            part["cache_control"] = dict(cache_control)
+
+
+def _prepare_messages_for_cache(
+    messages: list[dict[str, Any]],
+    cache_control: dict[str, Any] | None,
+    system_reminder: str | None,
+) -> list[dict[str, Any]]:
+    """Format messages to structured parts and apply prefix cache control.
+
+    Cache control is applied to:
+      1. The last system message.
+      2. The last user or tool message, on the content part(s) right before
+         the system_reminder part (only one of user/tool, never both).
+    """
+    # Normalize every message's content to structured parts.
+    for msg in messages:
+        msg["content"] = _format_message_content(msg.get("content"))
+
+    target_idx = _find_last_user_or_tool_index(messages)
+
+    # Merge system_reminder as the final text part of the target message.
+    if target_idx is not None and system_reminder:
+        messages[target_idx]["content"].append(
+            {"type": "text", "text": system_reminder}
+        )
+
+    if cache_control:
+        # 1. Last system message: cache all of its text parts.
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].get("role") == "system":
+                _apply_cache_control_to_parts(
+                    messages[i].get("content", []), cache_control, exclude_last=False
+                )
+                break
+
+        # 2. Last user/tool message: cache content before the system_reminder
+        #    part (the last part when a remainder was appended).
+        if target_idx is not None:
+            _apply_cache_control_to_parts(
+                messages[target_idx].get("content", []),
+                cache_control,
+                exclude_last=bool(system_reminder),
+            )
+
+    return messages
+
+
+def _apply_cache_control_to_tools(
+    tools: list[dict[str, Any]], cache_control: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    """Attach ``cache_control`` to the last tool definition (not in messages)."""
+    if not cache_control or not tools:
+        return tools
+    last = dict(tools[-1])
+    last["cache_control"] = dict(cache_control)
+    return [*tools[:-1], last]
 
 
 class ResponseNormalizer:
@@ -154,7 +271,6 @@ class OpenAIChatCompletionsDriver(BaseDriver):
 
         payload: dict[str, Any] = {
             "model": model,
-            "messages": self._format_messages(request.messages),
             "temperature": request.temperature,
         }
         if stream:
@@ -163,6 +279,20 @@ class OpenAIChatCompletionsDriver(BaseDriver):
         # Add base_url and api_key for litellm
         payload["api_base"] = self.base_url
         payload["api_key"] = self.api_key
+
+        # Extract the ephemeral system_reminder (developer message) so the
+        # driver can merge it into the last user/tool message content and apply
+        # prefix cache control to the stable parts before it.
+        cache_control = request.parameters.cache_control if request.parameters else None
+        system_reminder, raw_messages = _extract_developer_message(
+            list(request.messages)
+        )
+        messages = _prepare_messages_for_cache(
+            self._format_messages(raw_messages),
+            cache_control,
+            system_reminder,
+        )
+        payload["messages"] = messages
 
         # Handle provider-specific parameters via extra_body
         extra_body = {}
@@ -192,7 +322,9 @@ class OpenAIChatCompletionsDriver(BaseDriver):
             if request.parameters.response_format is not None:
                 payload["response_format"] = request.parameters.response_format
             if request.parameters.tools is not None:
-                payload["tools"] = request.parameters.tools
+                payload["tools"] = _apply_cache_control_to_tools(
+                    list(request.parameters.tools), cache_control
+                )
             if request.parameters.tool_choice is not None:
                 payload["tool_choice"] = request.parameters.tool_choice
             if stream and request.parameters.include_usage is not None:
@@ -204,10 +336,15 @@ class OpenAIChatCompletionsDriver(BaseDriver):
         if extra_body:
             payload["extra_body"] = extra_body
 
+        if request.timeout is not None:
+            payload["timeout"] = request.timeout
+
         return payload
 
     async def generate(self, request: ProviderLLMRequest) -> ProviderLLMResponse:
         """Generate using litellm's completion API"""
+        from litellm import acompletion
+
         payload = self._build_chat_payload(request)
 
         try:
@@ -225,6 +362,8 @@ class OpenAIChatCompletionsDriver(BaseDriver):
         self, request: ProviderLLMRequest
     ) -> AsyncGenerator[ProviderLLMResponseDelta, None]:
         """Generate a streaming response using litellm"""
+        from litellm import acompletion
+
         payload = self._build_chat_payload(request, stream=True)
 
         logger.debug("Request payload", payload=payload)
@@ -416,8 +555,6 @@ class OpenAIChatCompletionsDriver(BaseDriver):
 
     def _format_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Format messages for Chat Completions API."""
-        import json
-
         formatted = []
         for msg in messages:
             msg_copy = msg.copy()
@@ -435,17 +572,49 @@ class OpenAIChatCompletionsDriver(BaseDriver):
                         text_parts.append(item["text"])
                 msg_copy["content"] = "".join(text_parts)
             if msg_copy.get("tool_calls"):
-                # Ensure arguments are JSON strings
-                for tool_call in msg_copy["tool_calls"]:
-                    if isinstance(tool_call.get("function", {}).get("arguments"), dict):
-                        tool_call["function"]["arguments"] = json.dumps(
-                            tool_call["function"]["arguments"]
-                        )
+                msg_copy["tool_calls"] = [
+                    self._normalize_tool_call_for_llm(tc)
+                    for tc in msg_copy["tool_calls"]
+                    if isinstance(tc, dict)
+                ]
             formatted.append(msg_copy)
         return formatted
 
+    @staticmethod
+    def _normalize_tool_call_for_llm(tool_call: dict[str, Any]) -> dict[str, Any]:
+        """Normalize a single tool_call to the OpenAI Chat Completions schema.
+
+        Ensures each call has ``id``, ``type: "function"``, and a ``function``
+        wrapper with ``name`` and stringified ``arguments`` (JSON string).
+        Tolerates older/broken formats where ``name`` and ``arguments`` live
+        at the top level.
+        """
+        import json
+
+        result = dict(tool_call)
+        function = result.get("function")
+        if not isinstance(function, dict):
+            function = {
+                "name": result.get("name", ""),
+                "arguments": result.get("arguments", {}),
+            }
+            result["function"] = function
+            result.pop("name", None)
+            result.pop("arguments", None)
+        if "type" not in result:
+            result["type"] = "function"
+        arguments = function.get("arguments")
+        if isinstance(arguments, dict):
+            function["arguments"] = json.dumps(arguments, ensure_ascii=False)
+        elif not isinstance(arguments, str):
+            function["arguments"] = str(arguments)
+        return result
+
     async def health_check(self) -> bool:
         """Check if the API is accessible using litellm's get_valid_models"""
+        import litellm
+        from litellm import get_valid_models
+
         # Set global litellm configuration
         litellm.api_base = self.base_url
         litellm.api_key = self.api_key
@@ -468,27 +637,7 @@ class OpenAIChatCompletionsDriver(BaseDriver):
         Returns:
             Tuple of (status_code, response) where either or both can be None
         """
-        # Handle case where status_code is directly on the exception
-        if hasattr(e, "status_code"):
-            status_code = e.status_code
-            if status_code is None:
-                return None, getattr(e, "response", None)
-            try:
-                return int(str(status_code)), getattr(e, "response", None)
-            except (ValueError, TypeError):
-                return None, getattr(e, "response", None)
-
-        # Handle case where status_code is in the response object
-        if hasattr(e, "response") and hasattr(e.response, "status_code"):
-            status_code = e.response.status_code
-            if status_code is None:
-                return None, e.response
-            try:
-                return int(str(status_code)), e.response
-            except (ValueError, TypeError):
-                return None, e.response
-
-        return None, None
+        return extract_status_code(e), getattr(e, "response", None)
 
     def _log_error_details(
         self, e: Exception, status_code: int | None, response: Any
@@ -500,9 +649,19 @@ class OpenAIChatCompletionsDriver(BaseDriver):
         if response and hasattr(response, "text"):
             logger.debug(f"Response text: {response.text!r}")
 
-    def _handle_http_error(self, status_code: int, error_message: str) -> NoReturn:
-        """Handle HTTP errors with specific status codes."""
+    def _handle_http_error(
+        self,
+        status_code: int,
+        error_message: str,
+        response: Any = None,
+    ) -> NoReturn:
+        """Handle HTTP errors with specific status codes.
+
+        Raises typed provider errors carrying the status code and any
+        Retry-After hint so downstream classification is structured.
+        """
         provider = self.kwargs.get("provider_name")
+        retry_after = extract_retry_after(response) if response is not None else None
 
         if status_code == 401:
             raise ProviderAuthError(
@@ -513,16 +672,32 @@ class OpenAIChatCompletionsDriver(BaseDriver):
             raise ProviderRateLimitError(
                 f"Rate limit exceeded (HTTP {status_code})",
                 provider=provider,
+                retry_after=int(retry_after) if retry_after is not None else None,
             )
-        if 500 <= status_code < 600:
+        if status_code in (408, 425, 500, 502, 503, 504, 529) or (
+            500 <= status_code < 600
+        ):
             raise ProviderConnectionError(
                 f"Server error (HTTP {status_code})",
                 provider=provider,
+                status_code=status_code,
+            )
+        if status_code == 402:
+            raise ProviderError(
+                f"Quota or billing error (HTTP {status_code})",
+                provider=provider,
+                status_code=status_code,
+            )
+        if status_code in (400, 404, 413, 422):
+            raise ProviderValidationError(
+                f"Invalid request (HTTP {status_code})",
+                provider=provider,
+                status_code=status_code,
             )
 
         error_msg = f"HTTP {status_code} error: {error_message}"
         logger.error(f"API error in {provider or 'unknown'}: {error_msg}")
-        raise ProviderError(error_msg, provider=provider)
+        raise ProviderError(error_msg, provider=provider, status_code=status_code)
 
     def _handle_error(self, e: Exception) -> NoReturn:
         """Handle API errors by checking status code from error attributes"""
@@ -531,7 +706,7 @@ class OpenAIChatCompletionsDriver(BaseDriver):
 
         # Handle based on status code if available
         if status_code is not None:
-            self._handle_http_error(status_code, str(e))
+            self._handle_http_error(status_code, str(e), response)
 
         # String-based error matching as fallback
         error_str = str(e)
@@ -600,6 +775,8 @@ class OpenAIResponsesDriver(BaseDriver):
                     "description": tool["function"].get("description", ""),
                     "parameters": tool["function"].get("parameters", {}),
                 }
+                if tool.get("cache_control"):
+                    formatted_tool["cache_control"] = dict(tool["cache_control"])
                 formatted_tools.append(formatted_tool)
             elif "name" in tool and "parameters" in tool:
                 # Tool is already in the expected format
@@ -615,31 +792,33 @@ class OpenAIResponsesDriver(BaseDriver):
         """Format messages for Responses API input structure."""
         formatted = []
         for msg in messages:
-            if msg.get("role") == "user":
+            role = msg.get("role")
+            if role == "user":
                 formatted.append(
                     {
                         "type": "message",
                         "role": "user",
-                        "content": msg.get("content", ""),
+                        "content": _format_message_content(msg.get("content")),
                     }
                 )
-            elif msg.get("role") == "assistant":
+            elif role == "assistant":
                 item = {
                     "type": "message",
                     "role": "assistant",
-                    "content": msg.get("content", None),
+                    "content": _format_message_content(msg.get("content")),
                 }
                 if msg.get("tool_calls"):
                     item["tool_calls"] = msg["tool_calls"]
                 formatted.append(item)
-            elif msg.get("role") == "tool":
-                # Extract text from content if it's a list
+            elif role == "tool":
+                # Extract text from content parts into a single output string.
                 content = msg.get("content", "")
                 if isinstance(content, list):
                     text_parts = []
                     for item in content:
                         if (
-                            item.get("type") in ["text", "input_text"]
+                            isinstance(item, dict)
+                            and item.get("type") in ("text", "input_text")
                             and "text" in item
                         ):
                             text_parts.append(item["text"])
@@ -653,8 +832,46 @@ class OpenAIResponsesDriver(BaseDriver):
                         "output": output,
                     }
                 )
-            # Skip system messages, they go to instructions
+            # Skip system messages (developer too); they go to instructions.
         return formatted
+
+    def _prepare_responses_input(
+        self,
+        messages: list[dict[str, Any]],
+        cache_control: dict[str, Any] | None,
+        system_reminder: str | None,
+    ) -> list[dict[str, Any]]:
+        """Prepare responses input: merge remainder and apply cache control.
+
+        Cache control is applied to the last user input item's content
+        part(s) right before the system_reminder part.
+        """
+        # Normalize content to structured parts for all message-type items.
+        target_idx = None
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if msg.get("type") == "message" and msg.get("role") == "user":
+                target_idx = i
+                break
+            if msg.get("type") == "message":
+                msg["content"] = _format_message_content(msg.get("content"))
+
+        if target_idx is not None:
+            messages[target_idx]["content"] = _format_message_content(
+                messages[target_idx].get("content")
+            )
+            if system_reminder:
+                messages[target_idx]["content"].append(
+                    {"type": "input_text", "text": system_reminder}
+                )
+
+        if cache_control and target_idx is not None:
+            parts = messages[target_idx].get("content", [])
+            _apply_cache_control_to_parts(
+                parts, cache_control, exclude_last=bool(system_reminder)
+            )
+
+        return messages
 
     def _build_responses_payload(  # noqa C901
         self, request: ProviderLLMRequest, stream: bool = False
@@ -669,9 +886,21 @@ class OpenAIResponsesDriver(BaseDriver):
         ]
         instructions = "\n".join([msg.get("content", "") for msg in system_messages])
 
+        # Extract the ephemeral system_reminder (developer message) so it can be
+        # merged into the last user/tool input item and prefix cache control can
+        # be applied to the stable parts before it.
+        cache_control = request.parameters.cache_control if request.parameters else None
+        system_reminder, raw_messages = _extract_developer_message(
+            list(request.messages)
+        )
+        formatted = self._format_messages(raw_messages)
+        input_items = self._prepare_responses_input(
+            formatted, cache_control, system_reminder
+        )
+
         payload: dict[str, Any] = {
             "model": model,
-            "input": self._format_messages(request.messages),
+            "input": input_items,
             "temperature": request.temperature,
         }
         if stream:
@@ -712,8 +941,11 @@ class OpenAIResponsesDriver(BaseDriver):
             if request.parameters.response_format is not None:
                 payload["response_format"] = request.parameters.response_format
             if request.parameters.tools is not None:
+                payload["tools"] = _apply_cache_control_to_tools(
+                    list(request.parameters.tools), cache_control
+                )
                 payload["tools"] = self._format_tools_for_responses_api(
-                    request.parameters.tools
+                    payload["tools"]
                 )
             if request.parameters.tool_choice is not None:
                 payload["tool_choice"] = request.parameters.tool_choice
@@ -734,10 +966,15 @@ class OpenAIResponsesDriver(BaseDriver):
         if extra_body:
             payload["extra_body"] = extra_body
 
+        if request.timeout is not None:
+            payload["timeout"] = request.timeout
+
         return payload
 
     async def generate(self, request: ProviderLLMRequest) -> ProviderLLMResponse:
         """Generate using litellm's completion API with responses schema"""
+        from litellm import acompletion
+
         payload = self._build_responses_payload(request)
 
         logger.debug("Request payload", payload=payload)
@@ -754,6 +991,8 @@ class OpenAIResponsesDriver(BaseDriver):
         self, request: ProviderLLMRequest
     ) -> AsyncGenerator[ProviderLLMResponseDelta, None]:
         """Generate a streaming response using litellm"""
+        from litellm import acompletion
+
         payload = self._build_responses_payload(request, stream=True)
 
         logger.debug("Request payload", payload=payload)
@@ -947,6 +1186,9 @@ class OpenAIResponsesDriver(BaseDriver):
 
     async def health_check(self) -> bool:
         """Check if the API is accessible using litellm's get_valid_models"""
+        import litellm
+        from litellm import get_valid_models
+
         # Set global litellm configuration
         litellm.api_base = self.base_url
         litellm.api_key = self.api_key
@@ -1000,9 +1242,19 @@ class OpenAIResponsesDriver(BaseDriver):
         if response and hasattr(response, "text"):
             logger.debug(f"Response text: {response.text!r}")
 
-    def _handle_http_error(self, status_code: int, error_message: str) -> NoReturn:
-        """Handle HTTP errors with specific status codes."""
+    def _handle_http_error(
+        self,
+        status_code: int,
+        error_message: str,
+        response: Any = None,
+    ) -> NoReturn:
+        """Handle HTTP errors with specific status codes.
+
+        Raises typed provider errors carrying the status code and any
+        Retry-After hint so downstream classification is structured.
+        """
         provider = self.kwargs.get("provider_name")
+        retry_after = extract_retry_after(response) if response is not None else None
 
         if status_code == 401:
             raise ProviderAuthError(
@@ -1013,16 +1265,32 @@ class OpenAIResponsesDriver(BaseDriver):
             raise ProviderRateLimitError(
                 f"Rate limit exceeded (HTTP {status_code})",
                 provider=provider,
+                retry_after=int(retry_after) if retry_after is not None else None,
             )
-        if 500 <= status_code < 600:
+        if status_code in (408, 425, 500, 502, 503, 504, 529) or (
+            500 <= status_code < 600
+        ):
             raise ProviderConnectionError(
                 f"Server error (HTTP {status_code})",
                 provider=provider,
+                status_code=status_code,
+            )
+        if status_code == 402:
+            raise ProviderError(
+                f"Quota or billing error (HTTP {status_code})",
+                provider=provider,
+                status_code=status_code,
+            )
+        if status_code in (400, 404, 413, 422):
+            raise ProviderValidationError(
+                f"Invalid request (HTTP {status_code})",
+                provider=provider,
+                status_code=status_code,
             )
 
         error_msg = f"HTTP {status_code} error: {error_message}"
         logger.error(f"API error in {provider or 'unknown'}: {error_msg}")
-        raise ProviderError(error_msg, provider=provider)
+        raise ProviderError(error_msg, provider=provider, status_code=status_code)
 
     def _handle_error(self, e: Exception) -> NoReturn:
         """Handle API errors by checking status code from error attributes"""
@@ -1031,7 +1299,7 @@ class OpenAIResponsesDriver(BaseDriver):
 
         # Handle based on status code if available
         if status_code is not None:
-            self._handle_http_error(status_code, str(e))
+            self._handle_http_error(status_code, str(e), response)
 
         # String-based error matching as fallback
         error_str = str(e)

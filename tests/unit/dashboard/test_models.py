@@ -1,493 +1,344 @@
 """
-Unit tests for dashboard models.
+Unit tests for dashboard Pydantic models (live + historical planes).
 """
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
 
 from local_coding_assistant.dashboard.models import (
-    ActivityItem,
-    DashboardStats,
+    ErrorResponse,
+    EventTimelineEntry,
     FrameDetail,
     FrameSummary,
+    LiveEvent,
+    LiveFrame,
+    LiveRunSummary,
+    LiveSession,
+    LiveStats,
+    LiveTurn,
+    MessageDetail,
+    MessageEntry,
     PaginatedResponse,
-    RecentActivityResponse,
-    RunDetail,
-    RunsListResponse,
-    RunSummary,
+    PaginationParams,
+    SessionDetail,
+    SessionSummary,
+    StatusSummary,
+    TurnDetail,
+    TurnSummary,
 )
+from local_coding_assistant.runtime.events.contracts import EventType
 
 
-class TestRunSummary:
-    """Test RunSummary model."""
-
-    def test_valid_run_summary_creation(self):
-        """Test creating a valid RunSummary."""
-        run_id = "test-run-123"
-        session_id = "test-session-456"
-        start_time = datetime.now()
-        duration = 120.5
-        events_count = 10
-
-        run = RunSummary(
-            run_id=run_id,
-            session_id=session_id,
-            status="completed",
-            start_time=start_time,
-            duration=duration,
-            events_count=events_count,
-        )
-
-        assert run.run_id == run_id
-        assert run.session_id == session_id
-        assert run.status == "completed"
-        assert run.start_time == start_time
-        assert run.duration == duration
-        assert run.events_count == events_count
-        assert run.tokens_used == 0  # Default value
-        assert run.end_time is None  # Optional field
-
-    def test_run_summary_with_all_fields(self):
-        """Test creating RunSummary with all fields."""
-        start_time = datetime.now()
-        end_time = start_time + timedelta(seconds=120)
-
-        run = RunSummary(
-            run_id="test-run",
-            session_id="test-session",
-            status="completed",
-            start_time=start_time,
-            end_time=end_time,
-            duration=120.0,
-            events_count=5,
-            tokens_used=1000,
-        )
-
-        assert run.end_time == end_time
-        assert run.tokens_used == 1000
-
-    def test_invalid_status_values(self):
-        """Test that invalid status values are still accepted (Pydantic doesn't enforce enum by default)."""
-        start_time = datetime.now()
-
-        # This should work since status is just a string field
-        run = RunSummary(
-            run_id="test-run",
-            session_id="test-session",
-            status="invalid_status",  # Not in the documented enum
-            start_time=start_time,
-            duration=10.0,
-            events_count=1,
-        )
-
-        assert run.status == "invalid_status"
-
-    def test_missing_required_fields(self):
-        """Test that missing required fields raise ValidationError."""
-        start_time = datetime.now()
-
-        with pytest.raises(ValidationError) as exc_info:
-            RunSummary(
-                run_id="test-run",
-                # Missing session_id
-                status="completed",
-                start_time=start_time,
-                duration=10.0,
-                events_count=1,
-            )
-
-        assert "session_id" in str(exc_info.value)
-
-    def test_invalid_duration_type(self):
-        """Test that invalid duration type raises ValidationError."""
-        start_time = datetime.now()
-
-        with pytest.raises(ValidationError) as exc_info:
-            RunSummary(
-                run_id="test-run",
-                session_id="test-session",
-                status="completed",
-                start_time=start_time,
-                duration="invalid",  # Should be float
-                events_count=1,
-            )
-
-        assert "duration" in str(exc_info.value)
+def _dt() -> datetime:
+    return datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
-class TestRunDetail:
-    """Test RunDetail model."""
+class TestPaginationParams:
+    def test_defaults(self):
+        params = PaginationParams()
+        assert params.limit == 50
+        assert params.offset == 0
 
-    def test_run_detail_inheritance(self):
-        """Test that RunDetail inherits from RunSummary."""
-        start_time = datetime.now()
-        events = [{"type": "test", "data": "value"}]
-
-        run_detail = RunDetail(
-            run_id="test-run",
-            session_id="test-session",
-            status="completed",
-            start_time=start_time,
-            duration=120.0,
-            events_count=2,
-            events=events,
-            final_answer="Test answer",
-        )
-
-        # Should have all RunSummary fields
-        assert run_detail.run_id == "test-run"
-        assert run_detail.session_id == "test-session"
-
-        # Should have additional RunDetail fields
-        assert run_detail.events == events
-        assert run_detail.final_answer == "Test answer"
-        assert run_detail.error_message is None
-
-    def test_run_detail_with_error(self):
-        """Test RunDetail with error message."""
-        start_time = datetime.now()
-
-        run_detail = RunDetail(
-            run_id="test-run",
-            session_id="test-session",
-            status="error",
-            start_time=start_time,
-            duration=60.0,
-            events_count=1,
-            events=[],
-            error_message="Something went wrong",
-        )
-
-        assert run_detail.status == "error"
-        assert run_detail.error_message == "Something went wrong"
-        assert run_detail.final_answer is None
-
-
-class TestFrameSummary:
-    """Test FrameSummary model."""
-
-    def test_valid_frame_summary(self):
-        """Test creating a valid FrameSummary."""
-        start_time = datetime.now()
-
-        frame = FrameSummary(
-            frame_id="frame-123",
-            run_id="run-456",
-            status="completed",
-            start_time=start_time,
-            duration=30.5,
-            action_count=5,
-        )
-
-        assert frame.frame_id == "frame-123"
-        assert frame.run_id == "run-456"
-        assert frame.status == "completed"
-        assert frame.action_count == 5
-
-    def test_frame_summary_defaults(self):
-        """Test FrameSummary with default values."""
-        start_time = datetime.now()
-
-        frame = FrameSummary(
-            frame_id="frame-123",
-            run_id="run-456",
-            status="running",
-            start_time=start_time,
-            duration=0.0,
-            # action_count should default to 0
-        )
-
-        assert frame.action_count == 0
-
-
-class TestFrameDetail:
-    """Test FrameDetail model."""
-
-    def test_frame_detail_inheritance(self):
-        """Test that FrameDetail inherits from FrameSummary."""
-        start_time = datetime.now()
-        tool_calls = [{"name": "test_tool", "args": {"param": "value"}}]
-        actions = [{"type": "tool_call", "timestamp": start_time.isoformat()}]
-
-        frame_detail = FrameDetail(
-            frame_id="frame-123",
-            run_id="run-456",
-            status="completed",
-            start_time=start_time,
-            duration=45.0,
-            action_count=3,
-            prompt_context="Test context",
-            llm_response="Test response",
-            tool_calls=tool_calls,
-            actions=actions,
-        )
-
-        # Should inherit all FrameSummary fields
-        assert frame_detail.frame_id == "frame-123"
-        assert frame_detail.action_count == 3
-
-        # Should have additional FrameDetail fields
-        assert frame_detail.prompt_context == "Test context"
-        assert frame_detail.llm_response == "Test response"
-        assert frame_detail.tool_calls == tool_calls
-        assert frame_detail.actions == actions
-
-
-class TestDashboardStats:
-    """Test DashboardStats model."""
-
-    def test_valid_dashboard_stats(self):
-        """Test creating valid DashboardStats."""
-        stats = DashboardStats(
-            total_runs=100,
-            success_rate="85.5%",
-            avg_duration="2m 30s",
-            active_sessions=3,
-            completed_runs=85,
-            error_runs=15,
-        )
-
-        assert stats.total_runs == 100
-        assert stats.success_rate == "85.5%"
-        assert stats.avg_duration == "2m 30s"
-        assert stats.active_sessions == 3
-        assert stats.completed_runs == 85
-        assert stats.error_runs == 15
-
-    def test_stats_relationships(self):
-        """Test that stats relationships make sense."""
-        stats = DashboardStats(
-            total_runs=50,
-            success_rate="80.0%",
-            avg_duration="1m 15s",
-            active_sessions=2,
-            completed_runs=40,
-            error_runs=10,
-        )
-
-        # Total should equal completed + error + (running, if any)
-        assert stats.total_runs >= stats.completed_runs + stats.error_runs
+    def test_limit_bounds(self):
+        with pytest.raises(ValidationError):
+            PaginationParams(limit=0)
+        with pytest.raises(ValidationError):
+            PaginationParams(limit=1001)
+        PaginationParams(limit=1)
+        PaginationParams(limit=1000)
 
 
 class TestPaginatedResponse:
-    """Test PaginatedResponse model."""
-
-    def test_paginated_response_first_page(self):
-        """Test paginated response for first page."""
-        items = [{"id": 1}, {"id": 2}]
-
+    def test_round_trip(self):
         response = PaginatedResponse(
-            items=items,
+            items=[{"id": 1}],
             total=10,
             offset=0,
             limit=2,
             has_next=True,
             has_prev=False,
         )
-
-        assert response.items == items
-        assert response.total == 10
-        assert response.offset == 0
-        assert response.limit == 2
         assert response.has_next is True
         assert response.has_prev is False
-
-    def test_paginated_response_middle_page(self):
-        """Test paginated response for middle page."""
-        items = [{"id": 3}, {"id": 4}]
-
-        response = PaginatedResponse(
-            items=items,
-            total=10,
-            offset=2,
-            limit=2,
-            has_next=True,
-            has_prev=True,
-        )
-
-        assert response.has_next is True
-        assert response.has_prev is True
-
-    def test_paginated_response_last_page(self):
-        """Test paginated response for last page."""
-        items = [{"id": 9}]
-
-        response = PaginatedResponse(
-            items=items,
-            total=10,
-            offset=9,
-            limit=2,
-            has_next=False,
-            has_prev=True,
-        )
-
-        assert response.has_next is False
-        assert response.has_prev is True
-
-
-class TestRunsListResponse:
-    """Test RunsListResponse model."""
-
-    def test_runs_list_response(self):
-        """Test RunsListResponse with proper typing."""
-        runs = [
-            RunSummary(
-                run_id="run-1",
-                session_id="session-1",
-                status="completed",
-                start_time=datetime.now(),
-                duration=60.0,
-                events_count=5,
-            ),
-            RunSummary(
-                run_id="run-2",
-                session_id="session-2",
-                status="running",
-                start_time=datetime.now(),
-                duration=30.0,
-                events_count=3,
-            ),
-        ]
-
-        response = RunsListResponse(
-            items=runs,
-            total=2,
-            offset=0,
-            limit=10,
-            has_next=False,
-            has_prev=False,
-        )
-
-        assert len(response.items) == 2
-        assert isinstance(response.items[0], RunSummary)
-        assert response.items[0].run_id == "run-1"
-        assert response.items[1].run_id == "run-2"
-
-
-class TestActivityItem:
-    """Test ActivityItem model."""
-
-    def test_activity_item_creation(self):
-        """Test creating ActivityItem."""
-        timestamp = "2024-01-01T12:00:00Z"
-
-        activity = ActivityItem(
-            run_id="run-123",
-            status="completed",
-            timestamp=timestamp,
-            duration=120.5,
-        )
-
-        assert activity.run_id == "run-123"
-        assert activity.status == "completed"
-        assert activity.timestamp == timestamp
-        assert activity.duration == 120.5
-
-
-class TestRecentActivityResponse:
-    """Test RecentActivityResponse model."""
-
-    def test_recent_activity_response(self):
-        """Test RecentActivityResponse."""
-        activities = [
-            ActivityItem(
-                run_id="run-1",
-                status="completed",
-                timestamp="2024-01-01T12:00:00Z",
-                duration=60.0,
-            ),
-            ActivityItem(
-                run_id="run-2",
-                status="error",
-                timestamp="2024-01-01T11:30:00Z",
-                duration=30.0,
-            ),
-        ]
-        last_updated = "2024-01-01T12:05:00Z"
-
-        response = RecentActivityResponse(
-            activities=activities,
-            last_updated=last_updated,
-        )
-
-        assert len(response.activities) == 2
-        assert response.activities[0].run_id == "run-1"
-        assert response.activities[1].status == "error"
-        assert response.last_updated == last_updated
-
-
-class TestModelSerialization:
-    """Test model serialization and deserialization."""
-
-    def test_run_summary_serialization(self):
-        """Test RunSummary serialization to dict."""
-        start_time = datetime.now()
-
-        run = RunSummary(
-            run_id="test-run",
-            session_id="test-session",
-            status="completed",
-            start_time=start_time,
-            duration=120.0,
-            events_count=5,
-            tokens_used=1000,
-        )
-
-        data = run.model_dump()
-
-        assert data["run_id"] == "test-run"
-        assert data["status"] == "completed"
-        assert data["duration"] == 120.0
-        assert data["tokens_used"] == 1000
-        # datetime should be serialized as datetime object by default
-        assert isinstance(data["start_time"], datetime)
-        assert data["start_time"] == start_time
-
-    def test_model_json_serialization(self):
-        """Test model JSON serialization."""
-        start_time = datetime.now()
-
-        run = RunSummary(
-            run_id="test-run",
-            session_id="test-session",
-            status="completed",
-            start_time=start_time,
-            duration=120.0,
-            events_count=5,
-        )
-
-        json_str = run.model_dump_json()
-
-        assert isinstance(json_str, str)
-        assert "test-run" in json_str
-        assert "completed" in json_str
-
-    def test_nested_model_serialization(self):
-        """Test serialization of nested models."""
-        runs = [
-            RunSummary(
-                run_id="run-1",
-                session_id="session-1",
-                status="completed",
-                start_time=datetime.now(),
-                duration=60.0,
-                events_count=5,
-            )
-        ]
-
-        response = RunsListResponse(
-            items=runs,
-            total=1,
-            offset=0,
-            limit=10,
-            has_next=False,
-            has_prev=False,
-        )
-
         data = response.model_dump()
+        assert data["total"] == 10
 
-        assert "items" in data
-        assert len(data["items"]) == 1
-        assert data["items"][0]["run_id"] == "run-1"
+
+class TestErrorResponse:
+    def test_minimal(self):
+        err = ErrorResponse(error="not found")
+        assert err.error == "not found"
+        assert err.detail is None
+
+    def test_with_detail(self):
+        err = ErrorResponse(error="not found", detail="session missing")
+        assert err.detail == "session missing"
+
+
+class TestStatusSummary:
+    def test_creation(self):
+        summary = StatusSummary(total=10, running=2, completed=6, error=1, idle=1)
+        assert summary.total == 10
+        assert summary.running == 2
+
+
+# --- Live models ---
+
+
+class TestLiveEvent:
+    def test_creation(self):
+        event = LiveEvent(
+            seq=1,
+            type=EventType.TURN_START,
+            timestamp=_dt(),
+            frame_id=None,
+            payload={"user_input": "hi"},
+        )
+        assert event.seq == 1
+        assert event.type == EventType.TURN_START
+        assert event.frame_id is None
+
+
+class TestLiveFrame:
+    def test_creation(self):
+        frame = LiveFrame(
+            frame_id="frame-1",
+            iteration=0,
+            status="running_llm",
+            started_at=_dt(),
+            model_name="gpt-4",
+        )
+        assert frame.frame_id == "frame-1"
+        assert frame.status == "running_llm"
+        assert frame.events == []
+
+
+class TestLiveTurn:
+    def test_creation(self):
+        turn = LiveTurn(
+            turn_id="turn-1",
+            turn_index=0,
+            trace_id="trace-1",
+            user_input="hello",
+            status="running",
+            started_at=_dt(),
+        )
+        assert turn.turn_index == 0
+        assert turn.frames == {}
+
+
+class TestLiveSession:
+    def test_creation(self):
+        session = LiveSession(
+            session_id="session-1",
+            status="running",
+            started_at=_dt(),
+            updated_at=_dt(),
+            user_input="hello",
+            agent_mode="frame_agent",
+        )
+        assert session.status == "running"
+        assert session.turns == {}
+
+
+class TestLiveRunSummary:
+    def test_creation(self):
+        summary = LiveRunSummary(
+            run_id="turn-1",
+            session_id="session-1",
+            turn_index=0,
+            status="running",
+            started_at=_dt(),
+            input_tokens=100,
+            output_tokens=50,
+            total_frames=2,
+        )
+        assert summary.run_id == "turn-1"
+        assert summary.duration is None
+
+
+class TestLiveStats:
+    def test_creation(self):
+        stats = LiveStats(
+            active_sessions=2,
+            running_turns=1,
+            total_events=10,
+            events_per_second=0.5,
+            error_count_last_minute=0,
+        )
+        assert stats.active_sessions == 2
+
+
+# --- Historical models ---
+
+
+class TestSessionSummary:
+    def test_creation(self):
+        summary = SessionSummary(
+            session_id="session-1",
+            user_input="hello",
+            status="completed",
+            started_at=_dt(),
+            agent_mode="frame_agent",
+            model_name="gpt-4",
+            total_turns=2,
+            total_frames=3,
+        )
+        assert summary.total_turns == 2
+
+
+class TestTurnSummary:
+    def test_creation(self):
+        summary = TurnSummary(
+            turn_id="turn-1",
+            session_id="session-1",
+            turn_index=0,
+            trace_id="trace-1",
+            user_input="hello",
+            status="completed",
+            started_at=_dt(),
+        )
+        assert summary.pause_reason is None
+
+
+class TestFrameSummary:
+    def test_creation(self):
+        summary = FrameSummary(
+            frame_id="frame-1",
+            turn_id="turn-1",
+            iteration=0,
+            status="completed",
+            started_at=_dt(),
+            model_name="gpt-4",
+            input_tokens=100,
+            output_tokens=50,
+        )
+        assert summary.iteration == 0
+
+
+class TestEventTimelineEntry:
+    def test_creation(self):
+        entry = EventTimelineEntry(
+            event_id=1,
+            seq=1,
+            type="turn_start",
+            timestamp=_dt(),
+            frame_id=None,
+            preview={"user_input": "hello"},
+            payload={"user_input": "hello"},
+            has_payload=True,
+        )
+        assert entry.event_id == 1
+        assert entry.has_payload is True
+
+    def test_defaults(self):
+        entry = EventTimelineEntry(event_id=1, seq=1, type="x")
+        assert entry.preview == {}
+        assert entry.payload == {}
+        assert entry.has_payload is False
+
+
+class TestMessageEntry:
+    def test_creation(self):
+        message = MessageEntry(
+            seq=1,
+            role="user",
+            content="hello",
+            turn_id="turn-1",
+        )
+        assert message.role == "user"
+        assert message.tool_call_id is None
+
+
+class TestMessageDetail:
+    def test_creation(self):
+        entry = MessageEntry(seq=1, role="assistant", content="hi", turn_id="turn-1")
+        detail = MessageDetail(message=entry.model_dump(), raw_payload={"a": 1})
+        assert detail.message.role == "assistant"
+        assert detail.raw_payload == {"a": 1}
+
+
+class TestContextBlock:
+    def test_creation(self):
+        from local_coding_assistant.dashboard.models.historical import ContextBlock
+
+        block = ContextBlock(
+            system_messages=["system: be helpful"],
+            tool_schemas=[{"name": "echo"}],
+            warnings=["partial context"],
+            resolved=False,
+        )
+        assert block.resolved is False
+        assert block.system_reminder is None
+
+
+class TestSessionDetail:
+    def test_creation(self):
+        session = SessionSummary(
+            session_id="session-1",
+            user_input="hello",
+            status="completed",
+            started_at=_dt(),
+            agent_mode="frame_agent",
+        )
+        turn = TurnSummary(
+            turn_id="turn-1",
+            session_id="session-1",
+            turn_index=0,
+            trace_id="trace-1",
+            user_input="hello",
+            status="completed",
+            started_at=_dt(),
+        )
+        detail = SessionDetail(session=session, turns=[turn])
+        assert len(detail.turns) == 1
+
+
+class TestTurnDetail:
+    def test_creation(self):
+        turn = TurnSummary(
+            turn_id="turn-1",
+            session_id="session-1",
+            turn_index=0,
+            trace_id="trace-1",
+            user_input="hello",
+            status="completed",
+            started_at=_dt(),
+        )
+        frame = FrameSummary(
+            frame_id="frame-1",
+            turn_id="turn-1",
+            iteration=0,
+            status="completed",
+            started_at=_dt(),
+        )
+        message = MessageEntry(seq=1, role="user", content="hi", turn_id="turn-1")
+        detail = TurnDetail(turn=turn, frames=[frame], messages=[message])
+        assert len(detail.frames) == 1
+        assert len(detail.messages) == 1
+
+
+class TestFrameDetail:
+    def test_creation(self):
+        frame = FrameSummary(
+            frame_id="frame-1",
+            turn_id="turn-1",
+            iteration=0,
+            status="completed",
+            started_at=_dt(),
+        )
+        entry = EventTimelineEntry(event_id=1, seq=1, type="x")
+        detail = FrameDetail(frame=frame, events=[entry])
+        assert len(detail.events) == 1
+
+    def test_missing_required_field(self):
+        with pytest.raises(ValidationError):
+            FrameSummary(
+                frame_id="frame-1",
+                # missing turn_id
+                iteration=0,
+                status="completed",
+                started_at=_dt(),
+            )

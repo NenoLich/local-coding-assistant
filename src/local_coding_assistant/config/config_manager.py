@@ -8,11 +8,10 @@ from typing import Any
 
 import yaml
 
-from local_coding_assistant.config.builder import ConfigBuilder
 from local_coding_assistant.config.env_manager import EnvManager
 from local_coding_assistant.config.field import ConfigFieldRegistry
 from local_coding_assistant.config.path_manager import PathManager
-from local_coding_assistant.config.schemas import AppConfig, ToolConfig
+from local_coding_assistant.config.schemas import AppConfig
 from local_coding_assistant.config.validation_engine import ValidationEngine
 from local_coding_assistant.core.exceptions import ConfigError
 from local_coding_assistant.core.protocols import IConfigManager
@@ -66,76 +65,12 @@ class ConfigManager(IConfigManager):
         self._validation_engine = ValidationEngine(
             self._field_registry, self._system_registry
         )
+        from local_coding_assistant.config.builder import ConfigBuilder
+
         self._builder: ConfigBuilder | None = None
 
         # Configuration storage
         self._defaults_path = self._path_manager.resolve_path("@config/defaults.yaml")
-        self._loaded_tools: dict[str, ToolConfig] = {}
-
-    def _load_tools(self) -> dict[str, ToolConfig]:
-        """Internal method to load tools using ToolLoader.
-
-        Returns:
-            Dictionary of loaded tools
-
-        Raises:
-            ConfigError: If there's an error loading tools
-        """
-        try:
-            from local_coding_assistant.config.tool_loader import ToolLoader
-
-            tool_loader = ToolLoader(
-                env_manager=self.env_manager, tool_config_paths=self.tool_config_paths
-            )
-            # Get the tools as a dictionary
-            tools_dict = tool_loader.load_tool_configs()
-
-            # Now assign it to the config (ensure _builder is not None)
-            if self._builder:
-                self._builder.update_tools(tools_dict)
-            else:
-                raise ConfigError("Global configuration is not initialized")
-
-            logger.debug("Successfully loaded %d tools", len(tools_dict))
-            return tools_dict
-
-        except Exception as e:
-            logger.error("Failed to load tools", error=str(e), exc_info=True)
-            raise ConfigError(f"Failed to load tools: {e}") from e
-
-    def get_tools(self) -> dict[str, ToolConfig]:
-        """Get all configured tools.
-
-        Implements IConfigManager.get_tools().
-
-        Returns:
-            Dictionary mapping tool names to their configuration.
-        """
-        if not self._loaded_tools:  # Check if _loaded_tools is empty
-            self._loaded_tools = self._load_tools()
-        tools_config = self._loaded_tools
-        if not isinstance(tools_config, dict):
-            logger.warning("Invalid tools configuration - expected a dictionary")
-            return {}
-        return tools_config
-
-    def reload_tools(self) -> None:
-        """Reload tools configuration from all sources.
-
-        Implements IConfigManager.reload_tools().
-        """
-        logger.info("Reloading tools configuration...")
-        try:
-            # Clear any cached tools
-            if hasattr(self, "_loaded_tools"):
-                del self._loaded_tools
-
-            # Reload tools
-            self._loaded_tools = self._load_tools()
-            logger.info("Successfully reloaded %d tools", len(self._loaded_tools))
-        except Exception as e:
-            logger.error("Failed to reload tools", str(e), exc_info=True)
-            raise ConfigError(f"Failed to reload tools: {e}") from e
 
     def load_global_config(self) -> AppConfig:
         """Load and initialize global configuration using ConfigField system.
@@ -172,6 +107,8 @@ class ConfigManager(IConfigManager):
 
         # 3. Create builder for this configuration (builder handles validation internally)
         try:
+            from local_coding_assistant.config.builder import ConfigBuilder
+
             self._builder = ConfigBuilder(config, self._validation_engine)
             logger.debug("ConfigBuilder created")
         except Exception as e:
@@ -215,10 +152,89 @@ class ConfigManager(IConfigManager):
                     f"YAML file {config_path} did not load as dict, skipping"
                 )
 
+        # Merge tool_policies.yaml with tool_policies.local.yaml overrides
+        config_data = self._merge_tool_policies(config_data)
+
         # Merge environment variables (highest priority in global layer)
         env_data = self.env_manager.get_config_from_env()
         if env_data:
             config_data = self._deep_merge(config_data, env_data)
+
+        return config_data
+
+    def _merge_tool_policies(self, config_data: dict[str, Any]) -> dict[str, Any]:
+        """Merge tool_policies.yaml with tool_policies.local.yaml overrides.
+
+        The local file contains overrides that change rule outcomes (ASK -> ALLOW).
+        Paths are read from config_data (loaded from tool_policies.yaml) with defaults.
+        """
+        try:
+            # Get paths from merged config data (with defaults)
+            tools_platform = config_data.get("tools_platform", {})
+            base_path_str = tools_platform.get(
+                "tool_policies_path", "@config/tool_policies.yaml"
+            )
+            local_path_str = tools_platform.get(
+                "tool_policies_local_path", "@config/tool_policies.local.yaml"
+            )
+
+            # Resolve paths
+            base_path = self._path_manager.resolve_path(base_path_str)
+            local_path = self._path_manager.resolve_path(local_path_str)
+
+            # Load base tool policies
+            base_data = {}
+            if Path(base_path).exists():
+                base_data = self._load_config_file(base_path)
+
+            # Load project overrides
+            local_data = {}
+            if Path(local_path).exists():
+                local_data = self._load_config_file(local_path)
+
+            if not base_data or "tools_platform" not in base_data:
+                return config_data
+
+            # Extract base rules and overrides
+            base_rules = base_data.get("tools_platform", {}).get("rules", [])
+            overrides = local_data.get("tools_platform", {}).get(
+                "project_overrides", []
+            )
+
+            if not overrides:
+                # No project overrides, but still merge base rules
+                config_data = self._deep_merge(
+                    config_data, {"tools_platform": {"rules": base_rules}}
+                )
+                logger.debug(
+                    "Merged %d base tool policy rules (no project overrides)",
+                    len(base_rules),
+                )
+                return config_data
+
+            # Build override map: base_rule_id -> outcome
+            override_map = {o["base_rule_id"]: o["outcome"] for o in overrides}
+
+            # Apply overrides to base rules
+            merged_rules = []
+            for rule in base_rules:
+                rule_id = rule.get("id")
+                if rule_id in override_map:
+                    rule = dict(rule)
+                    rule["outcome"] = override_map[rule_id]
+                    rule["source"] = "user_approval"
+                merged_rules.append(rule)
+
+            # Update config_data with merged rules
+            config_data = self._deep_merge(
+                config_data, {"tools_platform": {"rules": merged_rules}}
+            )
+            logger.debug(
+                f"Applied {len(override_map)} project overrides to tool policies"
+            )
+
+        except Exception as e:
+            logger.warning(f"Failed to merge tool policies overrides: {e}")
 
         return config_data
 
@@ -409,6 +425,84 @@ class ConfigManager(IConfigManager):
             logger.warning(f"Could not get current value for setting '{setting_name}'")
             return None
 
+    def persist_tool_policies_overrides(
+        self, rule_id: str, outcome: str, description: str = ""
+    ) -> bool:
+        """Persist a project override to tool_policies.local.yaml.
+
+        Args:
+            rule_id: The base rule ID to override
+            outcome: The new outcome (allow, deny, ask)
+            description: Optional description
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Get local path from config
+            tools_platform = self.global_config.tools_platform
+            local_path_str = tools_platform.tool_policies_local_path
+            local_path = self._path_manager.resolve_path(local_path_str)
+            local_file = Path(local_path)
+
+            local_file.parent.mkdir(parents=True, exist_ok=True)
+
+            data = {}
+            if local_file.exists():
+                with open(local_file, encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+
+            tp_data = data.setdefault("tools_platform", {})
+            overrides = tp_data.setdefault("project_overrides", [])
+
+            # Check if override already exists
+            existing = next(
+                (o for o in overrides if o.get("base_rule_id") == rule_id), None
+            )
+            if existing:
+                existing["outcome"] = outcome
+                if description:
+                    existing["description"] = description
+            else:
+                overrides.append(
+                    {
+                        "base_rule_id": rule_id,
+                        "outcome": outcome,
+                        "description": description,
+                    }
+                )
+
+            with open(local_file, "w", encoding="utf-8") as f:
+                yaml.safe_dump(data, f, sort_keys=False)
+
+            logger.debug(f"Persisted tool policy override: {rule_id} -> {outcome}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to persist tool policy override: {e}")
+            return False
+
+    def get_provider_by_model(self, model_id: str) -> str:
+        """Return the provider id for the given model id.
+
+        Searches ``global_config.providers`` for a provider whose ``models``
+        list contains an entry matching ``model_id``.
+
+        Args:
+            model_id: Model identifier (e.g. ``google/gemini-2.0-flash``).
+
+        Returns:
+            Provider id (e.g. ``google``) or empty string when not found.
+        """
+        if not model_id:
+            return ""
+        providers = getattr(self.global_config, "providers", None) or {}
+        for provider_name, provider_cfg in providers.items():
+            models = getattr(provider_cfg, "models", None) or []
+            for model in models:
+                if getattr(model, "name", None) == model_id:
+                    return provider_name
+        return ""
+
     def get_system_status(self) -> dict[str, Any]:
         """Get comprehensive system status for debugging.
 
@@ -510,10 +604,10 @@ class ConfigManager(IConfigManager):
             with open(resolved_path, encoding="utf-8") as f:
                 config = yaml.safe_load(f)
                 if config is None:
-                    logger.warning(f"Config file {resolved_path} is empty")
+                    logger.debug(f"Config file {resolved_path} is empty")
                     return {}
                 if not isinstance(config, dict):
-                    logger.warning(f"Config file {resolved_path} is not a dictionary")
+                    logger.debug(f"Config file {resolved_path} is not a dictionary")
                     return {}
                 return config
         except (yaml.YAMLError, OSError) as e:
@@ -526,10 +620,11 @@ class ConfigManager(IConfigManager):
         if self._defaults_path.exists():
             config_data = self._load_config_file(self._defaults_path)
             logger.debug(f"Loaded default config: {len(config_data)} keys")
-            return config_data
         else:
+            config_data = {}
             logger.debug("No defaults file found, using empty defaults")
-            return {}
+
+        return config_data
 
     def _load_yaml_file(self, file_path: Path) -> dict[str, Any] | None:
         """Load YAML file and return as dictionary.

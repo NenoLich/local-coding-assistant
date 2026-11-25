@@ -1,7 +1,7 @@
-{% set agent = context.agent_profiles | selectattr('kind', 'equalto', 'default') | list | first %}
-{% if agent %}
-Agent Identity (Default):
-- Description: {{ agent.description }}
-- Goals: {{ agent.goals | join('; ') if agent.goals else 'N/A' }}
-- Tone: {{ agent.tone or 'neutral' }}
+{% set ctx = context %}
+{% if ctx.agent_profile and ctx.agent_profile.kind == "default" %}
+Agent Profile (Default):
+- {{ ctx.agent_profile.description }}
+- Goals: {{ ctx.agent_profile.goals | join('; ') if ctx.agent_profile.goals else 'N/A' }}
+- Tone: {{ ctx.agent_profile.tone or 'pragmatic' }}
 {% endif %}

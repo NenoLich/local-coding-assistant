@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block title %}Debug - LOCCA Dashboard{% endblock %}
+
+{% block content %}
+<div class="col-12">
+    <div class="row mt-4">
+        <div class="col-12">
+            <h1>Debug Tools</h1>
+            <p class="text-muted">Developer tools for inspecting execution context</p>
+        </div>
+    </div>
+
+    <!-- Snapshot Resolution -->
+    <div class="row mt-4">
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Resolve Context Snapshot</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">Snapshot ID</label>
+                        <input type="text" id="snapshot-id" class="form-control" placeholder="Enter snapshot ID">
+                    </div>
+                    <button class="btn btn-primary" id="resolve-snapshot-btn">Resolve</button>
+                    <div id="snapshot-result" class="mt-3"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Check Missing Refs</h5>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label">Snapshot ID</label>
+                        <input type="text" id="missing-refs-snapshot-id" class="form-control" placeholder="Enter snapshot ID">
+                    </div>
+                    <button class="btn btn-outline-warning" id="check-missing-refs-btn">Check Missing Refs</button>
+                    <div id="missing-refs-result" class="mt-3"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Area -->
+    <div class="row mt-4" id="debug-results" style="display: none;">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Result</h5>
+                </div>
+                <div class="card-body">
+                    <pre id="debug-output" class="bg-light p-3 rounded" style="white-space: pre-wrap; max-height: 400px; overflow-y: auto;"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+async function resolveSnapshot() {
+    const id = document.getElementById('snapshot-id').value;
+    if (!id) return;
+    try {
+        const response = await fetch(`/api/debug/snapshot/${id}`);
+        const data = await response.json();
+        document.getElementById('debug-output').textContent = JSON.stringify(data, null, 2);
+        document.getElementById('debug-results').style.display = 'block';
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+async function checkMissingRefs() {
+    const id = document.getElementById('missing-refs-snapshot-id').value;
+    if (!id) return;
+    try {
+        const response = await fetch(`/api/debug/snapshot/${id}/missing-refs`);
+        const data = await response.json();
+        document.getElementById('debug-output').textContent = JSON.stringify(data, null, 2);
+        document.getElementById('debug-results').style.display = 'block';
+    } catch (e) {
+        alert('Error: ' + e.message);
+    }
+}
+
+document.getElementById('resolve-snapshot-btn').addEventListener('click', resolveSnapshot);
+document.getElementById('check-missing-refs-btn').addEventListener('click', checkMissingRefs);
+</script>
+{% endblock %}
